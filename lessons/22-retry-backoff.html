@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>22 · Retry with backoff — and when NOT to retry — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 22 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>Retry with backoff — and when NOT to retry</h1>
+<h2>In one sentence</h2>
+<div class="one">Judge calls retry with exponential backoff and jitter, honour <code>Retry-After</code> on 429, and <b>never</b> retry a 4xx that is the caller's fault.</div>
+<h2>Why it exists</h2>
+<p>Real practitioners report that parallel judge calls hit timeouts and flaky 500s. Retrying blindly is worse: a bad API key would be retried four times with growing waits, hiding the real error.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// evals/judge.go
+func WithRetry(ctx, attempts int, base time.Duration, fn func() error) error {
+    for i := 0; i &lt; attempts; i++ {
+        if err = fn(); err == nil { return nil }
+        if Permanent(err) { return err }                 // 4xx except 429 → give up now
+        wait := base * (1 &lt;&lt; i)                          // 1s, 2s, 4s, ...
+        if rateLimited { wait *= 2; if rl.After &gt; wait { wait = rl.After } }   // honour Retry-After
+        wait += rand(base)                               // jitter: don&#x27;t stampede
+        select { case &lt;-ctx.Done(): return ctx.Err(); case &lt;-time.After(wait): }
+    }
+    return err
+}
+
+type StatusError struct{ Backend string; Code int }
+func Permanent(err error) bool {                         // 400–499 minus 429
+    var se *StatusError
+    return errors.As(err, &amp;se) &amp;&amp; se.Code &gt;= 400 &amp;&amp; se.Code &lt; 500 &amp;&amp; se.Code != 429
+}</code></pre><p><code>TestWithRetryNeverRetries4xx</code> covers 401 (stop), 503 (retry) and 429 (retry, longer wait). The context check means a cancelled run stops waiting immediately.</p>
+<h2>Try it yourself</h2>
+<p><code>go test ./evals/ -run Retry -v</code>. Read the test names — they are the policy.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why never retry 4xx?</div><div class="a"><span class="tag">A</span> 4xx means <i>my request</i> is wrong: bad key, bad model name, oversized prompt. Sending it again can't help. 429 is the exception — it means 'slow down', so we wait and retry.</div><div class="q"><span class="tag">Q</span> What's jitter for?</div><div class="a"><span class="tag">A</span> If 30 workers all fail at once and all retry after exactly 2 s, they hit the server together again. Random extra wait spreads them out.</div><div class="q"><span class="tag">Q</span> How do you pass typed errors through Go?</div><div class="a"><span class="tag">A</span> A <code>StatusError</code> struct with the code, and <code>errors.As</code> to detect it through wrapping. That's how <code>Permanent()</code> decides.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Exponential backoff + jitter.</li><li>429 → wait (honour Retry-After). Other 4xx → stop.</li><li>Respect context cancellation.</li></ul></div>
+<nav class="bottom"><a href="21-judge-bias-guards.html">← 21. LLM-as-judge: bias guards and prompt versioning</a><a href="23-drift-detection.html">23. Drift detection: did the score drop? →</a></nav>
+</div></body></html>

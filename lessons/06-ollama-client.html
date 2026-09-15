@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>06 · Talking to a local LLM: the Ollama client — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 6 of 30</span></header>
+<div class="part">Part 2 · The router</div>
+<h1>Talking to a local LLM: the Ollama client</h1>
+<h2>In one sentence</h2>
+<div class="one">Ollama runs models on your GPU and exposes a plain HTTP API; the router calls <code>POST /api/generate</code> with the standard library.</div>
+<h2>Why it exists</h2>
+<p>No SDK, no LiteLLM. Calling Ollama directly is ~50 lines and shows you understand what an LLM API actually is: JSON in, JSON out, plus token counts.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// router/ollama.go
+type ollamaGenerateRequest struct {
+    Model   string         `json:&quot;model&quot;`
+    Prompt  string         `json:&quot;prompt&quot;`
+    Stream  bool           `json:&quot;stream&quot;`             // false: one JSON reply, not a stream
+    Options map[string]any `json:&quot;options,omitempty&quot;`  // {&quot;num_predict&quot;: maxTokens}
+}
+type ollamaGenerateResponse struct {
+    Response        string `json:&quot;response&quot;`
+    PromptEvalCount int    `json:&quot;prompt_eval_count&quot;`  // input tokens
+    EvalCount       int    `json:&quot;eval_count&quot;`         // output tokens
+}
+
+func (c *OllamaClient) Generate(model, prompt string, maxTokens int) (string, int, error) {
+    // marshal → POST → check 200 → decode → return text + total tokens
+    return out.Response, out.PromptEvalCount + out.EvalCount, nil
+}</code></pre><p>Two details that matter:</p><ul><li><code>Timeout: 120s</code> on the HTTP client — a 7B model on a laptop GPU can take a while; a missing timeout would hang forever if Ollama dies.</li><li><code>max_tokens</code> maps to Ollama's <code>num_predict</code>. A deep-review found it was accepted and ignored before; now it's forwarded (test: <code>TestMaxTokensForwarded</code>).</li></ul>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>curl localhost:11434/api/generate -d &#x27;{&quot;model&quot;:&quot;qwen3:8b&quot;,&quot;prompt&quot;:&quot;say hi&quot;,&quot;stream&quot;:false}&#x27;</code></pre>That's exactly the request the router sends.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What's Ollama?</div><div class="a"><span class="tag">A</span> A local model server. You <code>ollama pull</code> a model, it loads it onto the GPU and serves an HTTP API on :11434. One request at a time, which is fine for a solo box.</div><div class="q"><span class="tag">Q</span> Why not stream?</div><div class="a"><span class="tag">A</span> Streaming complicates metrics (when does latency end?) and traces. Non-streaming gives one reply with token counts — simpler and enough for the MVP.</div><div class="q"><span class="tag">Q</span> How do you get token counts?</div><div class="a"><span class="tag">A</span> Ollama returns <code>prompt_eval_count</code> and <code>eval_count</code>. I add them and feed the sum to the <code>router_tokens_total</code> counter.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Ollama = HTTP API on :11434.</li><li>Always set a client timeout.</li><li>Token counts come back in the response.</li></ul></div>
+<nav class="bottom"><a href="05-config-from-env.html">← 5. Configuration from environment variables</a><a href="07-routing-rule.html">7. The routing rule (the 'traffic cop') →</a></nav>
+</div></body></html>

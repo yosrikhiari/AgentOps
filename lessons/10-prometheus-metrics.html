@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>10 · Prometheus metrics, written by hand — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 10 of 30</span></header>
+<div class="part">Part 2 · The router</div>
+<h1>Prometheus metrics, written by hand</h1>
+<h2>In one sentence</h2>
+<div class="one">The router counts requests, errors and tokens per model and keeps a latency histogram, then prints them in Prometheus text format at <code>GET /metrics</code>.</div>
+<h2>Why it exists</h2>
+<p>Prometheus is the standard for numbers-over-time. Writing the exposition format yourself (instead of importing the client library) teaches you what a counter and a histogram really are — and it's ~150 lines.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code># what /metrics prints
+router_requests_total{model=&quot;qwen2.5:3b-instruct&quot;} 42
+router_errors_total{model=&quot;qwen2.5:3b-instruct&quot;} 1
+router_tokens_total{model=&quot;qwen2.5:3b-instruct&quot;} 9130
+router_latency_seconds_bucket{model=&quot;qwen2.5:3b-instruct&quot;,le=&quot;0.5&quot;} 30   # requests that took &lt;= 0.5s
+router_latency_seconds_bucket{model=&quot;qwen2.5:3b-instruct&quot;,le=&quot;1&quot;} 40
+router_latency_seconds_bucket{model=&quot;qwen2.5:3b-instruct&quot;,le=&quot;+Inf&quot;} 42
+router_latency_seconds_sum{model=&quot;qwen2.5:3b-instruct&quot;} 21.7
+router_latency_seconds_count{model=&quot;qwen2.5:3b-instruct&quot;} 42
+eval_faithfulness 0.94                                                     # gauge, set by the eval suite</code></pre><p>Three concepts:</p><ul><li><b>Counter</b> — only goes up (<code>requests_total</code>, <code>tokens_total</code>).</li><li><b>Gauge</b> — can go up or down (<code>eval_faithfulness</code>).</li><li><b>Histogram</b> — <b>cumulative</b> buckets: the <code>le="1"</code> bucket counts <i>every</i> request ≤ 1 s, including the ones already in <code>le="0.5"</code>. The last bucket <code>+Inf</code> must equal <code>_count</code>.</li></ul><p>Two real bugs lived here. (1) The <code>le</code> label was printed unquoted (<code>le=0.05</code>) — Prometheus would have rejected every scrape. (2) <code>Observe</code> already filled buckets cumulatively, and <code>Expose</code> summed them <i>again</i>, so one request showed <code>le="120"} 11</code> and <code>+Inf} 1</code>. Both are now fixed and pinned by tests (<code>TestMetricsRecordedPerRequest</code>, <code>TestHistogramBucketsAreCumulativeOnce</code>).</p>
+<h2>Try it yourself</h2>
+<p><code>curl localhost:8080/metrics</code> after a couple of chats. Check by eye: bucket values never decrease as <code>le</code> grows, and the <code>+Inf</code> value equals <code>_count</code>.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why not use the official Prometheus Go client?</div><div class="a"><span class="tag">A</span> Independence + learning. The exposition format is a documented text format; writing it forced me to understand cumulative buckets — and I found two bugs by understanding it.</div><div class="q"><span class="tag">Q</span> How does the p99 panel work?</div><div class="a"><span class="tag">A</span> Grafana runs <code>histogram_quantile(0.99, rate(router_latency_seconds_bucket[5m]))</code>. It only works if buckets are correctly cumulative — which is exactly what the double-count bug broke.</div><div class="q"><span class="tag">Q</span> Why not record latency on errors?</div><div class="a"><span class="tag">A</span> So the histogram stays 'time to a real answer'. Errors get their own counter, <code>router_errors_total</code>, and their own Grafana panel.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Counter, gauge, histogram.</li><li>Histogram buckets are cumulative; +Inf == _count.</li><li>Label values must be quoted.</li></ul></div>
+<nav class="bottom"><a href="09-interfaces-and-fakes.html">← 9. Interfaces and fakes: how the tests stay fast</a><a href="11-grafana-and-k6.html">11. Seeing the numbers: Grafana dashboard and k6 load test →</a></nav>
+</div></body></html>

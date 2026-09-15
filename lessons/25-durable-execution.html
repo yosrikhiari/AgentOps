@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>25 · Durable execution: workflows that survive crashes — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 25 of 30</span></header>
+<div class="part">Part 5 · The durable task tracker</div>
+<h1>Durable execution: workflows that survive crashes</h1>
+<h2>In one sentence</h2>
+<div class="one">Each step of a multi-step task writes its status to Postgres before and after running, so a restarted process can see where it was and continue instead of starting over.</div>
+<h2>Why it exists</h2>
+<p>An AI agent that does Research → Draft → Review takes a minute and costs tokens. If the process dies after Research, you don't want to pay for Research again — and you definitely don't want it to run twice if it had side effects. This is what Temporal and DBOS do; here it's ~250 lines over two tables (ADR-0003).</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>workflows(id, type, status, input)              -- one row per workflow
+steps(workflow_id, seq, name, status, output, attempts)   -- pending → running → done
+
+// tracker/tracker.go — the whole algorithm
+storedInput := store.EnsureWorkflow(ctx, id, &quot;research-draft-review&quot;, input)  // INSERT ... ON CONFLICT DO NOTHING
+steps := store.ListSteps(ctx, id)                                             // ordered by seq
+for i, st := range steps {
+    if st.Status == StatusDone { current = st.Output; continue }              // ← RESUME: skip finished work
+    store.SetRunning(ctx, id, st.Seq)                                         // attempts = attempts + 1
+    out, err := fns[i](ctx, current)                                          // the actual work
+    if err != nil { return &quot;&quot;, err }                                          // row stays &#x27;running&#x27;
+    store.SetDone(ctx, id, st.Seq, out)                                       // output saved
+    store.EmitSpan(...)                                                        // one span per step
+    current = out
+}
+store.SetWorkflowStatus(ctx, id, StatusDone)</code></pre><p>Three ideas do all the work: (1) <b>idempotency keys</b> — <code>(workflow_id, seq)</code> is the primary key and inserts use <code>ON CONFLICT DO NOTHING</code>; (2) <b>status rows</b> — the step's row is the source of truth, not process memory; (3) <b>resume = re-run the same workflow id</b> — done steps are skipped, the pending one re-runs.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>go run . --run-tracker                       # prints workflow id, runs 3 steps (~45 s)
+go run . --resume-tracker &lt;id&gt;               # nothing to do: all steps done</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What is durable execution?</div><div class="a"><span class="tag">A</span> Persisting workflow progress step by step so a crash loses at most the current step, and a restart continues from the last completed one.</div><div class="q"><span class="tag">Q</span> Why not use Temporal or DBOS?</div><div class="a"><span class="tag">A</span> Studied both. Temporal is a whole cluster; DBOS has a Go SDK but for three steps the pattern is two tables and one loop. I kept go.mod at stdlib + pgx and can explain every line. DBOS is parked as an alternative.</div><div class="q"><span class="tag">Q</span> What's stored as the input on resume?</div><div class="a"><span class="tag">A</span> The <i>original</i> input from the workflows row, not whatever the resuming process was launched with. A deep-review caught that the resume used the new flag value — now EnsureWorkflow returns the stored input and it wins.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Status rows in Postgres = the truth.</li><li>Resume = same id, skip 'done' steps.</li><li>Idempotency via (workflow_id, seq) + ON CONFLICT.</li></ul></div>
+<nav class="bottom"><a href="24-scheduler-is-a-flag.html">← 24. The scheduler is a flag, not a service</a><a href="26-kill-resume-test.html">26. The kill -9 test →</a></nav>
+</div></body></html>

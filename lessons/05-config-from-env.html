@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>05 · Configuration from environment variables — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 5 of 30</span></header>
+<div class="part">Part 1 · Big picture</div>
+<h1>Configuration from environment variables</h1>
+<h2>In one sentence</h2>
+<div class="one">All settings come from env vars with sensible defaults, read once at startup into a <code>Config</code> struct.</div>
+<h2>Why it exists</h2>
+<p>Twelve-factor rule: config lives in the environment, not in code. It makes the same binary work on your laptop, in Docker, and in Claude Desktop's MCP config — you just set different env vars.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// config.go
+type Config struct {
+    OllamaURL    string   // OLLAMA_URL      default http://localhost:11434
+    Addr         string   // ADDR            default :8080
+    FastModel    string   // FAST_MODEL      default qwen2.5:3b-instruct
+    QualityModel string   // QUALITY_MODEL   default qwen2.5:7b-instruct-q4_K_M
+}</code></pre><p>Other env vars are read where they're used in <code class="file">main.go</code>:</p><ul><li><code>POSTGRES_DSN</code> — default <code>postgres://agentops:agentops@localhost:5432/agentops</code></li><li><code>EVAL_THRESHOLD</code> — default <code>0.7</code>; below this, drift alerts</li><li><code>JUDGE_MODEL</code> (default <code>qwen3:8b</code>) and <code>JUDGE_BACKEND=groq</code> + <code>GROQ_API_KEY</code></li><li><code>EMBED_MODEL</code> — default <code>nomic-embed-text</code></li><li><code>DRAFT_MODEL</code> — model used to draft golden pairs</li></ul><p>Honest note: the plan used to say <i>'config.go fails loudly on missing env'</i>. It doesn't — every value has a default, so the final <code>if ollamaURL == ""</code> check can never fire. That's fine for an MVP; the lesson is that a doc should match the code, and the plan now says 'defaults for everything'.</p>
+<h2>Try it yourself</h2>
+<p><code>FAST_MODEL=qwen3:8b go run .</code> — the log line <code>agentops router on :8080 fast=qwen3:8b ...</code> proves the override worked.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why env vars and not a YAML file?</div><div class="a"><span class="tag">A</span> Fewer moving parts. Env vars work everywhere (shell, Docker, Claude Desktop's JSON config) and need no parser.</div><div class="q"><span class="tag">Q</span> What happens with a bad EVAL_THRESHOLD like 'abc'?</div><div class="a"><span class="tag">A</span> It silently falls back to 0.7. Acceptable for a solo tool; in production I'd fail fast and log the bad value.</div><div class="q"><span class="tag">Q</span> Where is the DB connection string?</div><div class="a"><span class="tag">A</span> POSTGRES_DSN, read in main.go, not in Config — because only DB modes need it and the router tests never touch a database.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Env vars → Config struct, read once.</li><li>Defaults match the plan's model pair.</li><li>Docs must match code — I found one that didn't.</li></ul></div>
+<nav class="bottom"><a href="04-one-binary-many-modes.html">← 4. One binary, many modes</a><a href="06-ollama-client.html">6. Talking to a local LLM: the Ollama client →</a></nav>
+</div></body></html>

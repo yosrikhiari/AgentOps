@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>14 · RAG in plain words — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 14 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>RAG in plain words</h1>
+<h2>In one sentence</h2>
+<div class="one">RAG = <b>find the relevant text first, then let the model answer using only that text</b>. Retrieval-Augmented Generation.</div>
+<h2>Why it exists</h2>
+<p>Models make things up. If you hand the model the exact paragraphs that contain the answer, it can quote instead of guess — and you can <i>check</i> its answer against those paragraphs. That check is the fact-checker.</p>
+<h2>How it works in this project</h2>
+<p>The pipeline in this repo, file by file:</p><pre class="code"><code>corpus/*.md                 15 short docs you wrote (source of truth)
+      │  scripts/clean_docs.py    normalize → chunk (900 chars, 120 overlap) → dedup by hash
+      ▼
+evals/corpus/clean/*.jsonl  one row per chunk {doc_id, hash, text, source}
+      │  go run . --ingest        embed each chunk with nomic-embed-text (768 numbers)
+      ▼
+Postgres table chunks       text + embedding vector(768) + HNSW index
+      │  go run . --search &quot;q&quot;    embed the question, cosine-nearest 5 chunks
+      ▼
+top-k chunks  ───────────►  the model / the judge reads only these</code></pre><p>Two models, two jobs: the <b>embedding model</b> turns text into vectors (tiny, always loaded); the <b>chat model</b> writes answers (big, swapped).</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>python scripts/clean_docs.py
+go run . --migrate &amp;&amp; go run . --ingest
+go run . --search &quot;what does the router do?&quot;</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What is an embedding?</div><div class="a"><span class="tag">A</span> A list of numbers (here 768) that represents the meaning of a text. Texts with similar meaning get vectors that point in similar directions, so 'nearest vector' ≈ 'most related text'.</div><div class="q"><span class="tag">Q</span> Why chunk the documents?</div><div class="a"><span class="tag">A</span> Embeddings work on short passages; a whole document blurs many topics into one vector. 900-character chunks with 120 overlap keep one idea per chunk and avoid cutting a sentence at the boundary.</div><div class="q"><span class="tag">Q</span> Why is the corpus so small?</div><div class="a"><span class="tag">A</span> 15 docs is enough to prove the loop and small enough to hand-review every golden answer. Big PDFs would need different chunking and hours of review.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Retrieve first, then generate.</li><li>Corpus → chunks → embeddings → nearest-k.</li><li>Embedding model ≠ chat model.</li></ul></div>
+<nav class="bottom"><a href="13-mcp-five-tools.html">← 13. The five MCP tools</a><a href="15-corpus-cleaner.html">15. The corpus cleaner: chunking and dedup →</a></nav>
+</div></body></html>

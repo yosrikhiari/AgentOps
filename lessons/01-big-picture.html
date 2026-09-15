@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>01 · What AgentOps is, in one breath — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 1 of 30</span></header>
+<div class="part">Part 1 · Big picture</div>
+<h1>What AgentOps is, in one breath</h1>
+<h2>In one sentence</h2>
+<div class="one">AgentOps is four small tools that make running AI models safer: a <b>traffic cop</b>, a <b>task tracker</b>, a <b>fact-checker</b>, and a <b>dashboard</b>.</div>
+<h2>Why it exists</h2>
+<p>When you put an AI model behind a product, four boring questions show up fast:</p><ul><li><b>Which model should answer this request?</b> (cheap and fast, or slow and smart?) → the <b>router</b>.</li><li><b>What if the program crashes halfway through a 3-step AI task?</b> → the <b>tracker</b>.</li><li><b>Is the AI still telling the truth, or did it quietly get worse?</b> → the <b>evals</b> (fact-checker).</li><li><b>What actually happened to request #4123?</b> → <b>metrics + traces + MCP</b> (the dashboard).</li></ul><p>Big companies use TensorZero, Langfuse, Temporal and LiteLLM for these. This project builds a <i>small, honest version of the same pattern</i> in one Go binary, so you can explain every line.</p>
+<h2>How it works in this project</h2>
+<p>Everything lives in one Go module named <code>agentops</code>. One binary, several modes:</p><pre class="code"><code>go run .                    # HTTP router on :8080  (traffic cop)
+go run . --mcp              # same server, but speaks MCP over stdin/stdout (dashboard for AI clients)
+go run . --run-tracker      # runs the 3-step toy agent through the durable tracker
+go run . --score            # runs the fact-checker over the golden question set
+go run . --drift            # prints &quot;did the score drop since last time?&quot;</code></pre><p>The four tools share one Postgres database (with the pgvector extension) and one local model server (Ollama).</p>
+<h2>Try it yourself</h2>
+<p>cd into the project and run <code>go test ./... -count=1</code>. You should see 4 packages pass: <code>evals</code>, <code>mcp</code>, <code>router</code>, <code>tracker</code>. That is the whole system, tested.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What does your project do?</div><div class="a"><span class="tag">A</span> It's an AI operations toolkit: it routes chat requests to the right local model, keeps multi-step AI tasks alive across crashes, scores whether the AI's answers are faithful to source documents, and exposes all of that as metrics, traces and MCP tools.</div><div class="q"><span class="tag">Q</span> Is it a product?</div><div class="a"><span class="tag">A</span> No — it's a focused, from-scratch version of the pattern TensorZero / Langfuse / Temporal cover, built to prove I can do ML-systems work end to end.</div><div class="q"><span class="tag">Q</span> What language and why?</div><div class="a"><span class="tag">A</span> Go. Single static binary, great HTTP stdlib, goroutines for the async bits, and it forced me to write the Prometheus, MCP and durable-step logic myself instead of importing frameworks.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Four tools: router, tracker, evals, observability.</li><li>One Go binary, one Postgres, one Ollama.</li><li>Small and finished beats big and half-done.</li></ul></div>
+<nav class="bottom"><a href="index.html">← Index</a><a href="02-why-and-constraints.html">2. Why it exists, and the constraints that shaped it →</a></nav>
+</div></body></html>

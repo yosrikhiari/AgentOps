@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>12 · MCP: letting an AI assistant call your server — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 12 of 30</span></header>
+<div class="part">Part 3 · MCP control surface</div>
+<h1>MCP: letting an AI assistant call your server</h1>
+<h2>In one sentence</h2>
+<div class="one">MCP (Model Context Protocol) is JSON-RPC 2.0 over stdin/stdout; an AI client like Claude Desktop launches your binary and calls its 'tools'.</div>
+<h2>Why it exists</h2>
+<p>The dashboard is for humans. MCP is the dashboard for AI assistants: you ask Claude 'which model handled the most traffic today?' and it calls <code>get_stats</code> on <i>your</i> server and answers from real numbers.</p>
+<h2>How it works in this project</h2>
+<p>The whole server is ~200 lines of stdlib in <code class="file">mcp/server.go</code>. Three methods matter:</p><pre class="code"><code>client → {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;initialize&quot;,&quot;params&quot;:{...}}
+server → {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;result&quot;:{&quot;protocolVersion&quot;:&quot;2024-11-05&quot;,
+           &quot;capabilities&quot;:{&quot;tools&quot;:{}},&quot;serverInfo&quot;:{&quot;name&quot;:&quot;agentops&quot;,&quot;version&quot;:&quot;0.1.0&quot;}}}
+
+client → {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:2,&quot;method&quot;:&quot;tools/list&quot;}
+server → {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:2,&quot;result&quot;:{&quot;tools&quot;:[{name, description, inputSchema}, ...]}}
+
+client → {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:3,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;name&quot;:&quot;get_stats&quot;,&quot;arguments&quot;:{}}}
+server → {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:3,&quot;result&quot;:{&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;{...json...}&quot;}]}}</code></pre><p>The loop: read one line from stdin → unmarshal → <code>handle()</code> → write one line to stdout. Notifications (no <code>id</code>) get no reply. A malformed line gets JSON-RPC error <code>-32700</code> instead of being silently dropped (deep-review fix #14).</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>echo &#x27;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/list&quot;}&#x27; | go run . --mcp</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What is MCP in one sentence?</div><div class="a"><span class="tag">A</span> A standard way for an AI client to discover and call tools on a server, using JSON-RPC over stdio or HTTP.</div><div class="q"><span class="tag">Q</span> Why stdio?</div><div class="a"><span class="tag">A</span> Claude Desktop launches the binary as a child process and talks over its pipes. No ports, no auth, no network — perfect for a local tool.</div><div class="q"><span class="tag">Q</span> Why write it by hand instead of using an MCP SDK?</div><div class="a"><span class="tag">A</span> The protocol surface I need is three methods. The stdlib JSON encoder and a line scanner cover it, and I can explain every byte on the wire.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>MCP = JSON-RPC 2.0 over stdio.</li><li>initialize → tools/list → tools/call.</li><li>One line in, one line out; notifications get no reply.</li></ul></div>
+<nav class="bottom"><a href="11-grafana-and-k6.html">← 11. Seeing the numbers: Grafana dashboard and k6 load test</a><a href="13-mcp-five-tools.html">13. The five MCP tools →</a></nav>
+</div></body></html>

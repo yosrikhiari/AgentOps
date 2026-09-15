@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>17 · The database schema and migrations — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 17 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>The database schema and migrations</h1>
+<h2>In one sentence</h2>
+<div class="one">Seven tables in two SQL files, applied in filename order by a 20-line Go function.</div>
+<h2>Why it exists</h2>
+<p>Schema in versioned SQL files is the simplest migration system that works. Every table maps to one tool, so the schema is also a map of the project.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>docs / chunks               ← RAG corpus (evals)
+workflows / steps           ← durable tracker
+spans                       ← traces (router AND tracker write here)
+eval_runs / eval_pair_scores← eval history for drift (0002_drift.sql)
+
+-- evals/corpus.go
+func Migrate(ctx, db Execer, dir string) error {
+    files, _ := filepath.Glob(filepath.Join(dir, &quot;*.sql&quot;))
+    sort.Strings(files)                       // 0001_ before 0002_
+    for _, f := range files { db.Exec(ctx, readFile(f)) }
+}</code></pre><p>Every statement is <code>CREATE ... IF NOT EXISTS</code>, so re-running <code>--migrate</code> is safe. There is <b>no migrations table</b> tracking what was applied — fine while every migration is additive; the moment one needs <code>ALTER</code>, add a <code>schema_migrations</code> table.</p><p>Key indexes: <code>(workflow_id, seq)</code> primary key on steps, <code>spans(trace_id)</code>, <code>eval_runs(golden_version, created_at DESC)</code> for 'last two runs' queries.</p>
+<h2>Try it yourself</h2>
+<p><code>cat migrations/0001_init.sql</code> and find the one <code>ON DELETE CASCADE</code> in <code>0002_drift.sql</code>: deleting an eval run removes its per-question scores.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why two migration files?</div><div class="a"><span class="tag">A</span> 0001 was the MVP schema. 0002 added <code>eval_pair_scores</code> when drift reporting needed per-question scores (ADR-0005). You never edit an applied migration; you add a new one.</div><div class="q"><span class="tag">Q</span> What's the weakness of this migration approach?</div><div class="a"><span class="tag">A</span> No applied-versions table, so it relies on IF NOT EXISTS. Works for additive changes only. I'd add schema_migrations before the first ALTER.</div><div class="q"><span class="tag">Q</span> Why is spans keyed on (trace_id, span_id)?</div><div class="a"><span class="tag">A</span> A span is unique within its trace. The composite key plus <code>ON CONFLICT DO NOTHING</code> makes span writes idempotent — retrying a write can't duplicate.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>7 tables, 2 SQL files, sorted by name.</li><li>IF NOT EXISTS makes re-runs safe.</li><li>Never edit an applied migration; add a new one.</li></ul></div>
+<nav class="bottom"><a href="16-pgvector-hnsw.html">← 16. pgvector and HNSW: vector search inside Postgres</a><a href="18-golden-set.html">18. The golden set: draft with a model, review by hand →</a></nav>
+</div></body></html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>19 · The faithfulness scorer: split claims, judge each one — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 19 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>The faithfulness scorer: split claims, judge each one</h1>
+<h2>In one sentence</h2>
+<div class="one">Faithfulness = the fraction of an answer's sentences that a judge model says are supported by the retrieved text.</div>
+<h2>Why it exists</h2>
+<p>'Is this answer true?' is too vague to score. 'Is each sentence supported by the sources?' is concrete. That's the RAGAS/DeepEval definition, implemented by hand in ~100 lines.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// evals/scorer.go
+claims := SplitClaims(p.Answer)                 // split on . ! ? followed by space; keep ≥10 runes
+for _, cl := range claims {
+    ok, just, err := judge.JudgeClaim(ctx, cl, contextText)   // one LLM call per claim
+    if ok { supported++ }
+}
+res.Faithfulness = float64(supported) / float64(len(claims))  // 0.0 … 1.0
+
+// evals/judge.go — the prompt the judge sees
+Decide if the CLAIM is fully supported by the CONTEXT. Ignore answer length and style.
+First write 1-2 sentences of evidence-based justification quoting the context.
+Then on the last line write exactly: VERDICT: SUPPORTED or VERDICT: REFUTED.</code></pre><p>Flow for one golden pair: embed the question → fetch top-5 chunks → join them as CONTEXT → split the golden <i>answer</i> into claims → ask the judge about each claim → average.</p><p>Live result on a 6-pair subset: correct answers scored <b>1.00</b>, deliberately false answers scored <b>0.00</b> — the scorer discriminates, which is the first thing to prove about any metric. Full frozen-v1 run (32 pairs, judge <code>qwen3:8b</code>): <b>0.969</b> on two consecutive runs (31 of 32 at 1.00, recall 1.000, drift delta 0). The one miss each time was a list-fragment answer with no verb — a golden-authoring lesson, recorded for v2.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>go run . --score --golden evals/golden/v1_draft.jsonl --golden-version v1_draft
+# pair 1 faith=1.00 p=0.20 r=1.00 q=&quot;What determines which model ...&quot;
+# suite n=32 judge=qwen3:8b prompt=faithfulness-v1 faith=0.94 ...</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What is faithfulness, precisely?</div><div class="a"><span class="tag">A</span> supported claims ÷ total claims, where a claim is one sentence of the answer and 'supported' is a judge model's verdict given only the retrieved chunks.</div><div class="q"><span class="tag">Q</span> Why one judge call per claim instead of one per answer?</div><div class="a"><span class="tag">A</span> A single 'is this answer OK?' call lets one bad sentence hide behind three good ones. Per-claim gives a real fraction and tells you <i>which</i> sentence failed.</div><div class="q"><span class="tag">Q</span> How did you prove the scorer works?</div><div class="a"><span class="tag">A</span> Scored known-good answers (1.00), then corrupted the same answers with false claims (0.00). If a metric can't tell those apart, it's noise.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Split answer into claims, judge each, average.</li><li>Judge sees only retrieved chunks.</li><li>Prove a metric discriminates before trusting it.</li></ul></div>
+<nav class="bottom"><a href="18-golden-set.html">← 18. The golden set: draft with a model, review by hand</a><a href="20-retrieval-precision-recall.html">20. Retrieval precision and recall →</a></nav>
+</div></body></html>

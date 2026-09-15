@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tower — Design System for AgentOps</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --tower-ground:#17151A;
+    --tower-surface:#201D22;
+    --tower-surface-raised:#26222A;
+    --tower-border:#342F36;
+    --tower-border-soft:#2A262C;
+    --tower-ink:#EDE8E2;
+    --tower-ink-muted:#9A9299;
+    --tower-ink-faint:#635C63;
+    --tower-amber:#F2A93B;
+    --tower-amber-dim:#4A3A1F;
+    --tower-green:#5FBE8C;
+    --tower-green-dim:#22352C;
+    --tower-red:#E2596B;
+    --tower-red-dim:#3A2229;
+    --tower-font-display:'Space Grotesk', sans-serif;
+    --tower-font-body:'Inter', -apple-system, sans-serif;
+    --tower-font-mono:'IBM Plex Mono', monospace;
+    --tower-radius-sm:4px;
+    --tower-radius-md:6px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--tower-ground);
+    color:var(--tower-ink);
+    font-family:var(--tower-font-body);
+    font-size:14px;
+    line-height:1.5;
+  }
+  h1,h2,h3,h4{
+    font-family:var(--tower-font-display);
+    font-weight:600;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  .tower-mono{ font-family:var(--tower-font-mono); font-variant-numeric:tabular-nums; }
+
+  /* ===== Layout shell ===== */
+  .tower-shell{ display:grid; grid-template-columns:64px 1fr; min-height:100vh; }
+  .tower-rail{
+    background:var(--tower-surface);
+    border-right:1px solid var(--tower-border-soft);
+    display:flex; flex-direction:column; align-items:center;
+    padding:16px 0; gap:4px;
+  }
+  .tower-rail-mark{
+    width:32px;height:32px;border-radius:var(--tower-radius-sm);
+    background:var(--tower-amber); color:var(--tower-ground);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--tower-font-display); font-weight:700; font-size:15px;
+    margin-bottom:20px;
+  }
+  .tower-rail-btn{
+    width:40px;height:40px; border-radius:var(--tower-radius-sm);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--tower-ink-muted); background:transparent; border:none; cursor:pointer;
+    transition:background .12s ease, color .12s ease;
+  }
+  .tower-rail-btn:hover{ background:var(--tower-surface-raised); color:var(--tower-ink); }
+  .tower-rail-btn[data-active="true"]{ background:var(--tower-amber-dim); color:var(--tower-amber); }
+  .tower-rail-btn svg{ width:18px; height:18px; }
+
+  .tower-main{ display:flex; flex-direction:column; min-width:0; }
+
+  /* ===== Status strip ===== */
+  .tower-statusstrip{
+    display:flex; align-items:center; gap:24px;
+    padding:12px 24px; border-bottom:1px solid var(--tower-border-soft);
+    background:var(--tower-ground);
+  }
+  .tower-statusstrip h1{ font-size:16px; margin-right:auto; }
+  .tower-pulse-item{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--tower-ink-muted); }
+  .tower-pulse-dot{
+    width:7px;height:7px;border-radius:50%; background:var(--tower-green);
+    box-shadow:0 0 0 3px var(--tower-green-dim);
+    animation:tower-pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes tower-pulse{
+    0%,100%{ opacity:1; } 50%{ opacity:.45; }
+  }
+  .tower-pulse-item .tower-mono{ color:var(--tower-ink); }
+
+  .tower-content{ padding:24px; display:flex; flex-direction:column; gap:24px; }
+
+  /* ===== Section heading ===== */
+  .tower-section-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
+  .tower-section-head h2{ font-size:14px; color:var(--tower-ink-muted); font-weight:500; text-transform:none; }
+
+  /* ===== Metric cards ===== */
+  .tower-metric-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--tower-border-soft); border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-md); overflow:hidden; }
+  .tower-metric{ background:var(--tower-surface); padding:16px 18px; display:flex; flex-direction:column; gap:6px; }
+  .tower-metric-label{ font-size:12px; color:var(--tower-ink-muted); }
+  .tower-metric-value{ font-family:var(--tower-font-mono); font-size:22px; color:var(--tower-ink); }
+  .tower-metric-delta{ font-size:12px; display:flex; align-items:center; gap:4px; }
+  .tower-metric-delta.up{ color:var(--tower-green); }
+  .tower-metric-delta.down{ color:var(--tower-red); }
+
+  /* ===== Panel ===== */
+  .tower-panel{
+    background:var(--tower-surface); border:1px solid var(--tower-border-soft);
+    border-radius:var(--tower-radius-md); padding:18px;
+  }
+  .tower-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .tower-panel-head h3{ font-size:14px; }
+  .tower-panel-sub{ font-size:12px; color:var(--tower-ink-muted); margin-top:2px; }
+
+  /* ===== Traffic bar chart (hand-rolled SVG) ===== */
+  .tower-chart-legend{ display:flex; gap:16px; font-size:12px; color:var(--tower-ink-muted); }
+  .tower-legend-item{ display:flex; align-items:center; gap:6px; }
+  .tower-legend-swatch{ width:8px;height:8px;border-radius:2px; }
+
+  /* ===== Two-column grid ===== */
+  .tower-grid-2{ display:grid; grid-template-columns:1.3fr 1fr; gap:16px; align-items:start; }
+
+  /* ===== Log table ===== */
+  .tower-table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  .tower-table th{
+    text-align:left; font-weight:500; color:var(--tower-ink-faint);
+    padding:6px 10px; border-bottom:1px solid var(--tower-border-soft); font-size:11px;
+  }
+  .tower-table td{ padding:8px 10px; border-bottom:1px solid var(--tower-border-soft); color:var(--tower-ink); }
+  .tower-table tr:last-child td{ border-bottom:none; }
+  .tower-table td.tower-mono{ color:var(--tower-ink-muted); }
+
+  /* ===== Status pill (primitive) ===== */
+  .tower-pill{
+    display:inline-flex; align-items:center; gap:5px;
+    padding:2px 8px; border-radius:100px; font-size:11.5px; font-weight:500;
+  }
+  .tower-pill::before{ content:''; width:5px; height:5px; border-radius:50%; }
+  .tower-pill.healthy{ background:var(--tower-green-dim); color:var(--tower-green); }
+  .tower-pill.healthy::before{ background:var(--tower-green); }
+  .tower-pill.degraded{ background:var(--tower-amber-dim); color:var(--tower-amber); }
+  .tower-pill.degraded::before{ background:var(--tower-amber); }
+  .tower-pill.critical{ background:var(--tower-red-dim); color:var(--tower-red); }
+  .tower-pill.critical::before{ background:var(--tower-red); }
+
+  /* ===== Buttons (primitive) ===== */
+  .tower-btn{
+    font-family:var(--tower-font-body); font-size:13px; font-weight:500;
+    padding:7px 14px; border-radius:var(--tower-radius-sm); border:1px solid transparent;
+    cursor:pointer; transition:filter .12s ease;
+  }
+  .tower-btn:hover{ filter:brightness(1.1); }
+  .tower-btn.primary{ background:var(--tower-amber); color:var(--tower-ground); }
+  .tower-btn.secondary{ background:var(--tower-surface-raised); color:var(--tower-ink); border-color:var(--tower-border); }
+  .tower-btn.ghost{ background:transparent; color:var(--tower-ink-muted); }
+  .tower-btn.ghost:hover{ color:var(--tower-ink); filter:none; }
+
+  /* ===== Chip (primitive) ===== */
+  .tower-chip{
+    display:inline-flex; align-items:center; font-family:var(--tower-font-mono);
+    font-size:11px; padding:2px 7px; border-radius:var(--tower-radius-sm);
+    background:var(--tower-surface-raised); color:var(--tower-ink-muted); border:1px solid var(--tower-border-soft);
+  }
+
+  /* ===== Trace inspector (hero component) ===== */
+  .tower-trace{ display:flex; flex-direction:column; }
+  .tower-trace-step{
+    position:relative; display:flex; gap:14px; padding:14px 4px 14px 4px;
+    border-left:2px solid var(--tower-border); margin-left:11px; padding-left:22px;
+  }
+  .tower-trace-step:last-child{ border-left-color:transparent; }
+  .tower-trace-dot{
+    position:absolute; left:-7px; top:16px; width:12px; height:12px; border-radius:50%;
+    background:var(--tower-surface); border:2px solid var(--tower-ink-faint);
+  }
+  .tower-trace-step.done .tower-trace-dot{ border-color:var(--tower-green); background:var(--tower-green-dim); }
+  .tower-trace-step.active .tower-trace-dot{ border-color:var(--tower-amber); background:var(--tower-amber-dim); }
+  .tower-trace-body{ flex:1; cursor:pointer; }
+  .tower-trace-top{ display:flex; align-items:center; justify-content:space-between; }
+  .tower-trace-name{ font-weight:600; font-size:13.5px; }
+  .tower-trace-meta{ display:flex; align-items:center; gap:10px; font-size:11.5px; color:var(--tower-ink-muted); }
+  .tower-trace-detail{
+    margin-top:8px; padding:10px 12px; background:var(--tower-ground);
+    border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-sm);
+    font-size:12px; color:var(--tower-ink-muted); display:none;
+  }
+  .tower-trace-detail.open{ display:block; }
+  .tower-trace-detail p{ margin:0 0 6px 0; }
+  .tower-trace-detail p:last-child{ margin-bottom:0; }
+  .tower-trace-detail .k{ color:var(--tower-ink-faint); }
+
+  /* ===== Doc sections (this page only) ===== */
+  .tower-doc-section{ margin-bottom:40px; }
+  .tower-doc-section > h2{ font-size:12px; letter-spacing:.02em; color:var(--tower-ink-faint); margin-bottom:14px; padding-bottom:8px; border-bottom:1px solid var(--tower-border-soft); }
+  .tower-doc-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .tower-swatch{ display:flex; flex-direction:column; gap:6px; width:110px; }
+  .tower-swatch-block{ height:56px; border-radius:var(--tower-radius-sm); border:1px solid var(--tower-border-soft); }
+  .tower-swatch-label{ font-size:11px; color:var(--tower-ink-muted); }
+  .tower-swatch-hex{ font-family:var(--tower-font-mono); font-size:11px; color:var(--tower-ink-faint); }
+</style>
+</head>
+<body>
+
+<div class="tower-shell">
+  <nav class="tower-rail">
+    <div class="tower-rail-mark">T</div>
+    <button class="tower-rail-btn" data-active="true" title="Traffic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+    </button>
+    <button class="tower-rail-btn" title="Evals">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    </button>
+    <button class="tower-rail-btn" title="Traces">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/></svg>
+    </button>
+    <button class="tower-rail-btn" title="Alerts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
+    </button>
+  </nav>
+
+  <div class="tower-main">
+    <div class="tower-statusstrip">
+      <h1>Tower</h1>
+      <div class="tower-pulse-item"><span class="tower-pulse-dot"></span> router live <span class="tower-mono">2 models</span></div>
+      <div class="tower-pulse-item">faithfulness <span class="tower-mono">0.94</span></div>
+      <div class="tower-pulse-item">p50 latency <span class="tower-mono">312ms</span></div>
+      <button class="tower-btn secondary">Export report</button>
+    </div>
+
+    <div class="tower-content">
+
+      <!-- ===================== METRIC ROW ===================== -->
+      <div class="tower-metric-row">
+        <div class="tower-metric">
+          <div class="tower-metric-label">Requests / min</div>
+          <div class="tower-metric-value">184</div>
+          <div class="tower-metric-delta up">↑ 6% vs last hour</div>
+        </div>
+        <div class="tower-metric">
+          <div class="tower-metric-label">p50 latency</div>
+          <div class="tower-metric-value">312<span style="font-size:13px;color:var(--tower-ink-muted)">ms</span></div>
+          <div class="tower-metric-delta down">↓ 18ms</div>
+        </div>
+        <div class="tower-metric">
+          <div class="tower-metric-label">Faithfulness (24h)</div>
+          <div class="tower-metric-value">0.94</div>
+          <div class="tower-metric-delta up">↑ 0.02</div>
+        </div>
+        <div class="tower-metric">
+          <div class="tower-metric-label">Judge cost today</div>
+          <div class="tower-metric-value">$0.00</div>
+          <div class="tower-metric-delta" style="color:var(--tower-ink-muted)">Groq free tier</div>
+        </div>
+      </div>
+
+      <!-- ===================== TRAFFIC + LOG ===================== -->
+      <div class="tower-grid-2">
+        <div class="tower-panel">
+          <div class="tower-panel-head">
+            <div>
+              <h3>Routing traffic — last 30 requests</h3>
+              <div class="tower-panel-sub">Which backend handled each request, in order</div>
+            </div>
+            <div class="tower-chart-legend">
+              <div class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-amber)"></span> Qwen 7B-Q4</div>
+              <div class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-ink-faint)"></span> Qwen 3B</div>
+            </div>
+          </div>
+          <svg id="towerChart" viewBox="0 0 560 120" width="100%" height="120"></svg>
+        </div>
+
+        <div class="tower-panel">
+          <div class="tower-panel-head">
+            <div><h3>Backend health</h3></div>
+          </div>
+          <table class="tower-table">
+            <tr><td>qwen2.5:3b-instruct</td><td><span class="tower-pill healthy">healthy</span></td></tr>
+            <tr><td>qwen2.5:7b-instruct-q4</td><td><span class="tower-pill healthy">healthy</span></td></tr>
+            <tr><td>groq / llama-3.1-8b</td><td><span class="tower-pill degraded">rate-limited</span></td></tr>
+            <tr><td>groq / llama-3.3-70b</td><td><span class="tower-pill critical">quota low</span></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===================== TRACE INSPECTOR (hero) ===================== -->
+      <div class="tower-panel">
+        <div class="tower-panel-head">
+          <div>
+            <h3>Trace inspector</h3>
+            <div class="tower-panel-sub">req_8f2a1c · click a step to expand</div>
+          </div>
+          <span class="tower-chip">3 steps · 1.8s total</span>
+        </div>
+        <div class="tower-trace">
+
+          <div class="tower-trace-step done">
+            <div class="tower-trace-dot"></div>
+            <div class="tower-trace-body" onclick="toweToggle(this)">
+              <div class="tower-trace-top">
+                <span class="tower-trace-name">Researcher</span>
+                <span class="tower-trace-meta"><span class="tower-mono">412ms</span> · qwen2.5:3b</span>
+              </div>
+              <div class="tower-trace-detail">
+                <p><span class="k">Query:</span> retrieval issued against corpus, top_k=6</p>
+                <p><span class="k">Retrieved:</span> 4 chunks kept after threshold 0.20, 2 discarded</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="tower-trace-step done">
+            <div class="tower-trace-dot"></div>
+            <div class="tower-trace-body" onclick="toweToggle(this)">
+              <div class="tower-trace-top">
+                <span class="tower-trace-name">Drafter</span>
+                <span class="tower-trace-meta"><span class="tower-mono">890ms</span> · qwen2.5:7b-q4</span>
+              </div>
+              <div class="tower-trace-detail">
+                <p><span class="k">Output:</span> 3 claims generated, all linked to retrieved chunks</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="tower-trace-step active">
+            <div class="tower-trace-dot"></div>
+            <div class="tower-trace-body" onclick="toweToggle(this)">
+              <div class="tower-trace-top">
+                <span class="tower-trace-name">Reviewer</span>
+                <span class="tower-trace-meta"><span class="tower-pill degraded">scoring</span></span>
+              </div>
+              <div class="tower-trace-detail open">
+                <p><span class="k">Judge:</span> local qwen2.5:7b-q4 (cross-check pending on groq/llama-3.1-8b)</p>
+                <p><span class="k">Faithfulness so far:</span> 0.91</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ===================== COMPONENT REFERENCE ===================== -->
+      <div class="tower-doc-section" style="margin-top:16px;">
+        <h2>TOKENS — COLOR</h2>
+        <div class="tower-doc-row">
+          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-ground)"></div><div class="tower-swatch-label">ground</div><div class="tower-swatch-hex">#17151A</div></div>
+          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-surface)"></div><div class="tower-swatch-label">surface</div><div class="tower-swatch-hex">#201D22</div></div>
+          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-amber)"></div><div class="tower-swatch-label">amber (hero)</div><div class="tower-swatch-hex">#F2A93B</div></div>
+          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-green)"></div><div class="tower-swatch-label">green (status)</div><div class="tower-swatch-hex">#5FBE8C</div></div>
+          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-red)"></div><div class="tower-swatch-label">red (status)</div><div class="tower-swatch-hex">#E2596B</div></div>
+          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-ink)"></div><div class="tower-swatch-label">ink</div><div class="tower-swatch-hex">#EDE8E2</div></div>
+        </div>
+      </div>
+
+      <div class="tower-doc-section">
+        <h2>PRIMITIVES — BUTTONS &amp; PILLS &amp; CHIPS</h2>
+        <div class="tower-doc-row">
+          <button class="tower-btn primary">Run eval suite</button>
+          <button class="tower-btn secondary">View config</button>
+          <button class="tower-btn ghost">Cancel</button>
+          <span class="tower-pill healthy">healthy</span>
+          <span class="tower-pill degraded">degraded</span>
+          <span class="tower-pill critical">critical</span>
+          <span class="tower-chip">trace_id: 8f2a1c</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  function toweToggle(el){
+    const d = el.querySelector('.tower-trace-detail');
+    d.classList.toggle('open');
+  }
+
+  // Hand-rolled bar chart, no chart library — 30 fake requests, colored by model
+  (function(){
+    const svg = document.getElementById('towerChart');
+    const n = 30, w = 560, h = 120, barW = w/n - 3;
+    const seed = [3,7,3,3,7,3,3,3,7,3,3,7,7,3,3,3,7,3,3,3,7,7,3,3,3,7,3,3,7,3];
+    let bars = '';
+    seed.forEach((v,i)=>{
+      const height = v === 7 ? 70 + Math.random()*30 : 30 + Math.random()*25;
+      const x = i * (w/n) + 1;
+      const y = h - height;
+      const color = v === 7 ? 'var(--tower-amber)' : 'var(--tower-ink-faint)';
+      bars += `<rect x="${x}" y="${y}" width="${barW}" height="${height}" rx="1.5" fill="${color}" opacity="0.9"/>`;
+    });
+    svg.innerHTML = bars;
+  })();
+</script>
+
+</body>
+</html>

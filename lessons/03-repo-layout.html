@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>03 · The repo layout — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 3 of 30</span></header>
+<div class="part">Part 1 · Big picture</div>
+<h1>The repo layout</h1>
+<h2>In one sentence</h2>
+<div class="one">One monorepo, one <code>go.mod</code>, five packages — each package is one of the tools.</div>
+<h2>Why it exists</h2>
+<p>A single module means one build, one test command, one binary. Interviewers like being able to run <code>go test ./...</code> and see the whole thing.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>AgentOps_Project_Plan/
+├── main.go            # wires everything, parses flags, picks a mode
+├── config.go          # env vars → Config struct
+├── router/            # traffic cop: classify prompt, call Ollama, metrics, spans
+├── tracker/           # durable 3-step workflow on Postgres rows
+├── evals/             # corpus ingest, pgvector search, golden set, judge, drift
+├── mcp/               # JSON-RPC over stdio, 5 tools
+├── migrations/        # 0001_init.sql, 0002_drift.sql
+├── corpus/            # 15 short markdown docs (the RAG source of truth)
+├── scripts/           # clean_docs.py (chunker)
+├── dashboard/grafana/ # router.json (5 panels)
+├── load-tests/        # router.js (k6)
+├── docs/              # VRAM.md
+├── lessons/           # these pages
+└── docker-compose.yml # Postgres + pgvector</code></pre><p>Rule inside each package: <b>handler → service → repo</b>, and one JSON error shape everywhere: <code>{"error":{"code","message","trace_id"}}</code>.</p><p>The only external dependency is <code>github.com/jackc/pgx/v5</code> (Postgres driver). Everything else is the Go standard library.</p>
+<h2>Try it yourself</h2>
+<p>Run <code>go list ./...</code> — you'll see exactly <code>agentops</code>, <code>agentops/evals</code>, <code>agentops/mcp</code>, <code>agentops/router</code>, <code>agentops/tracker</code>. Then <code>cat go.mod</code> — one direct dependency.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why a monorepo and not one repo per tool?</div><div class="a"><span class="tag">A</span> They share types (spans, the Ollama client), one DB schema and one binary. Splitting would add release coordination for zero benefit on a solo project. This is ADR-0001.</div><div class="q"><span class="tag">Q</span> How do packages avoid depending on pgx?</div><div class="a"><span class="tag">A</span> evals/ and tracker/ declare tiny interfaces (Execer, Queryer, Rows). main.go adapts pgx to them. So the packages are testable with in-memory fakes and never import the driver.</div><div class="q"><span class="tag">Q</span> Where's the business logic vs the wiring?</div><div class="a"><span class="tag">A</span> Logic in the packages; wiring (flags, DSN, pool, adapters) in main.go. main.go has no tests on purpose — it's glue.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>5 packages = 4 tools + wiring.</li><li>One dependency: pgx.</li><li>Packages talk to the DB through tiny interfaces.</li></ul></div>
+<nav class="bottom"><a href="02-why-and-constraints.html">← 2. Why it exists, and the constraints that shaped it</a><a href="04-one-binary-many-modes.html">4. One binary, many modes →</a></nav>
+</div></body></html>

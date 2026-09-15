@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>04 · One binary, many modes — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 4 of 30</span></header>
+<div class="part">Part 1 · Big picture</div>
+<h1>One binary, many modes</h1>
+<h2>In one sentence</h2>
+<div class="one">The same executable is a web server, an MCP server, a migration tool, an eval runner and a workflow runner — chosen by a command-line flag.</div>
+<h2>Why it exists</h2>
+<p>A solo project should not ship six binaries. One binary means one build, one Docker image, and every mode shares the same config and code paths — so the stats the MCP server reports are the <i>same</i> stats the HTTP server counts.</p>
+<h2>How it works in this project</h2>
+<p>In <code class="file">main.go</code>, <code>main()</code> parses flags, and each 'and exit' mode returns early:</p><pre class="code"><code>mcpMode      := flag.Bool(&quot;mcp&quot;, false, &quot;run as MCP stdio server instead of HTTP router&quot;)
+migrate      := flag.Bool(&quot;migrate&quot;, false, &quot;apply SQL migrations and exit&quot;)
+ingest       := flag.Bool(&quot;ingest&quot;, false, &quot;embed clean corpus into pgvector and exit&quot;)
+search       := flag.String(&quot;search&quot;, &quot;&quot;, &quot;cosine-search the corpus for QUERY and exit&quot;)
+draftGolden  := flag.Bool(&quot;draft-golden&quot;, false, &quot;draft golden QA pairs with local LLM and exit&quot;)
+freezeGolden := flag.Bool(&quot;freeze-golden&quot;, false, &quot;validate evals/golden/v1.jsonl and freeze hash&quot;)
+score        := flag.Bool(&quot;score&quot;, false, &quot;run faithfulness + retrieval suite and exit&quot;)
+driftFlag    := flag.Bool(&quot;drift&quot;, false, &quot;print drift report and exit&quot;)
+scheduleEvals:= flag.String(&quot;schedule-evals&quot;, &quot;&quot;, &quot;run eval suite every INTERVAL forever&quot;)
+runTracker   := flag.Bool(&quot;run-tracker&quot;, false, &quot;run toy workflow and exit&quot;)
+resumeTracker:= flag.String(&quot;resume-tracker&quot;, &quot;&quot;, &quot;resume toy workflow ID and exit&quot;)
+traceID      := flag.String(&quot;trace&quot;, &quot;&quot;, &quot;print redacted spans for TRACE_ID and exit&quot;)
+flag.Parse()
+if *migrate { runMigrate(dsn); return }
+if *ingest  { runIngest(dsn, cfg.OllamaURL); return }
+// ... one if per mode ...
+// no flag → build the pgx pool, the router, the MCP server, and serve HTTP</code></pre><p>The CLI modes open <b>one short-lived connection</b> (connect, do the work, exit). The long-running server mode opens a <b>connection pool</b> because it handles many requests.</p>
+<h2>Try it yourself</h2>
+<p>Run <code>go run . --help</code>. Every mode is listed with a one-line description. Nothing is hidden.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why flags instead of subcommands (like <code>agentops migrate</code>)?</div><div class="a"><span class="tag">A</span> Flags were the simplest thing that works with the standard library <code>flag</code> package. Subcommands would be nicer at scale; for 12 modes flags are fine and need zero dependencies.</div><div class="q"><span class="tag">Q</span> Isn't a scheduler a separate service normally?</div><div class="a"><span class="tag">A</span> Yes, but ADR-0006 says: a scheduler here is <code>--schedule-evals 24h</code>, a loop in the same binary. Any cron or systemd timer can run it. Zero new deps.</div><div class="q"><span class="tag">Q</span> How does the MCP mode share stats with HTTP mode?</div><div class="a"><span class="tag">A</span> Both call the same <code>router.Server.Chat()</code> method, so the same in-memory counters get incremented no matter who asks.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Flags pick the mode; each mode returns early.</li><li>CLI modes: one connection. Server mode: a pool.</li><li>Shared code paths keep stats honest.</li></ul></div>
+<nav class="bottom"><a href="03-repo-layout.html">← 3. The repo layout</a><a href="05-config-from-env.html">5. Configuration from environment variables →</a></nav>
+</div></body></html>

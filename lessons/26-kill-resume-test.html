@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>26 · The kill -9 test — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 26 of 30</span></header>
+<div class="part">Part 5 · The durable task tracker</div>
+<h1>The kill -9 test</h1>
+<h2>In one sentence</h2>
+<div class="one">The proof of durability is a test where step 2 fails, the workflow is re-run with the same id, and step 1 is <i>not</i> executed again.</div>
+<h2>Why it exists</h2>
+<p>'It resumes' is a claim. An automated test that counts how many times each step ran is proof — and it runs in milliseconds with the in-memory store, so it can't rot.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// tracker/tracker_test.go
+researcher  := okFunc(&amp;nR, &quot;ctx: durable workflows&quot;)
+drafterFail := func(...) { nD++; return &quot;&quot;, errors.New(&quot;killed mid-drafter&quot;) }   // simulates kill -9
+_, err := RunToy(ctx, store, &quot;wf-kill&quot;, &quot; durable?&quot;, researcher, drafterFail, reviewer)
+// err != nil; researcher=done, drafter NOT done
+
+drafterOK := okFunc(&amp;nD, &quot;draft: durable workflows resume&quot;)
+final, err := RunToy(ctx, store, &quot;wf-kill&quot;, &quot; durable?&quot;, researcher, drafterOK, reviewer)   // SAME id
+// nR == 1  ← researcher ran once across both runs (no duplicate side effect)
+// nD == 2  ← drafter: 1 killed attempt + 1 successful
+// nV == 1, all steps done, workflow status done</code></pre><p>And the live version, against real Postgres + Ollama: started workflow <code>f7850f82f56fe6b9</code>, <code>taskkill /F</code> the process while <code>drafter=running</code>, DB showed <code>drafter running attempts=1</code>, <code>--resume-tracker f7850f82f56fe6b9</code> finished it 38 s later with <code>researcher attempts=1, drafter attempts=2, reviewer attempts=1</code>.</p>
+<h2>Try it yourself</h2>
+<p><code>go test ./tracker/ -run TestKillResume -v</code>. Then break it: comment out the <code>if st.Status == StatusDone { continue }</code> line and watch <code>nR</code> become 2.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> How do you prove crash recovery?</div><div class="a"><span class="tag">A</span> A test where a step function fails once, then the same workflow id is re-run with a working function, asserting each step's call count. Plus one real kill against Postgres, recorded in the plan.</div><div class="q"><span class="tag">Q</span> What does 'attempts' tell you?</div><div class="a"><span class="tag">A</span> How many times a step was started. attempts=2 with status=done means it was killed once and then succeeded — visible in the DB, no logs needed.</div><div class="q"><span class="tag">Q</span> What's not handled?</div><div class="a"><span class="tag">A</span> Two processes resuming the same id at once would both run the pending step. A <code>SELECT … FOR UPDATE SKIP LOCKED</code> lease fixes it; it's parked because a solo demo never hits it.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Fail step 2, re-run same id, count calls.</li><li>Researcher runs once; drafter attempts = 2.</li><li>Automated test + one recorded live kill.</li></ul></div>
+<nav class="bottom"><a href="25-durable-execution.html">← 25. Durable execution: workflows that survive crashes</a><a href="27-tracing-spans.html">27. Tracing: trace_id, span_id, parent_id →</a></nav>
+</div></body></html>

@@ -1,0 +1,32 @@
+{"question":"What determines which model a chat request is routed to by the AgentOps router?","answer":"A heuristic classifier that routes short simple prompts (200 characters or fewer without complexity keywords) to the fast model and longer or complex prompts (with keywords like analyze, compare, prove, contract, or summarize) to the quality model.","doc_ids":["01-router"]}
+{"question":"What metrics does the AgentOps router record and where are they served?","answer":"Prometheus metrics including per model request counter, per model token counter, and latency histogram, served at GET /metrics in Prometheus exposition format.","doc_ids":["01-router"]}
+{"question":"Which two models are used in Phase 1?","answer":"Qwen2.5 3B Instruct and Qwen2.5 7B Instruct quantized to 4 bit Q4","doc_ids":["02-models"]}
+{"question":"What is the VRAM requirement for both models in Phase 1?","answer":"8GB of VRAM","doc_ids":["02-models"]}
+{"question":"What HTTP method and endpoint does the router use to send requests to Ollama's API?","answer":"POST /api/generate","doc_ids":["03-ollama"]}
+{"question":"How does Ollama handle concurrent requests, and what is its limitation for Phase 1?","answer":"Ollama handles requests one at a time, suitable for single developer scale but falls over past a handful of simultaneous users, which is acceptable for Phase 1.","doc_ids":["03-ollama"]}
+{"question":"How many metrics does the router expose at GET /metrics?","answer":"Three","doc_ids":["04-metrics"]}
+{"question":"What is the range of buckets for the router latency seconds histogram?","answer":"From 0.05 seconds up to 120 seconds","doc_ids":["04-metrics"]}
+{"question":"What protocol and message format does the MCP server use?","answer":"JSON RPC 2.0 with newline delimited messages","doc_ids":["05-mcp"]}
+{"question":"Which three tools are exposed by the MCP server?","answer":"list models, get stats, route test request","doc_ids":["05-mcp"]}
+{"question":"Where is the golden set stored?","answer":"evals/golden/v1.jsonl","doc_ids":["06-golden"]}
+{"question":"How many question-answer pairs does an LLM initially draft for the golden set?","answer":"20 to 30","doc_ids":["06-golden"]}
+{"question":"What is the faithfulness scorer implemented in?","answer":"Hand-written Go code, not an imported eval library.","doc_ids":["07-faithfulness"]}
+{"question":"Why does the judge prompt require justification before the number?","answer":"To improve judge reliability by 15 to 25 percent.","doc_ids":["07-faithfulness"]}
+{"question":"What HTTP status code does Groq return when a limit is hit?","answer":"HTTP 429","doc_ids":["08-judges"]}
+{"question":"What is the effect of the hard zero dollar cost cap mentioned in the passage?","answer":"The project never pays for judging","doc_ids":["08-judges"]}
+{"question":"What model is used for everyday judging and what are its specifications?","answer":"The local Qwen2.5 7B model at 4 bit quantization.","doc_ids":["08-judges"]}
+{"question":"What is required to use the cross check service?","answer":"No credit card is needed for Groq's free tier.","doc_ids":["08-judges"]}
+{"question":"What are the three steps of the toy agent?","answer":"Researcher retrieves context, Drafter writes with the fast model, Reviewer checks with the local judge.","doc_ids":["09-tracker"]}
+{"question":"What components are used to build the task tracker?","answer":"The DBOS Go SDK dbos transact golang and a Postgres native durable execution library.","doc_ids":["09-tracker"]}
+{"question":"What is the format of the trace id generated per request?","answer":"A 16 character hex string","doc_ids":["10-traces"]}
+{"question":"What database stores spans along with their trace id, span id, and other attributes?","answer":"Postgres","doc_ids":["10-traces"]}
+{"question":"What triggers a drift alert according to the passage?","answer":"When faithfulness drops below the configured threshold.","doc_ids":["11-drift"]}
+{"question":"What does the MCP tool's drift report include?","answer":"The old score, new score, delta, and the worst failing cases.","doc_ids":["11-drift"]}
+{"question":"Where are vectors stored in the system described?","answer":"the same Postgres database as the tracker","doc_ids":["12-pgvector"]}
+{"question":"What is the type and source of the embedding column in the chunks table?","answer":"type vector 768 filled by the nomic embed text model through Ollama","doc_ids":["12-pgvector"]}
+{"question":"What is the VRAM capacity of the RTX 4060?","answer":"8GB","doc_ids":["13-vram"]}
+{"question":"Which model is used for heavy judging to keep VRAM free?","answer":"Groq's 70B model","doc_ids":["13-vram"]}
+{"question":"How many packages does the agentops project have?","answer":"Five packages: /router, /tracker, /evals, /dashboard, and /mcp.","doc_ids":["14-monorepo"]}
+{"question":"What command is used to build all packages in the agentops project?","answer":"go build ./...","doc_ids":["14-monorepo"]}
+{"question":"Which tools are prohibited as dependencies under the Independence rule?","answer":"TensorZero, LiteLLM, DeepEval, and Helicone","doc_ids":["15-independence"]}
+{"question":"What infrastructure primitives are explicitly allowed under the Independence rule?","answer":"DBOS Go SDK for durable execution, pgx driver for Postgres, and Prometheus and Grafana as observability infrastructure","doc_ids":["15-independence"]}

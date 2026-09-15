@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>15 · The corpus cleaner: chunking and dedup — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 15 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>The corpus cleaner: chunking and dedup</h1>
+<h2>In one sentence</h2>
+<div class="one">A 90-line Python script turns markdown docs into clean, overlapping, de-duplicated chunks — and running it twice gives the same result.</div>
+<h2>Why it exists</h2>
+<p>Garbage in, garbage out. Markdown symbols, code fences and duplicate paragraphs would pollute embeddings. And an ingest script that isn't idempotent creates duplicate rows every time you run it.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code># scripts/clean_docs.py
+CHUNK_SIZE, CHUNK_OVERLAP, MIN_CHUNK = 900, 120, 200
+
+def normalize(text):      # strip headings, code fences, markdown symbols, collapse spaces
+def chunk(text):          # pack paragraphs up to 900 chars; split long ones with 120-char overlap
+                          # drop chunks under 200 chars (headings, stubs)
+h = hashlib.sha256(c.encode()).hexdigest()[:16]     # content hash
+if h in seen: dropped += 1; continue                # dedup across all docs
+row = {&quot;doc_id&quot;: doc.stem, &quot;hash&quot;: h, &quot;text&quot;: c, &quot;source&quot;: doc.name}
+# finally: each .jsonl is rewritten as sorted(set(lines)) → idempotent
+print(f&quot;docs={len(docs)} chunks={written} dedup_dropped={dropped}&quot;)</code></pre><p>The hash does double duty: it dedups here <i>and</i> becomes the <code>UNIQUE</code> key in the <code>chunks</code> table, so re-ingesting upserts instead of duplicating.</p>
+<h2>Try it yourself</h2>
+<p>Run <code>python scripts/clean_docs.py</code> twice. The second run prints the same chunk count and the output files are byte-identical — that is what idempotent means.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why 900/120 and not 2000/500?</div><div class="a"><span class="tag">A</span> A previous project used 2000/500 for huge French PDFs. These docs are 2–4 paragraphs; 900 keeps one idea per chunk. Overlap avoids losing a sentence that straddles a boundary.</div><div class="q"><span class="tag">Q</span> Why hash the content?</div><div class="a"><span class="tag">A</span> Two reasons: skip exact duplicates, and give each chunk a stable identity so re-runs update in place instead of inserting again.</div><div class="q"><span class="tag">Q</span> Why Python here when everything else is Go?</div><div class="a"><span class="tag">A</span> Text cleanup with regexes is a 10-minute Python job. It runs once offline and writes plain JSONL that Go reads. Right tool, small blast radius.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>normalize → chunk → dedup by hash.</li><li>900 chars, 120 overlap, min 200.</li><li>Idempotent: run twice, same output.</li></ul></div>
+<nav class="bottom"><a href="14-rag-basics.html">← 14. RAG in plain words</a><a href="16-pgvector-hnsw.html">16. pgvector and HNSW: vector search inside Postgres →</a></nav>
+</div></body></html>

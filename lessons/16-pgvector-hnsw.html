@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>16 · pgvector and HNSW: vector search inside Postgres — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 16 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>pgvector and HNSW: vector search inside Postgres</h1>
+<h2>In one sentence</h2>
+<div class="one">Instead of a separate vector database, the chunks and their 768-number embeddings live in Postgres with the pgvector extension and an HNSW index.</div>
+<h2>Why it exists</h2>
+<p>One database to run, back up and reason about. The tracker and evals already need Postgres; adding Qdrant or OpenSearch would be a second container for a 16-chunk corpus. pgvector is the decision (ADR-0004).</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>-- migrations/0001_init.sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE chunks (
+  id SERIAL PRIMARY KEY,
+  doc_id TEXT NOT NULL REFERENCES docs(id),
+  hash TEXT NOT NULL UNIQUE,
+  text TEXT NOT NULL,
+  embedding vector(768),           -- nomic-embed-text produces 768 dims
+  ...
+);
+CREATE INDEX chunks_embedding_hnsw ON chunks
+  USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 128);
+
+-- evals/corpus.go — the search
+SELECT doc_id, hash, text, source FROM chunks
+ORDER BY embedding &lt;=&gt; $1::vector LIMIT $2;     -- &lt;=&gt; is cosine distance</code></pre><p><b>HNSW</b> (Hierarchical Navigable Small World) is a graph index for approximate nearest-neighbour search. <code>m=16</code> = links per node, <code>ef_construction=128</code> = how hard it works while building. Defaults are fine at this size; they matter at millions of rows.</p><p>The compose file uses the <code>pgvector/pgvector:pg16</code> image, so the extension is already installed.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>docker compose up -d
+go run . --migrate
+docker exec -it agentops-postgres psql -U agentops -c &quot;SELECT count(*) FROM chunks;&quot;</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why pgvector over Qdrant/OpenSearch?</div><div class="a"><span class="tag">A</span> Zero extra containers, one backup, and I already run Postgres for workflows. At solo scale the vector DB's extra features don't pay for the extra ops. I've used all three; the hybrid BM25+vector tuning is parked in the backlog.</div><div class="q"><span class="tag">Q</span> What does <code>&lt;=&gt;</code> mean?</div><div class="a"><span class="tag">A</span> pgvector's cosine-distance operator. Smaller = more similar. ORDER BY it, LIMIT k, and you have top-k retrieval.</div><div class="q"><span class="tag">Q</span> What's the difference between exact and HNSW search?</div><div class="a"><span class="tag">A</span> Exact compares the query to every row (fine for 16 rows). HNSW walks a graph and is approximate but stays fast at millions. The index is there so the code path is production-shaped.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Vectors in Postgres via pgvector.</li><li><=> is cosine distance; ORDER BY it, LIMIT k.</li><li>HNSW m=16, ef_construction=128.</li></ul></div>
+<nav class="bottom"><a href="15-corpus-cleaner.html">← 15. The corpus cleaner: chunking and dedup</a><a href="17-schema-and-migrations.html">17. The database schema and migrations →</a></nav>
+</div></body></html>

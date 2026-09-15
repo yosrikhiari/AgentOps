@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>08 · The HTTP server and one error shape — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 8 of 30</span></header>
+<div class="part">Part 2 · The router</div>
+<h1>The HTTP server and one error shape</h1>
+<h2>In one sentence</h2>
+<div class="one">A standard-library <code>net/http</code> server with three routes and exactly one JSON error format.</div>
+<h2>Why it exists</h2>
+<p>No web framework. Go 1.22+ routing patterns (<code>"POST /v1/chat/completions"</code>) make the stdlib enough. One error shape means every client — curl, Grafana, Claude via MCP — can parse failures the same way.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// router/server.go
+func NewServer(fastModel, qualityModel string, gen Generator) *Server {
+    s := &amp;Server{FastModel: fastModel, QualityModel: qualityModel, Ollama: gen, Metrics: NewMetrics()}
+    s.mux = http.NewServeMux()                          // built ONCE (deep-review fix #3)
+    s.mux.HandleFunc(&quot;POST /v1/chat/completions&quot;, s.handleChat)
+    s.mux.HandleFunc(&quot;GET /health&quot;, s.handleHealth)
+    s.mux.HandleFunc(&quot;GET /metrics&quot;, s.handleMetrics)
+    return s
+}
+
+type ErrorBody struct{ Error ErrorDetail `json:&quot;error&quot;` }
+type ErrorDetail struct {
+    Code    string `json:&quot;code&quot;`      // &quot;bad_request&quot;, &quot;ollama_unavailable&quot;, &quot;trace_not_found&quot;
+    Message string `json:&quot;message&quot;`
+    TraceID string `json:&quot;trace_id&quot;`  // so a user can quote it and you can find the trace
+}</code></pre><p>Status codes are deliberate: <b>400</b> missing prompt, <b>502</b> Ollama down (it's an upstream failure, not ours), <b>404</b> unknown trace id. In <code class="file">main.go</code> two more routes are added on top: <code>GET /v1/traces/{id}</code> and <code>GET /v1/drift/report</code>.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>curl -i localhost:8080/v1/chat/completions -d &#x27;{}&#x27;
+# HTTP/1.1 400 ... {&quot;error&quot;:{&quot;code&quot;:&quot;bad_request&quot;,&quot;message&quot;:&quot;prompt is required&quot;,&quot;trace_id&quot;:&quot;…&quot;}}</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why 502 and not 500 when Ollama is down?</div><div class="a"><span class="tag">A</span> 502 Bad Gateway means 'the thing behind me failed'. That's precisely what happened, and it tells an operator where to look.</div><div class="q"><span class="tag">Q</span> What was the ServeMux bug?</div><div class="a"><span class="tag">A</span> The first version built a new ServeMux inside ServeHTTP — on every request. It worked but allocated and re-registered routes per call. Deep-review caught it; now it's built once in NewServer.</div><div class="q"><span class="tag">Q</span> Why put trace_id in errors?</div><div class="a"><span class="tag">A</span> So a failing request is debuggable. The user pastes the id, I run <code>go run . --trace &lt;id&gt;</code> and see what happened.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>stdlib net/http, three routes, no framework.</li><li>One error shape: {error:{code,message,trace_id}}.</li><li>Build the mux once.</li></ul></div>
+<nav class="bottom"><a href="07-routing-rule.html">← 7. The routing rule (the 'traffic cop')</a><a href="09-interfaces-and-fakes.html">9. Interfaces and fakes: how the tests stay fast →</a></nav>
+</div></body></html>

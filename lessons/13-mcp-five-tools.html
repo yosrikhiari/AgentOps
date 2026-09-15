@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>13 · The five MCP tools — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 13 of 30</span></header>
+<div class="part">Part 3 · MCP control surface</div>
+<h1>The five MCP tools</h1>
+<h2>In one sentence</h2>
+<div class="one"><code>list_models</code>, <code>get_stats</code>, <code>route_test_request</code>, <code>inspect_trace</code>, <code>get_drift_report</code> — each one is a thin wrapper over something the router already does.</div>
+<h2>Why it exists</h2>
+<p>A tool should not contain logic. It should <i>expose</i> logic that exists and is tested elsewhere. That's why the MCP server takes a <code>*router.Server</code> and two lookup functions, and nothing else.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// mcp/server.go — the shape of every tool
+{ Name: &quot;route_test_request&quot;,
+  Description: &quot;Send one prompt through the router and see which model handled it and why.&quot;,
+  InputSchema: {&quot;type&quot;:&quot;object&quot;,&quot;properties&quot;:{&quot;prompt&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;prompt&quot;]} }
+
+case &quot;route_test_request&quot;:
+    prompt, _ := args[&quot;prompt&quot;].(string)
+    if prompt == &quot;&quot; { return nil, &amp;rpcError{Code: -32602, Message: &quot;prompt is required&quot;} }
+    out, err := s.Router.Chat(prompt, 0)          // SAME path as HTTP → same counters, same spans
+    ...
+case &quot;inspect_trace&quot;:
+    data, err := s.TraceLookup(traceID)           // injected from main.go (needs Postgres)
+    if errors.Is(err, tracker.ErrTraceNotFound) {
+        return nil, &amp;rpcError{Code: -32004, Message: fmt.Sprintf(&quot;trace %q not found&quot;, traceID)}
+    }</code></pre><p>Error codes follow JSON-RPC conventions: <code>-32601</code> unknown method/tool, <code>-32602</code> bad params, <code>-32000</code> server error (backend down), <code>-32004</code> not found, <code>-32700</code> parse error.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>printf &#x27;%s\n&#x27; &#x27;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;name&quot;:&quot;list_models&quot;,&quot;arguments&quot;:{}}}&#x27; | go run . --mcp</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why does route_test_request affect get_stats?</div><div class="a"><span class="tag">A</span> Because it calls the same <code>Router.Chat</code> the HTTP handler calls. If MCP had its own path, the stats would lie.</div><div class="q"><span class="tag">Q</span> How does the MCP server read traces without importing Postgres?</div><div class="a"><span class="tag">A</span> Dependency injection: main.go sets <code>mcpSrv.TraceLookup = func(id) { return queryTrace(pool, id) }</code>. The mcp package only knows 'a function that returns data or an error'.</div><div class="q"><span class="tag">Q</span> What's the input schema for?</div><div class="a"><span class="tag">A</span> The AI client reads it to know which arguments to send. It's JSON Schema; <code>required</code> tells Claude it must supply a prompt.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Tools wrap existing, tested logic.</li><li>Shared Chat() path keeps stats honest.</li><li>JSON-RPC error codes, not HTTP codes.</li></ul></div>
+<nav class="bottom"><a href="12-mcp-protocol.html">← 12. MCP: letting an AI assistant call your server</a><a href="14-rag-basics.html">14. RAG in plain words →</a></nav>
+</div></body></html>

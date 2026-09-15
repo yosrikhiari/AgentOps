@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>21 · LLM-as-judge: bias guards and prompt versioning — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 21 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>LLM-as-judge: bias guards and prompt versioning</h1>
+<h2>In one sentence</h2>
+<div class="one">When a model grades another model, you must guard against its known biases and record exactly which judge and which prompt produced every score.</div>
+<h2>Why it exists</h2>
+<p>LLM judges prefer longer answers, agree with the first thing they read, and change behaviour between versions. If you don't control for that, a 'score drop' might just be a judge mood swing.</p>
+<h2>How it works in this project</h2>
+<p>Guards implemented in <code class="file">evals/judge.go</code>:</p><ul><li><b>Justification before verdict.</b> The prompt forces 1–2 sentences of quoted evidence <i>before</i> the VERDICT line. Reasoning first makes the verdict less random.</li><li><b>Explicit 'ignore length and style'</b> in the prompt, to counter verbosity bias.</li><li><b>Robust parsing.</b> <code>parseVerdict</code> looks for <code>REFUTED</code>, <code>NOT SUPPORTED</code> or <code>UNSUPPORTED</code> <i>first</i>, then <code>SUPPORTED</code>. A deep-review found 'NOT SUPPORTED' used to parse as supported — because it contains the substring.</li><li><b>Provenance.</b> Every run stores <code>judge_model</code> and the constant <code>JudgePromptVersion = "faithfulness-v1"</code>. Change the prompt → bump the version.</li><li><b>Judge-change flag.</b> The drift report says <code>judge_changed: true</code> if the last two runs used different judges, so you don't chase a ghost.</li><li><b>Temperature 0.</b> The Groq judge always sent <code>temperature: 0</code>; the local Ollama judge sent nothing and sampled at the default. In the first full v1 run one pair scored 0.00 — asked again, the same judge said SUPPORTED. A coin-flip judge is not a metric. <code>NewOllamaJudge</code> now pins temperature 0 (<code>TestOllamaJudgeSendsTemperatureZero</code>).</li></ul><pre class="code"><code>// evals/judge.go
+if strings.Contains(rest, &quot;REFUTED&quot;) || strings.Contains(rest, &quot;NOT SUPPORTED&quot;) || strings.Contains(rest, &quot;UNSUPPORTED&quot;) {
+    return false, just
+}
+if strings.Contains(rest, &quot;SUPPORTED&quot;) { return true, just }</code></pre><p>Two judges are wired: local <code>qwen3:8b</code> (free, everyday) and Groq's <code>llama-3.1-8b-instant</code> behind <code>JUDGE_BACKEND=groq</code> (free tier, 14,400 req/day) as a cross-check. Temperature 0 on Groq for repeatability.</p>
+<h2>Try it yourself</h2>
+<p>Run <code>go test ./evals/ -v</code> and read the verdict-parsing test names. The 'NOT SUPPORTED' case is the one that used to be wrong.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What biases does an LLM judge have?</div><div class="a"><span class="tag">A</span> Verbosity (longer looks better), position (first option looks better in pairwise), self-preference, and drift across model versions. I counter with justification-first, explicit instructions, and logging judge + prompt version.</div><div class="q"><span class="tag">Q</span> What was the parsing bug?</div><div class="a"><span class="tag">A</span> 'VERDICT: NOT SUPPORTED' contains 'SUPPORTED', so a naive check returned true. Now the negative forms are checked first, with tests.</div><div class="q"><span class="tag">Q</span> How do you know a judge verdict is stable?</div><div class="a"><span class="tag">A</span> Run it twice. My first full run had one REFUTED that flipped to SUPPORTED on rerun — the local judge wasn't at temperature 0. Fixed and tested; determinism is a precondition for drift detection meaning anything.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Justification before verdict.</li><li>Check negative verdicts before positive ones.</li><li>Temperature 0 + log judge model + prompt version with every score.</li></ul></div>
+<nav class="bottom"><a href="20-retrieval-precision-recall.html">← 20. Retrieval precision and recall</a><a href="22-retry-backoff.html">22. Retry with backoff — and when NOT to retry →</a></nav>
+</div></body></html>

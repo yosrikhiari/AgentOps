@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>11 · Seeing the numbers: Grafana dashboard and k6 load test — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 11 of 30</span></header>
+<div class="part">Part 2 · The router</div>
+<h1>Seeing the numbers: Grafana dashboard and k6 load test</h1>
+<h2>In one sentence</h2>
+<div class="one">A Grafana dashboard stored as JSON draws the router's metrics in five panels, and a k6 script measures the router's own overhead at 50 requests/second.</div>
+<h2>Why it exists</h2>
+<p>Metrics nobody looks at are noise. Grafana turns the <code>/metrics</code> text into graphs; k6 turns 'the router is fast' into a measured p99. Both live in the repo as code so anyone can reproduce them.</p>
+<h2>How it works in this project</h2>
+<p><code class="file">dashboard/grafana/router.json</code> defines five panels:</p><ul><li><b>Requests/sec by model</b> — <code>rate(router_requests_total[1m])</code></li><li><b>p99 latency by model</b> — <code>histogram_quantile(0.99, rate(router_latency_seconds_bucket[5m]))</code></li><li><b>Tokens total by model</b> — <code>router_tokens_total</code></li><li><b>Eval faithfulness</b> — the gauge set after each eval run</li><li><b>Error rate by model</b> — <code>rate(router_errors_total[1m])</code></li></ul><p>The router only <i>exposes</i> numbers. Prometheus scrapes them, Grafana draws them. That app → scrape → draw separation is the whole architecture of observability tooling.</p><p><code class="file">load-tests/router.js</code> is the load test:</p><pre class="code"><code>scenarios: {
+  overhead: { executor: &#x27;constant-arrival-rate&#x27;, rate: 50, timeUnit: &#x27;1s&#x27;,
+              duration: &#x27;1m&#x27;, preAllocatedVUs: 10, exec: &#x27;health&#x27; },   // /health: no model call
+  chat:     { executor: &#x27;per-vu-iterations&#x27;, vus: 1, iterations: 2, exec: &#x27;chat&#x27; },
+},
+thresholds: {
+  &#x27;http_req_failed{scenario:overhead}&#x27;:   [&#x27;rate&lt;0.01&#x27;],   // &lt;1% errors
+  &#x27;http_req_duration{scenario:overhead}&#x27;: [&#x27;p(99)&lt;100&#x27;],   // p99 under 100 ms = pass/fail gate
+  &#x27;checks{scenario:chat}&#x27;:                [&#x27;rate&gt;0.99&#x27;],
+},</code></pre><p>Hitting <code>/health</code> (no model) isolates the Go server's overhead from the model's think time. Honest note: the plan targets p99 overhead <5 ms; the script's <b>gate</b> is 100 ms. The gate is what makes the run pass or fail; the 5 ms is what you read off the report.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>winget install k6
+docker run -d -p 3000:3000 grafana/grafana      # then Dashboards → Import → router.json
+go run .                                        # in one terminal
+k6 run load-tests/router.js                     # in another</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What does rate() do?</div><div class="a"><span class="tag">A</span> Turns a counter that only goes up into 'how many per second over the last window'. Counters are useless raw; rate() makes them a graph.</div><div class="q"><span class="tag">Q</span> Why hit /health and not the chat endpoint for overhead?</div><div class="a"><span class="tag">A</span> Chat latency is 99% model time. /health measures only the Go server: parsing, routing, JSON. That's the router's overhead.</div><div class="q"><span class="tag">Q</span> What's still owed on this checkbox?</div><div class="a"><span class="tag">A</span> Running it. k6 and Grafana aren't installed on the dev box yet; the JSON and the script exist and the code gate (≥3 panels, thresholds defined) is met. It's one of three human steps left.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Dashboard JSON lives in the repo; 5 panels.</li><li>App exposes → Prometheus scrapes → Grafana draws.</li><li>k6 on /health at 50 RPS = router overhead only.</li></ul></div>
+<nav class="bottom"><a href="10-prometheus-metrics.html">← 10. Prometheus metrics, written by hand</a><a href="12-mcp-protocol.html">12. MCP: letting an AI assistant call your server →</a></nav>
+</div></body></html>

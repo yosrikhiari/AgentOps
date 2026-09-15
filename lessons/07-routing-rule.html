@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>07 · The routing rule (the &#x27;traffic cop&#x27;) — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 7 of 30</span></header>
+<div class="part">Part 2 · The router</div>
+<h1>The routing rule (the 'traffic cop')</h1>
+<h2>In one sentence</h2>
+<div class="one">A prompt goes to the <b>fast</b> 3B model unless it is longer than 200 characters or contains a 'complex' keyword — then it goes to the <b>quality</b> 7B model.</div>
+<h2>Why it exists</h2>
+<p>The 7B model is slower and eats more VRAM. Most prompts ('hi', 'what time is it') don't need it. A rule you can explain in one sentence is a legitimate routing decision — and it beats a classifier you can't demo.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// router/router.go
+const (
+    FastReason    = &quot;short-simple-prompt&quot;
+    QualityReason = &quot;long-or-complex-prompt&quot;
+)
+
+var complexKeywords = []string{
+    &quot;analyze&quot;, &quot;compare&quot;, &quot;prove&quot;, &quot;contract&quot;, &quot;summarize&quot;,
+    &quot;analyse&quot;, &quot;comparer&quot;, &quot;résume&quot;, &quot;contrat&quot;, &quot;facture&quot;,   // French too
+}
+
+func Classify(prompt string) (tier string, reason string) {
+    p := strings.TrimSpace(prompt)
+    if len(p) &gt; 200 {
+        return &quot;quality&quot;, QualityReason
+    }
+    for _, kw := range complexKeywords {
+        if strings.Contains(strings.ToLower(p), kw) {
+            return &quot;quality&quot;, QualityReason
+        }
+    }
+    return &quot;fast&quot;, FastReason
+}</code></pre><p>The <b>reason string is returned to the caller and stored on the trace</b>, so every request can answer 'why did this go where it went?'. Three tests pin it: short→fast, 201 chars→quality, keyword→quality.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>curl -s localhost:8080/v1/chat/completions -d &#x27;{&quot;prompt&quot;:&quot;hi&quot;}&#x27;
+# → {&quot;text&quot;:&quot;...&quot;,&quot;model&quot;:&quot;qwen2.5:3b-instruct&quot;,&quot;reason&quot;:&quot;short-simple-prompt&quot;,&quot;trace_id&quot;:&quot;...&quot;}
+curl -s localhost:8080/v1/chat/completions -d &#x27;{&quot;prompt&quot;:&quot;compare these two contracts ...&quot;}&#x27;
+# → &quot;reason&quot;:&quot;long-or-complex-prompt&quot;</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Isn't a length check too simple?</div><div class="a"><span class="tag">A</span> It's a heuristic, and I say so. It's deterministic, testable, explainable, and costs 0 ms. The backlog has a learned classifier and shadow-testing as a v2 — after the MVP works.</div><div class="q"><span class="tag">Q</span> Why the French keywords?</div><div class="a"><span class="tag">A</span> The target users write in French (Tunisia). 'facture' (invoice) or 'contrat' signal a document task that deserves the quality model.</div><div class="q"><span class="tag">Q</span> How would you improve it?</div><div class="a"><span class="tag">A</span> Log (prompt features, model, latency, eval score) per request, then train a tiny classifier or use shadow-testing: run both models, score both, promote the cheaper one when it's statistically as good.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Rule: >200 chars or keyword → quality, else fast.</li><li>Reason string travels with every response and span.</li><li>Simple + explainable beats clever + undemoable.</li></ul></div>
+<nav class="bottom"><a href="06-ollama-client.html">← 6. Talking to a local LLM: the Ollama client</a><a href="08-http-server.html">8. The HTTP server and one error shape →</a></nav>
+</div></body></html>

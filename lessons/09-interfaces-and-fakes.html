@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>09 · Interfaces and fakes: how the tests stay fast — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 9 of 30</span></header>
+<div class="part">Part 2 · The router</div>
+<h1>Interfaces and fakes: how the tests stay fast</h1>
+<h2>In one sentence</h2>
+<div class="one">The router depends on a one-method <code>Generator</code> interface, so tests swap in a fake instead of a real model.</div>
+<h2>Why it exists</h2>
+<p>A test that needs Ollama running is not a unit test. Small interfaces at the boundary let every package test run in milliseconds, offline, deterministically.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// router/server.go — the boundary
+type Generator interface {
+    Generate(model, prompt string, maxTokens int) (string, int, error)
+}
+
+// router/router_test.go — the fake
+type fakeGen struct {
+    text string; tokens int; err error
+    model string; lastMaxTokens int      // records what it was called with
+}
+func (f *fakeGen) Generate(model, prompt string, maxTokens int) (string, int, error) {
+    f.lastMaxTokens = maxTokens; f.model = model
+    return f.text, f.tokens, f.err
+}
+
+// a test
+srv := NewServer(&quot;fast-m&quot;, &quot;quality-m&quot;, &amp;fakeGen{err: errors.New(&quot;down&quot;)})
+// ... POST → expect 502 + error.trace_id != &quot;&quot;</code></pre><p>The same trick everywhere: <code class="file">tracker/tracker.go</code> has a <code>Store</code> interface with <code>SQLStore</code> (real) and <code>MemStore</code> (test); <code class="file">evals/judge.go</code> has a <code>Judge</code> interface. <code class="file">main.go</code> wires the real ones.</p>
+<h2>Try it yourself</h2>
+<p>Run <code>go test ./router/ -v</code>. Notice it finishes in ~1–2 s with no Ollama and no Postgres running.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> How do you test code that calls an LLM?</div><div class="a"><span class="tag">A</span> Put the LLM call behind a one-method interface and inject a fake in tests. The fake returns canned text or an error and records what it was called with.</div><div class="q"><span class="tag">Q</span> What's the difference between MemStore and SQLStore?</div><div class="a"><span class="tag">A</span> Same interface. MemStore is maps behind a mutex, for tests. SQLStore issues the real SQL through tiny Execer/Queryer interfaces so it never imports pgx.</div><div class="q"><span class="tag">Q</span> How do you know a test actually guards something?</div><div class="a"><span class="tag">A</span> Bind-check: temporarily break the code, run the test, it must fail. I did that for the histogram test and the tracker resume test.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Interfaces at I/O boundaries: Generator, Store, Judge.</li><li>Fakes record calls and return canned results.</li><li>Tests run offline in seconds.</li></ul></div>
+<nav class="bottom"><a href="08-http-server.html">← 8. The HTTP server and one error shape</a><a href="10-prometheus-metrics.html">10. Prometheus metrics, written by hand →</a></nav>
+</div></body></html>

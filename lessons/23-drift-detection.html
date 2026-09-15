@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>23 · Drift detection: did the score drop? — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 23 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>Drift detection: did the score drop?</h1>
+<h2>In one sentence</h2>
+<div class="one">Every eval run is stored; the drift report compares the last two runs for a golden version and alerts when the latest score is below the threshold.</div>
+<h2>Why it exists</h2>
+<p>A model, a prompt, a corpus edit or an Ollama upgrade can quietly make answers worse. Drift detection turns 'I think it got worse' into a number, a delta, and the three worst questions.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>-- one row per run + one row per question (0002_drift.sql, ADR-0005)
+eval_runs(id, golden_version, judge_model, score, created_at)
+eval_pair_scores(run_id, question, faithfulness, precision, recall)
+
+// evals/drift.go
+SELECT ... FROM eval_runs WHERE golden_version=$1 ORDER BY created_at DESC LIMIT 2
+rep.ScoreNow, rep.ScoreThen = runs[0].score, runs[1].score
+rep.Delta        = ScoreNow - ScoreThen
+rep.Alert        = ScoreNow &lt; threshold            // EVAL_THRESHOLD, default 0.7
+rep.JudgeChanged = runs[0].judge != runs[1].judge  // don&#x27;t blame the corpus for a judge swap
+SELECT question, faithfulness ... WHERE run_id=$1 ORDER BY faithfulness ASC LIMIT 3   // worst cases</code></pre><p>Live proof: run 1 on good answers → <code>faith=1.000 alert=false</code>; run 2 with corrupted answers → <code>faith=0.000 alert=true delta=-1.000</code>, report lists 3 worst cases. The run header and pair rows are written in <b>one transaction</b> (deep-review fix #6) so a crash can't leave a header without scores.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>go run . --drift --drift-golden v1_draft
+curl localhost:8080/v1/drift/report
+# {&quot;golden_version&quot;:&quot;v1_draft&quot;,&quot;score_then&quot;:1,&quot;score_now&quot;:0,&quot;delta&quot;:-1,&quot;alert&quot;:true,&quot;worst_cases&quot;:[...]}</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> How do you detect regression in an AI system?</div><div class="a"><span class="tag">A</span> Store every eval score with its golden version and judge. Compare the latest to the previous, alert below a threshold, and surface the worst questions so you can look at them.</div><div class="q"><span class="tag">Q</span> Why store per-question scores, not just the average?</div><div class="a"><span class="tag">A</span> Because the average hides which question broke. Per-question rows let the report name the worst cases without re-running 32 judge calls.</div><div class="q"><span class="tag">Q</span> Why the judge_changed flag?</div><div class="a"><span class="tag">A</span> If run 1 used Qwen and run 2 used Llama, the delta measures the judges, not the system. The flag stops a false alarm.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Store every run; compare last two.</li><li>alert = latest < threshold; report delta + worst 3.</li><li>Header + pair rows in one transaction.</li></ul></div>
+<nav class="bottom"><a href="22-retry-backoff.html">← 22. Retry with backoff — and when NOT to retry</a><a href="24-scheduler-is-a-flag.html">24. The scheduler is a flag, not a service →</a></nav>
+</div></body></html>

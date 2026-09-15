@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>28 · The async span writer: never slow a request for telemetry — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 28 of 30</span></header>
+<div class="part">Part 6 · Traces and observability</div>
+<h1>The async span writer: never slow a request for telemetry</h1>
+<h2>In one sentence</h2>
+<div class="one">Router spans are pushed onto a buffered channel and written to Postgres by one background goroutine; a dead database costs the chat request nothing.</div>
+<h2>Why it exists</h2>
+<p>The first version opened a fresh Postgres connection <i>per span</i>, synchronously, three times per chat, with a 2 s timeout — so a down database added 6 s to every chat. Telemetry must never be on the request's critical path.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// main.go
+type spanWriter struct {
+    db      pgDB
+    queue   chan spanRecord          // 1024 deep
+    dropped atomic.Uint64
+}
+func newSpanWriter(db pgDB) *spanWriter { w := ...; go w.loop(); return w }
+
+func (w *spanWriter) loop() {               // ONE goroutine, in emit order
+    for rec := range w.queue {
+        ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+        _, err := w.db.Exec(ctx, `INSERT INTO spans ... ON CONFLICT DO NOTHING`, ...)
+        cancel()
+        if err != nil &amp;&amp; w.dropped.Add(1) == 1 { log.Printf(&quot;span sink: first write failure ...&quot;) }
+    }
+}
+func (w *spanWriter) Sink() router.SpanSink {
+    return func(traceID, spanID, parentID, name, attrs string) {
+        select {
+        case w.queue &lt;- spanRecord{...}:     // request path cost: one channel send
+        default: w.dropped.Add(1)           // queue full → drop, count, don&#x27;t block
+        }
+    }
+}</code></pre><p>The router itself only knows a <code>SpanSink</code> function type; in tests it's a slice-appending closure, in production it's this writer. The pgx <b>pool</b> (not a per-call connection) is shared by spans, traces and drift queries.</p>
+<h2>Try it yourself</h2>
+<p>Stop Postgres (<code>docker compose stop</code>) and send a chat. It still returns in model-time; the log shows one 'span sink: first write failure' line, not one per span.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> How do you keep observability from hurting latency?</div><div class="a"><span class="tag">A</span> Buffer it. Producers do a non-blocking channel send; one consumer goroutine does the I/O. Full buffer → drop and count. Never block the request.</div><div class="q"><span class="tag">Q</span> Why one goroutine and not one per span?</div><div class="a"><span class="tag">A</span> Ordering (spans arrive in emit order) and bounded concurrency (one DB writer, not thousands). A single ordered worker is the simplest correct design here.</div><div class="q"><span class="tag">Q</span> Why log only the first failure?</div><div class="a"><span class="tag">A</span> A down database would otherwise print thousands of identical lines. First failure + a dropped counter is enough to diagnose without flooding.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Non-blocking send on the request path.</li><li>One ordered goroutine writes to the pool.</li><li>Drop + count when full; log first failure once.</li></ul></div>
+<nav class="bottom"><a href="27-tracing-spans.html">← 27. Tracing: trace_id, span_id, parent_id</a><a href="29-deep-review-findings.html">29. What a deep review found (and why each bug mattered) →</a></nav>
+</div></body></html>

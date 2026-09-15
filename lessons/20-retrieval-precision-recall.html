@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>20 · Retrieval precision and recall — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 20 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>Retrieval precision and recall</h1>
+<h2>In one sentence</h2>
+<div class="one">Precision@k = of the k chunks we fetched, how many came from the right document. Recall@k = of the right documents, how many did we fetch.</div>
+<h2>Why it exists</h2>
+<p>Faithfulness tells you if the answer matches the context. Precision/recall tell you if the <i>context itself</i> was the right one. A perfect answer to the wrong passage still fails the user.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// evals/scorer.go
+func PrecisionRecall(retrieved []string, relevant []string, k int) (precision, recall float64) {
+    retrieved = retrieved[:k]                    // top-k doc ids we fetched
+    hits  := count of retrieved chunks whose doc is relevant     // a doc fetched twice counts twice
+    found := set of relevant docs seen at least once             // a doc fetched twice counts once
+    return hits / len(retrieved), len(found) / len(relevant)
+}</code></pre><p>The first version used <code>hits</code> for both. The full v1 run printed <b>recall = 2.0</b> for one pair: <code>08-judges</code> is the one doc that split into two chunks, both were retrieved, so 2 hits ÷ 1 relevant doc. Recall can't exceed 1 by definition — the average <code>recall=1.031</code> in the log was the tell. Fixed with a set; <code>TestRecallCountsUniqueDocs</code> pins it.</p><p>Worked example, k=5, golden says the answer lives in <code>01-router</code>: we fetch 5 chunks and 1 is from <code>01-router</code> → precision 0.20, recall 1.00. That's what the live run printed, and it's <i>honest</i>: with one relevant doc per question, precision@5 can never exceed 0.20. The number isn't bad; the metric's ceiling is.</p>
+<h2>Try it yourself</h2>
+<p>Look at the <code>p=</code> and <code>r=</code> columns in a <code>--score</code> log. Recall is what matters with single-doc goldens: 1.00 means the right doc was in the top 5.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Precision was 0.20 — isn't that terrible?</div><div class="a"><span class="tag">A</span> It's the ceiling. Each golden names one relevant doc; with k=5, the best possible precision is 1/5. Recall (did we find it?) is the informative number here.</div><div class="q"><span class="tag">Q</span> How would you make precision meaningful?</div><div class="a"><span class="tag">A</span> Either label more relevant docs per question, or measure at k=1, or compare chunk ids instead of doc ids. Each is a small change to PrecisionRecall.</div><div class="q"><span class="tag">Q</span> How did you catch the recall bug?</div><div class="a"><span class="tag">A</span> The suite average printed recall=1.031. A ratio bounded by 1 that averages above 1 means the formula is wrong somewhere — one pair had recall 2.0 because its doc's two chunks were both retrieved. Sanity-check every metric against its own bounds.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Precision = fetched that are right. Recall = right that were fetched (unique docs).</li><li>Single-doc goldens cap precision@5 at 0.20.</li><li>A bounded metric averaging out of bounds is a bug, not a result.</li></ul></div>
+<nav class="bottom"><a href="19-faithfulness-scorer.html">← 19. The faithfulness scorer: split claims, judge each one</a><a href="21-judge-bias-guards.html">21. LLM-as-judge: bias guards and prompt versioning →</a></nav>
+</div></body></html>

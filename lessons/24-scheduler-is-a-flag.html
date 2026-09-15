@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>24 · The scheduler is a flag, not a service — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 24 of 30</span></header>
+<div class="part">Part 4 · The fact-checker (RAG + evals)</div>
+<h1>The scheduler is a flag, not a service</h1>
+<h2>In one sentence</h2>
+<div class="one"><code>--schedule-evals 24h</code> runs the exact same scoring function in a loop, forever, and logs loudly if one tick fails.</div>
+<h2>Why it exists</h2>
+<p>A separate scheduler service means another process, another config, another thing to deploy. A loop in the existing binary can be run by cron, systemd, Docker or a terminal. ADR-0006.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// main.go
+func runScheduler(dsn, ollamaURL, goldenPath, goldenVersion, every string) {
+    d, err := time.ParseDuration(every)              // &quot;24h&quot;, &quot;30m&quot;
+    if err != nil || d &lt;= 0 { log.Fatalf(...) }
+    for {
+        if err := scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion); err != nil {
+            log.Printf(&quot;scheduled eval failed: %v&quot;, err)   // loud, but the loop survives
+        }
+        log.Printf(&quot;next scheduled eval in %s&quot;, d)
+        time.Sleep(d)
+    }
+}</code></pre><p>Two properties worth naming: <b>it shares <code>scoreOnce</code></b> with <code>--score</code>, so there is one code path to test; and the golden file is <b>re-read every tick</b>, so freezing <code>v1.jsonl</code> is picked up without a restart. The HTTP server loads the <code>eval_faithfulness</code> gauge from the latest stored run at startup.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>go run . --schedule-evals 30m --golden evals/golden/v1_draft.jsonl --golden-version v1_draft</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why not cron?</div><div class="a"><span class="tag">A</span> You can use cron: <code>go run . --score</code> nightly. The flag is for boxes without cron and for a single-command demo. Both call the same function.</div><div class="q"><span class="tag">Q</span> What happens if Ollama is down at 3am?</div><div class="a"><span class="tag">A</span> That tick logs 'scheduled eval failed' and the loop sleeps until the next one. No crash, no silent skip.</div><div class="q"><span class="tag">Q</span> What would you add for production?</div><div class="a"><span class="tag">A</span> A lease so two replicas don't run the same tick, metrics for last-success time, and an alert if no run succeeded in 2× the interval.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Same scoreOnce as --score.</li><li>Failure logs loudly, loop survives.</li><li>Golden file re-read each tick.</li></ul></div>
+<nav class="bottom"><a href="23-drift-detection.html">← 23. Drift detection: did the score drop?</a><a href="25-durable-execution.html">25. Durable execution: workflows that survive crashes →</a></nav>
+</div></body></html>

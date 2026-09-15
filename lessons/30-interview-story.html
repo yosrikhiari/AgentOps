@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>30 · How to tell this story in an interview — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 30 of 30</span></header>
+<div class="part">Part 7 · Engineering process</div>
+<h1>How to tell this story in an interview</h1>
+<h2>In one sentence</h2>
+<div class="one">Pitch it as: <i>'I built a focused, from-scratch version of the AgentOps pattern — router, durable tracker, evals, traces — in Go, informed by how TensorZero, Bifrost, Temporal and Langfuse solve the same problems.'</i></div>
+<h2>Why it exists</h2>
+<p>Claiming novelty invites 'isn't that just TensorZero?'. Claiming <i>understanding</i> — you studied the real tools and rebuilt the core with your own decisions and tests — is a stronger, more credible answer.</p>
+<h2>How it works in this project</h2>
+<p>A 90-second version:</p><ul><li><b>Problem.</b> Running LLMs in a product raises four ops questions: which model, what if it crashes mid-task, is it still truthful, what happened to this request.</li><li><b>What I built.</b> One Go binary: a heuristic router over two local Ollama models with hand-written Prometheus metrics; a Postgres-native durable tracker proven by a kill-resume test; a claim-level faithfulness scorer with bias guards, retry/backoff and drift alerts; OTel-shaped traces; and an MCP server so Claude can query all of it.</li><li><b>Decisions I can defend.</b> pgvector over a separate vector DB (ADR-0004). Row-status durability over DBOS (ADR-0003). Scheduler as a flag (ADR-0006). Per-question eval rows for worst-case reporting (ADR-0005). Heuristic router first, classifier later.</li><li><b>What went wrong.</b> A deep-review found 15 defects after tests were green — the Prometheus label bug would have blanked the dashboard. I fixed each with a test that fails on the old code.</li><li><b>What's next.</b> Pull the Qwen2.5 pair, run k6 + Grafana, record the MCP demo. Then corpus v2 (docs rewritten to match the shipped code) and shadow-test auto-promotion of the cheaper model.</li></ul><p>Numbers to have ready: 5 packages, 1 dependency, 38 tests, 5 MCP tools, 5 Grafana panels, 7 tables, 15 docs → 16 chunks, 32 golden pairs (frozen v1), 3 spans per chat, faithfulness 1.00 vs 0.00 on good vs corrupted answers, 0.969 on the full frozen set.</p>
+<h2>Try it yourself</h2>
+<p>Say the 90-second version out loud, once, with the numbers. Then open any lesson in this folder and answer its three Q&As without looking.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Isn't this just a toy?</div><div class="a"><span class="tag">A</span> It's small on purpose — every piece is real: real Prometheus format Grafana reads, real MCP a Claude client speaks, real durability against a real kill, real judge calls with real retry policy. Small and finished was the goal.</div><div class="q"><span class="tag">Q</span> What would you do differently?</div><div class="a"><span class="tag">A</span> Write the corpus docs <i>after</i> the code, not before — several describe the planned design (DBOS, 3 MCP tools) rather than what shipped, which is fine for a RAG target but confusing for a reader. And add a schema_migrations table before the first ALTER.</div><div class="q"><span class="tag">Q</span> Why should we believe your tests?</div><div class="a"><span class="tag">A</span> Because I bind-checked them: revert the fix, the test fails. And because three of the six checkboxes were closed by <i>live</i> runs recorded in the plan, not by 'code exists'.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Pitch understanding, not novelty.</li><li>Problem → built → decisions → what broke → next.</li><li>Have the numbers ready.</li></ul></div>
+<nav class="bottom"><a href="29-deep-review-findings.html">← 29. What a deep review found (and why each bug mattered)</a><a href="index.html">Back to index →</a></nav>
+</div></body></html>

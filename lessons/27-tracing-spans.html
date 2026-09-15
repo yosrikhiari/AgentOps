@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>27 · Tracing: trace_id, span_id, parent_id — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 27 of 30</span></header>
+<div class="part">Part 6 · Traces and observability</div>
+<h1>Tracing: trace_id, span_id, parent_id</h1>
+<h2>In one sentence</h2>
+<div class="one">A trace is the story of one request; a span is one step in it. Every span carries <code>trace_id</code> (which story), <code>span_id</code> (which step) and <code>parent_id</code> (which step came before).</div>
+<h2>Why it exists</h2>
+<p>Metrics tell you 'p99 got worse'. Traces tell you 'request 598d… spent its time in model.generate'. This is the OpenTelemetry data shape, which is what Langfuse and Phoenix ingest — so a real tool could read these spans later.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>-- the table (0001_init.sql)
+spans(trace_id, span_id, parent_id, name, started_at, attrs JSONB)   PRIMARY KEY (trace_id, span_id)
+
+// router/server.go — a chat emits 3 spans, chained
+route.decide     parent=&quot;&quot;            attrs {&quot;tier&quot;:&quot;fast&quot;,&quot;reason&quot;:&quot;short-simple-prompt&quot;}
+model.generate   parent=decideSpan    attrs {&quot;model&quot;:&quot;qwen2.5:3b-instruct&quot;}
+router.respond   parent=genSpan       attrs {&quot;model&quot;:&quot;...&quot;}
+
+// tracker/tracker.go — a workflow emits 1 span per step, trace_id = workflow_id
+researcher / drafter / reviewer   attrs {&quot;seq&quot;:0,&quot;output_snippet&quot;:&quot;first 200 chars&quot;}</code></pre><p>Reading them back: <code>GET /v1/traces/{id}</code>, <code>go run . --trace &lt;id&gt;</code>, or the MCP tool <code>inspect_trace</code> — all three call the same <code>ListSpans</code>, which runs <code>RedactAttrs</code> to drop <code>prompt/input/text/output</code> keys. Prompts never leave the database through the read path.</p><p>Unknown id → <code>404 {error:{code:"trace_not_found",…}}</code> over HTTP, <code>-32004</code> over MCP (used to be <code>200 {spans:null}</code>; fixed in the live pass).</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>curl -s localhost:8080/v1/chat/completions -d &#x27;{&quot;prompt&quot;:&quot;hi&quot;}&#x27; | jq .trace_id
+curl -s localhost:8080/v1/traces/&lt;trace_id&gt; | jq &#x27;.spans[] | {name, parent_id}&#x27;</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> What's the difference between a trace and a span?</div><div class="a"><span class="tag">A</span> A trace is the whole request (one id). Spans are its steps; each has its own id and points to its parent. Together they form a tree you can render as a timeline.</div><div class="q"><span class="tag">Q</span> Why redact on read?</div><div class="a"><span class="tag">A</span> Prompts may contain user data. Storing them lets me debug; redacting on every read path (HTTP, CLI, MCP) means no consumer sees them by accident. Retention is 30 days by policy.</div><div class="q"><span class="tag">Q</span> Any known imperfection?</div><div class="a"><span class="tag">A</span> Tracker step spans use parent_id = workflow_id (the trace id) instead of the previous span id. Router spans chain properly. It's cosmetic until you export to Langfuse; the fix is a root span — parked in the backlog.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>trace_id = which request; span_id = which step; parent_id = the tree.</li><li>Router: 3 chained spans. Tracker: 1 span per step.</li><li>Redact on every read path.</li></ul></div>
+<nav class="bottom"><a href="26-kill-resume-test.html">← 26. The kill -9 test</a><a href="28-async-span-writer.html">28. The async span writer: never slow a request for telemetry →</a></nav>
+</div></body></html>

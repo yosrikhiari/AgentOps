@@ -85,7 +85,7 @@ Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (eve
 | `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |
 | `SENSITIVE_KEYWORDS` | built-in list | comma-separated override |
 | `ADDR` | `:8080` | listen address |
-| `POSTGRES_DSN` | `postgres://agentops:agentops@localhost:5432/agentops` | spans, traces, evals, workflows, api keys |
+| `POSTGRES_DSN` | built from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` (defaults `agentops` / `agentops` / `localhost` / `5432` / `agentops`, the same ones `docker-compose.yml` uses) | spans, traces, evals, workflows, api keys |
 
 Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval suite*, `--ingest`, `--draft-golden`):
 

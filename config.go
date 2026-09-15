@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 )
 
@@ -33,4 +34,25 @@ func loadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("invalid config")
 	}
 	return Config{OllamaURL: ollamaURL, Addr: addr, FastModel: fast, QualityModel: quality}, nil
+}
+
+// envOr returns the environment variable or a default when it is unset or empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// defaultDSN assembles the local-dev Postgres DSN from the same POSTGRES_* variables
+// docker-compose.yml uses, so `docker compose up postgres` and `go run .` agree without
+// any configuration. POSTGRES_DSN, when set, wins outright (see main.go).
+func defaultDSN() string {
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(envOr("POSTGRES_USER", "agentops"), envOr("POSTGRES_PASSWORD", "agentops")),
+		Host:   envOr("POSTGRES_HOST", "localhost") + ":" + envOr("POSTGRES_PORT", "5432"),
+		Path:   "/" + envOr("POSTGRES_DB", "agentops"),
+	}
+	return u.String()
 }

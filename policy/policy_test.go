@@ -198,8 +198,9 @@ func TestPolicySpanSinkIsNonBlocking(t *testing.T) {
 }
 
 // RULE every environment variable the code reads is documented in docs/API.md.
+// Reads go through os.Getenv or the envOr(key, default) helper in config.go.
 func TestPolicyEnvVarsDocumented(t *testing.T) {
-	re := regexp.MustCompile(`os\.Getenv\("([A-Z0-9_]+)"\)`)
+	re := regexp.MustCompile(`(?:os\.Getenv|envOr)\("([A-Z0-9_]+)"`)
 	docs := read(t, "docs/API.md")
 	seen := map[string]bool{}
 	for _, f := range goFiles(t) {

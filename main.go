@@ -649,7 +649,7 @@ func main() {
 	}
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
-		dsn = "postgres://agentops:agentops@localhost:5432/agentops"
+		dsn = defaultDSN()
 	}
 	if *migrate {
 		runMigrate(dsn)

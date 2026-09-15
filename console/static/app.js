@@ -14,7 +14,6 @@
     if (attrs) for (const [k, v] of Object.entries(attrs)) {
       if (k === 'class') el.className = v;
       else if (k === 'onclick') el.addEventListener('click', v);
-      else if (k === 'html') el.innerHTML = v;
       else if (v !== null && v !== undefined) el.setAttribute(k, v);
     }
     for (const c of children.flat()) {

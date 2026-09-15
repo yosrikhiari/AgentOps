@@ -16,7 +16,7 @@ Build once, then point Claude Desktop at the binary:
         "OLLAMA_URL": "http://localhost:11434",
         "FAST_MODEL": "qwen2.5:3b-instruct",
         "QUALITY_MODEL": "qwen2.5:7b-instruct-q4_K_M",
-        "POSTGRES_DSN": "postgres://agentops:agentops@localhost:5432/agentops"
+        "POSTGRES_DSN": "postgres://USER:PASSWORD@localhost:5432/agentops"
       }
     }
   }

@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v16, 2026-09-15 — v1.0.0 released; documentation pass: README, CHANGELOG, 8 ADRs, PRIVACY, API/env reference, lessons and corpus v3 reconciled with the shipped code)
+# AgentOps Platform — Project Plan (v17, 2026-09-15 — engineering rule set `docs/RULES.md` + 11 executable policies in `policy/`; staticcheck + govulncheck in CI (one real CVE fixed); 68 tests)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -368,7 +368,7 @@ Pull from this list only after the six MVP checkboxes are all checked.
 task type once proven equivalent (needs a real sample-size gate, e.g. n≥100, p<0.05 — not vibes).
 
 **Hardening, once the MVP is solid:**
-- A one-page threat model (STRIDE-lite). ~~Fail-closed rule~~ — shipped in v1.0 Track B for
+- ~~A one-page threat model (STRIDE-lite)~~ — `docs/RULES.md` §9 (v17), each threat with its control and enforcing test. ~~Fail-closed rule~~ — shipped in v1.0 Track B for
   routing (ADR-0007); the eval judge is still local-by-default only, not enforced.
 - SLOs per phase (e.g., router overhead budget, judge scheduler success rate). ~~Basic load
   test~~ — k6 gate shipped and passed (0/2725 at 50 RPS, p99 70 ms); formal SLOs not written.
@@ -429,6 +429,17 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-15 (11th pass, rules + executable policies).** `docs/RULES.md` written: problem fit,
+optimization order, success measures, architecture (modular monolith, sync core + bounded
+async edges, explicitly not event-driven and why), the sync/async rule (bounded, non-blocking,
+observable, safe to lose), a retry matrix per call site, latency and scalability budgets with
+their honest limits, STRIDE-lite security table, runtime guardrails, testing + experiment rules,
+static analysis. `policy/` package: 11 tests that fail the build on a broken rule; the very
+first run caught `--drift-golden` and `--tracker-input` missing from README. CI gained a
+`policy` job (staticcheck v0.8.1, govulncheck, policy tests); govulncheck found GO-2026-5970
+in `golang.org/x/text@v0.29.0` (indirect via pgx) — bumped to v0.39.0, clean. Also: the v3
+score run was killed with the previous session at pair 15 (nothing written) and re-run.
+68 tests.
 **2026-09-15 (10th pass, v1.0 Tracks A/B/C — see §9 for per-ticket proof).** Track A: Docker
 (21.7 MB distroless), CI (gofmt/vet/race/build/docker), release job → `v0.1.0` with 3 binaries,
 `schema_migrations`, Dependabot. Track B: `Backend` interface, Ollama on `/api/chat` + NDJSON

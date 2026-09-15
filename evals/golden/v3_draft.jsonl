@@ -1,0 +1,72 @@
+{"question":"What happens to prompts of 200 characters or fewer without complexity keywords when the model field is auto or absent?","answer":"They go to the fast model.","doc_ids":["01-router"]}
+{"question":"Which model do longer prompts or prompts containing words like analyze, compare, prove, contract, or summarize go to?","answer":"The quality model.","doc_ids":["01-router"]}
+{"question":"What is the endpoint URL for the AgentOps router's chat completions?","answer":"/v1/chat/completions","doc_ids":["01-router"]}
+{"question":"What additional fields does the AgentOps router include in its response compared to OpenAI's chat.completion object?","answer":"text, reason, backend, trace_id","doc_ids":["01-router"]}
+{"question":"What is the order in which the router attempts candidates for each request?","answer":"The chosen tier, then the other local tier, then a cloud model if one is configured.","doc_ids":["01-router"]}
+{"question":"What is the structure of the JSON error shape used by the router?","answer":"An error object with a code, a message, and the request's trace_id.","doc_ids":["01-router"]}
+{"question":"Which models are used in Phase 1?","answer":"Qwen2.5 3B-Instruct as the fast tier and Qwen2.5 7B-Instruct quantized to 4-bit Q4 as the quality tier.","doc_ids":["02-models"]}
+{"question":"What is the VRAM requirement for both models?","answer":"8GB of VRAM.","doc_ids":["02-models"]}
+{"question":"What HTTP method is used for the health probe in Ollama?","answer":"GET","doc_ids":["03-ollama"]}
+{"question":"What is the response format when the stream flag is set to false in Ollama's API?","answer":"A single JSON object whose message.content holds the text plus token counts: prompt_eval_count for input tokens and eval_count for output tokens","doc_ids":["03-ollama"]}
+{"question":"How does Ollama handle incoming requests?","answer":"Ollama handles requests one at a time instead of batching them.","doc_ids":["03-ollama"]}
+{"question":"What error code is returned when all candidate backends fail?","answer":"The gateway returns 502 with the error code ollama_unavailable and a trace id.","doc_ids":["03-ollama"]}
+{"question":"What is the endpoint where the gateway exposes its metrics?","answer":"GET /metrics","doc_ids":["04-metrics"]}
+{"question":"How many metric families are there?","answer":"Eight","doc_ids":["04-metrics"]}
+{"question":"What does the router_requests_total metric count?","answer":"successful chats per model","doc_ids":["04-metrics"]}
+{"question":"What is the router_latency_seconds metric?","answer":"a histogram of end-to-end latency including the model call, with cumulative buckets from 0.05 seconds up to 120 seconds plus +Inf","doc_ids":["04-metrics"]}
+{"question":"How many panels does the Grafana dashboard draw?","answer":"five","doc_ids":["04-metrics"]}
+{"question":"What was the p99 latency recorded during the k6 script's run?","answer":"70 milliseconds","doc_ids":["04-metrics"]}
+{"question":"What does the list_models tool return?","answer":"Every served model with its tier, its backend, the result of the last health probe, and a per-backend status list.","doc_ids":["05-mcp"]}
+{"question":"What information does the get_drift_report tool provide?","answer":"The last two golden eval runs with their delta, alert flag, and worst cases.","doc_ids":["05-mcp"]}
+{"question":"What flag is used to run the Go binary as an MCP server?","answer":"--mcp","doc_ids":["05-mcp"]}
+{"question":"What JSON-RPC error code is returned for a malformed line in the MCP server?","answer":"-32700","doc_ids":["05-mcp"]}
+{"question":"Where is the golden set stored?","answer":"evals/golden/ as one JSON object per line","doc_ids":["06-golden"]}
+{"question":"What is the faithfulness score of version 2?","answer":"1.000","doc_ids":["06-golden"]}
+{"question":"What requirement must every golden answer meet?","answer":"Every golden answer must be a full declarative sentence with its own main clause.","doc_ids":["06-golden"]}
+{"question":"Why is the manual review step not optional?","answer":"Because a bad golden set silently makes every later eval score meaningless.","doc_ids":["06-golden"]}
+{"question":"What is the faithfulness scorer implemented as?","answer":"hand-written Go code in the evals package","doc_ids":["07-faithfulness"]}
+{"question":"What does the output of the faithfulness scorer include?","answer":"every claim, its verdict, the judge's justification, the judge model name, and the prompt version faithfulness-v1","doc_ids":["07-faithfulness"]}
+{"question":"Why does the judge use exponential backoff with jitter from day one?","answer":"To handle parallel LLM-judge calls hitting timeouts and flaky errors.","doc_ids":["07-faithfulness"]}
+{"question":"Which 4xx client error is retried by the system?","answer":"429, which waits for the server's Retry-After value.","doc_ids":["07-faithfulness"]}
+{"question":"What does Groq return when a limit is hit?","answer":"HTTP 429","doc_ids":["08-judges"]}
+{"question":"Why does the project never pay for judging?","answer":"A hard zero-dollar cost cap","doc_ids":["08-judges"]}
+{"question":"What is the planned judge model for everyday judging?","answer":"Qwen2.5 7B at 4-bit quantization","doc_ids":["08-judges"]}
+{"question":"Which service is used for cross-checking judgments?","answer":"Groq's free tier","doc_ids":["08-judges"]}
+{"question":"What happens to steps already marked done when resuming a workflow?","answer":"They are skipped and their stored output is reused.","doc_ids":["09-tracker"]}
+{"question":"What happens to the workflow's original input when resuming with a different input?","answer":"The workflow's original input wins over whatever input the resuming process was launched with.","doc_ids":["09-tracker"]}
+{"question":"What is the purpose of the task tracker?","answer":"keeps multi-step agent tasks alive through crashes","doc_ids":["09-tracker"]}
+{"question":"What are the three steps in the toy agent?","answer":"Researcher retrieves the top three corpus chunks from pgvector, Drafter writes a three-sentence brief with the fast model, and Reviewer approves a non-empty draft","doc_ids":["09-tracker"]}
+{"question":"What is the format of a trace ID in a request?","answer":"a 16-character hex string","doc_ids":["10-traces"]}
+{"question":"Where are spans stored according to the passage?","answer":"Postgres","doc_ids":["10-traces"]}
+{"question":"What are the methods to read spans?","answer":"GET /v1/traces/{id}, the --trace command-line flag, the inspect_trace MCP tool, and the Tower console's trace inspector","doc_ids":["10-traces"]}
+{"question":"How long are span rows retained?","answer":"30 days","doc_ids":["10-traces"]}
+{"question":"What are the three chained spans emitted by a router chat?","answer":"route.decide, model.generate, and router.respond","doc_ids":["10-traces"]}
+{"question":"What is the relationship between each span's parent and the previous span?","answer":"Each span's parent is the previous span.","doc_ids":["10-traces"]}
+{"question":"What is the default value of the EVAL_TIMEOUT setting?","answer":"ninety minutes","doc_ids":["11-drift"]}
+{"question":"Why does a run slow down during live traffic?","answer":"the judge and the chat models share one 8GB GPU","doc_ids":["11-drift"]}
+{"question":"What triggers a drift alert according to the passage?","answer":"When faithfulness drops below the configured threshold.","doc_ids":["11-drift"]}
+{"question":"What information does the MCP tool get_drift_report return?","answer":"The old score, new score, delta, whether the judge model changed, and the worst failing cases.","doc_ids":["11-drift"]}
+{"question":"Why was pgvector chosen over OpenSearch and Qdrant for solo use?","answer":"Because the corpus is tiny — fifteen documents and a few dozen chunks — where a two-node search cluster would be pure overhead.","doc_ids":["12-pgvector"]}
+{"question":"What hybrid weights were proven earlier and remain portable if the store changes?","answer":"BM25 0.6, vector 0.4, RRF k=60","doc_ids":["12-pgvector"]}
+{"question":"What is the type and model used for the embedding column in the chunks table?","answer":"vector 768 filled by the nomic-embed-text model through Ollama's embed endpoint","doc_ids":["12-pgvector"]}
+{"question":"What are the parameters for the HNSW index used in similarity search?","answer":"m=16 and ef_construction=128","doc_ids":["12-pgvector"]}
+{"question":"Where is the swap rule documented?","answer":"docs/VRAM.md","doc_ids":["13-vram"]}
+{"question":"What model is used for heavy judging to keep VRAM free?","answer":"Groq's 70B model","doc_ids":["13-vram"]}
+{"question":"What is the VRAM capacity of the RTX 4060?","answer":"8GB","doc_ids":["13-vram"]}
+{"question":"How much VRAM does nomic-embed-text require?","answer":"274 megabytes","doc_ids":["13-vram"]}
+{"question":"How many packages does the agentops project have?","answer":"six","doc_ids":["14-monorepo"]}
+{"question":"What is the only dependency outside the standard library for the project?","answer":"pgx Postgres driver","doc_ids":["14-monorepo"]}
+{"question":"What are the three layers of code structure in each package?","answer":"handler, service, repository","doc_ids":["14-monorepo"]}
+{"question":"What JSON structure do all errors share?","answer":"code, message, and trace id","doc_ids":["14-monorepo"]}
+{"question":"Which tools are explicitly prohibited as dependencies under the Independence rule?","answer":"TensorZero, LiteLLM, DeepEval, and Helicone.","doc_ids":["15-independence"]}
+{"question":"Which observability tools are allowed to be used as-is according to the Independence rule?","answer":"Prometheus and Grafana.","doc_ids":["15-independence"]}
+{"question":"How is the API key's secret stored?","answer":"Only its SHA-256 hash","doc_ids":["16-gateway"]}
+{"question":"What error codes are returned when API rate limits are exceeded?","answer":"429 rate_limited with a Retry-After header or 403 budget_exceeded","doc_ids":["16-gateway"]}
+{"question":"What is the final chunk in a streaming request's response?","answer":"It carries the usage, reason, backend, and trace id, and ends with a DONE marker.","doc_ids":["16-gateway"]}
+{"question":"How does the health prober handle backend checks?","answer":"It checks every backend every 15 seconds and publishes the result as the router_backend_up gauge and in GET /v1/models.","doc_ids":["16-gateway"]}
+{"question":"What elements are displayed on the overview page?","answer":"status strip, metric cards, bar chart, backend health table, recent requests table","doc_ids":["17-console"]}
+{"question":"What features are available on the evals page?","answer":"charts every run of a golden version against the alert threshold, lists the worst cases and runs, and offers a Run eval suite button","doc_ids":["17-console"]}
+{"question":"Which endpoints does the console read, and what data sources do they use?","answer":"The console reads the endpoints /v1/overview, /v1/requests, /v1/evals/runs and /v1/workflows, all of which derive their data from spans and the eval and workflow tables.","doc_ids":["17-console"]}
+{"question":"What action does every page take when the user navigates away?","answer":"Every page cancels its fetches when the user navigates away.","doc_ids":["17-console"]}
+{"question":"What is the Tower console?","answer":"The web interface served by the gateway at the root path.","doc_ids":["17-console"]}
+{"question":"What are the three static files that make up the Tower console?","answer":"An HTML page, a stylesheet built on the Tower design tokens, and a small JavaScript router.","doc_ids":["17-console"]}

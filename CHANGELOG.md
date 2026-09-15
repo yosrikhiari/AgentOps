@@ -2,6 +2,13 @@
 
 All notable changes. Dates are 2026.
 
+## Unreleased
+
+- `docs/RULES.md`: the engineering rule set (problem fit, what we optimize for, success measures, architecture style, sync vs async, retries, latency, scalability, security, guardrails, testing/experiments, static analysis).
+- `policy/` package: 11 executable policies (single direct dependency, prompts never in spans, sensitive never cloud, one error shape, non-blocking span sink, env vars and flags documented, contiguous migrations, ADRs indexed, no same-backend retry, rules cite real tests). Found two undocumented flags on its first run.
+- CI `policy` job: `staticcheck` (v0.8.1), `govulncheck`, policy tests. `govulncheck` found GO-2026-5970 in `golang.org/x/text` (indirect via pgx) — bumped to v0.39.0.
+- Documentation pass: README rewrite, CHANGELOG, `docs/adr/0001–0008`, PRIVACY rewrite, `docs/API.md` env reference, MCP README, lessons reconciled, corpus v3 (17 docs → 36 chunks) with golden v3 (72 pairs).
+
 ## v1.0.0 — 2026-09-15
 
 The MVP becomes a product: an installable gateway with a console.

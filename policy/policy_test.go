@@ -1,0 +1,342 @@
+// Package policy turns the rules in docs/RULES.md into tests. Each test names the rule it
+// enforces; if a rule cannot be checked mechanically it is not here, it is in the doc with
+// the word "review" next to it. CI runs this package like any other.
+package policy
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"testing"
+
+	"agentops/router"
+	"agentops/tracker"
+)
+
+var repo = func() string {
+	wd, _ := os.Getwd()
+	return filepath.Dir(wd) // policy/ lives one level below the module root
+}()
+
+func read(t *testing.T, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repo, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	return string(b)
+}
+
+// goFiles returns every non-test .go file under the module, excluding this package.
+func goFiles(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(repo, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "policy" || d.Name() == "lessons") {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
+			out = append(out, p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// RULE dependencies: the only direct dependency is the Postgres driver. Anything that does
+// "the CV-story thing" (a gateway, an eval framework, a workflow engine) must be written here.
+func TestPolicySingleDirectDependency(t *testing.T) {
+	mod := read(t, "go.mod")
+	var direct []string
+	inBlock := false
+	for _, line := range strings.Split(mod, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "require ("):
+			inBlock = true
+		case line == ")":
+			inBlock = false
+		case inBlock && line != "" && !strings.Contains(line, "// indirect"):
+			direct = append(direct, strings.Fields(line)[0])
+		case strings.HasPrefix(line, "require ") && !strings.Contains(line, "("):
+			direct = append(direct, strings.Fields(line)[1])
+		}
+	}
+	if len(direct) != 1 || direct[0] != "github.com/jackc/pgx/v5" {
+		t.Fatalf("direct dependencies must be exactly [github.com/jackc/pgx/v5], got %v", direct)
+	}
+}
+
+// RULE privacy: the gateway never persists a prompt. Send a canary through the router with
+// a span sink attached and assert the canary appears in no span attribute.
+func TestPolicyPromptsNeverReachSpans(t *testing.T) {
+	canary := "CANARY-7f3a-do-not-store"
+	be := &fake{text: "ok " + canary + " echoed"} // even an echoing model must not leak via spans
+	srv := router.NewServer("fast-m", "quality-m", be)
+	var attrs []string
+	srv.SpanSink = func(traceID, spanID, parentID, name, a string) { attrs = append(attrs, a) }
+	if _, err := srv.Chat("please remember "+canary, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(attrs) != 3 {
+		t.Fatalf("want 3 spans, got %d", len(attrs))
+	}
+	for _, a := range attrs {
+		if strings.Contains(a, canary) {
+			t.Fatalf("prompt/answer text leaked into span attrs: %s", a)
+		}
+	}
+	// and the read path redacts the keys a future span might carry
+	if out := tracker.RedactAttrs(`{"prompt":"x","input":"y","text":"z","output":"w","model":"m"}`); strings.Contains(out, "x") || !strings.Contains(out, `"model"`) {
+		t.Fatalf("RedactAttrs must drop prompt/input/text/output and keep the rest, got %s", out)
+	}
+}
+
+// RULE fail-closed: a sensitive request has no non-local candidate, whatever was asked.
+func TestPolicySensitiveHasNoCloudCandidate(t *testing.T) {
+	local := &fake{name: "ollama", local: true}
+	cloud := &fake{name: "groq"}
+	refs := []router.ModelRef{
+		{Tier: "fast", Model: "f", Backend: local},
+		{Tier: "quality", Model: "q", Backend: local},
+		{Tier: "cloud", Model: "c", Backend: cloud},
+	}
+	msgs := []router.Message{{Role: "user", Content: "my iban is TN59"}}
+	r, err := router.Plan("auto", msgs, true, refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.Candidates {
+		if c.Backend.Name() == "groq" {
+			t.Fatalf("cloud candidate present for sensitive request: %+v", r.Candidates)
+		}
+	}
+	if _, err := router.Plan("c", msgs, true, refs); err == nil {
+		t.Fatal("explicit cloud model on sensitive data must be refused")
+	}
+}
+
+// RULE one error shape: every non-2xx from the router carries {error:{code,message,trace_id}}.
+func TestPolicyOneErrorShape(t *testing.T) {
+	srv := router.NewServer("fast-m", "quality-m", &fake{err: errors.New("down")})
+	ks := router.NewMemKeyStore()
+	srv.Keys, srv.RequireKey = ks, true
+	cases := []struct {
+		body   string
+		header map[string]string
+		want   int
+	}{
+		{`{"prompt":"hi"}`, nil, 401},
+		{`{"prompt":"hi"}`, map[string]string{"Authorization": "Bearer ak_bad"}, 401},
+		{`{}`, map[string]string{"Authorization": "Bearer " + ks.Create("a", 0, 0)}, 400},
+		{`{"prompt":"hi"}`, map[string]string{"Authorization": "Bearer " + ks.Create("b", 0, 0)}, 502},
+		{`{"model":"nope","prompt":"hi"}`, map[string]string{"Authorization": "Bearer " + ks.Create("c", 0, 0)}, 400},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(c.body)))
+		for k, v := range c.header {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Fatalf("%s: status %d, want %d", c.body, rec.Code, c.want)
+		}
+		var generic map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &generic); err != nil {
+			t.Fatalf("%d: not JSON: %s", rec.Code, rec.Body.String())
+		}
+		e, _ := generic["error"].(map[string]any)
+		if e == nil || e["code"] == "" || e["message"] == "" || e["trace_id"] == "" {
+			t.Fatalf("%d: error shape violated: %s", rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// RULE bounded async: nothing on the request path blocks on telemetry. The span sink must
+// be a non-blocking send — enforced by reading the implementation for the select/default.
+func TestPolicySpanSinkIsNonBlocking(t *testing.T) {
+	src := read(t, "main.go")
+	i := strings.Index(src, "func (w *spanWriter) Sink()")
+	if i < 0 {
+		t.Fatal("spanWriter.Sink not found")
+	}
+	body := src[i:]
+	body = body[:strings.Index(body, "\n}\n")+3]
+	if !strings.Contains(body, "select {") || !strings.Contains(body, "default:") {
+		t.Fatalf("Sink must use a select with a default branch (drop, never block):\n%s", body)
+	}
+}
+
+// RULE every environment variable the code reads is documented in docs/API.md.
+func TestPolicyEnvVarsDocumented(t *testing.T) {
+	re := regexp.MustCompile(`os\.Getenv\("([A-Z0-9_]+)"\)`)
+	docs := read(t, "docs/API.md")
+	seen := map[string]bool{}
+	for _, f := range goFiles(t) {
+		b, _ := os.ReadFile(f)
+		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+			seen[m[1]] = true
+		}
+	}
+	var missing []string
+	for name := range seen {
+		if !strings.Contains(docs, "`"+name+"`") {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("env vars read by the code but absent from docs/API.md: %v", missing)
+	}
+}
+
+// RULE every CLI flag is documented in README.md.
+func TestPolicyFlagsDocumented(t *testing.T) {
+	re := regexp.MustCompile(`flag\.(?:Bool|String|Int|Int64|Duration)\("([a-z0-9-]+)"`)
+	readme := read(t, "README.md")
+	var missing []string
+	for _, m := range re.FindAllStringSubmatch(read(t, "main.go"), -1) {
+		if !strings.Contains(readme, "--"+m[1]) {
+			missing = append(missing, "--"+m[1])
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("flags absent from README.md: %v", missing)
+	}
+}
+
+// RULE migrations are numbered contiguously from 0001 and never renamed.
+func TestPolicyMigrationsContiguous(t *testing.T) {
+	files, _ := filepath.Glob(filepath.Join(repo, "migrations", "*.sql"))
+	sort.Strings(files)
+	if len(files) == 0 {
+		t.Fatal("no migrations")
+	}
+	for i, f := range files {
+		base := filepath.Base(f)
+		n, err := strconv.Atoi(base[:4])
+		if err != nil || n != i+1 || base[4] != '_' {
+			t.Fatalf("migration %q breaks the NNNN_name.sql sequence at position %d", base, i+1)
+		}
+	}
+}
+
+// RULE every ADR referenced in the README exists, and every ADR file is in the index.
+func TestPolicyADRsIndexed(t *testing.T) {
+	index := read(t, "docs/adr/README.md")
+	files, _ := filepath.Glob(filepath.Join(repo, "docs", "adr", "0*.md"))
+	for _, f := range files {
+		if !strings.Contains(index, filepath.Base(f)) {
+			t.Fatalf("ADR %s missing from docs/adr/README.md", filepath.Base(f))
+		}
+	}
+	for _, m := range regexp.MustCompile(`ADR-(\d{4})`).FindAllStringSubmatch(read(t, "README.md"), -1) {
+		if g, _ := filepath.Glob(filepath.Join(repo, "docs", "adr", m[1]+"-*.md")); len(g) == 0 {
+			t.Fatalf("README cites ADR-%s but no docs/adr/%s-*.md exists", m[1], m[1])
+		}
+	}
+}
+
+// RULE no retry loops around backend chat calls: a failing backend is not retried, the
+// router moves to the next candidate (retries live only in the judge, with backoff).
+func TestPolicyRouterDoesNotRetrySameBackend(t *testing.T) {
+	be := &fake{name: "ollama", local: true, err: errors.New("down")}
+	srv := router.NewServer("fast-m", "quality-m", be)
+	_, err := srv.Chat("hi", 0)
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	// fast then quality on the same backend = 2 calls, never more
+	if be.calls != 2 {
+		t.Fatalf("backend called %d times, want 2 (one per candidate, no retries)", be.calls)
+	}
+}
+
+// ---- minimal fake backend ----
+
+type fake struct {
+	name  string
+	local bool
+	text  string
+	err   error
+	calls int
+}
+
+func (f *fake) Name() string {
+	if f.name == "" {
+		return "ollama"
+	}
+	return f.name
+}
+func (f *fake) Local() bool { return f.local || f.name == "" }
+func (f *fake) Generate(ctx context.Context, model string, msgs []router.Message, maxTokens int) (string, router.Usage, error) {
+	f.calls++
+	if f.err != nil {
+		return "", router.Usage{}, f.err
+	}
+	return f.text, router.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2}, nil
+}
+func (f *fake) Stream(ctx context.Context, model string, msgs []router.Message, maxTokens int, emit func(string)) (router.Usage, error) {
+	f.calls++
+	if f.err != nil {
+		return router.Usage{}, f.err
+	}
+	emit(f.text)
+	return router.Usage{TotalTokens: 2}, nil
+}
+func (f *fake) Health(ctx context.Context) error { return nil }
+
+// RULE the rules document only cites tests that exist: every `TestX` named in docs/RULES.md
+// must be defined somewhere in the module, so an enforcement column can never go stale.
+func TestPolicyRulesCiteRealTests(t *testing.T) {
+	rules := read(t, "docs/RULES.md")
+	cited := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]+`).FindAllString(rules, -1) {
+		cited[m] = true
+	}
+	defined := map[string]bool{}
+	err := filepath.WalkDir(repo, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && strings.HasSuffix(p, "_test.go") {
+			b, _ := os.ReadFile(p)
+			for _, m := range regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]+)\(`).FindAllStringSubmatch(string(b), -1) {
+				defined[m[1]] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missing []string
+	for name := range cited {
+		if !defined[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("docs/RULES.md cites tests that do not exist: %v", missing)
+	}
+}

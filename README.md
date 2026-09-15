@@ -22,7 +22,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
                      └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Current release: [v1.0.0](https://github.com/yosrikhiari/AgentOps/releases/tag/v1.0.0)** — 57 tests, `go vet` + `-race` in CI. See [`CHANGELOG.md`](CHANGELOG.md).
+**Current release: [v1.0.0](https://github.com/yosrikhiari/AgentOps/releases/tag/v1.0.0)** — 68 tests, `go vet` + `-race` + `staticcheck` + `govulncheck` in CI, plus 11 **executable policies** that fail the build when a rule in [`docs/RULES.md`](docs/RULES.md) is broken. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## What it does
 
@@ -82,10 +82,10 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--mcp` | MCP stdio server for Claude Desktop (config in [`mcp/README.md`](mcp/README.md)) |
 | `--migrate` / `--ingest` / `--search "q"` | apply migrations · embed the clean corpus into pgvector · cosine-search it |
 | `--create-key NAME --key-rpm N --key-budget T` | mint a virtual API key (secret printed once, SHA-256 stored) |
-| `--run-tracker` / `--resume-tracker <id>` | run / resume the 3-step toy agent; kill it mid-step and resume |
+| `--run-tracker [--tracker-input "q"]` / `--resume-tracker <id>` | run / resume the 3-step toy agent; kill it mid-step and resume |
 | `--trace <id>` | print redacted spans for a chat or workflow |
 | `--draft-golden` → review → `--freeze-golden` | build a golden set (`--golden-version vN`): LLM drafts, human reviews, validator rejects unscorable answers, hash frozen |
-| `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it |
+| `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show) |
 | `--version` | print the version stamped at release |
 
 Environment variables are listed in [`docs/API.md`](docs/API.md#backends-environment).
@@ -105,12 +105,13 @@ corpus/      15 short docs describing this system — the RAG target; golden set
 dashboard/   grafana/router.json + provisioning, prometheus/prometheus.yml
 load-tests/  router.js (k6: 50 RPS on /health, p99 gate)
 lessons/     33 plain-language HTML lessons on this repo — open lessons/index.html
-docs/        API.md · VRAM.md · adr/ (8 decision records) · tower-design-system.html (the UI mockup)
+docs/        RULES.md (engineering rules) · API.md · VRAM.md · adr/ (8 decision records) · tower-design-system.html (the UI mockup)
+policy/      executable policies: tests that fail the build when a rule in docs/RULES.md is broken
 ```
 
-## Decisions worth knowing
+## Rules and decisions
 
-Full one-pagers in [`docs/adr/`](docs/adr/README.md).
+The engineering rules — architecture style, sync vs async, retries, latency and scalability budgets, security requirements, guardrails, testing/experiment rules, static analysis, and the executable policies that enforce them — are in [`docs/RULES.md`](docs/RULES.md). Full decision one-pagers in [`docs/adr/`](docs/adr/README.md).
 
 - **One module, one binary** — every mode is a flag; packages reach Postgres through tiny interfaces and never import the driver. (ADR-0001)
 - **pgvector, not a vector DB** — one Postgres for workflows, spans, evals *and* vectors; HNSW `m=16, ef_construction=128`. (ADR-0004)

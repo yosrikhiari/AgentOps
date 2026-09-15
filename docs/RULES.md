@@ -2,7 +2,7 @@
 
 The rules this codebase is built and judged by. Each rule says **what**, **why**, and **how it is enforced** — by a test in `policy/` (runs in CI), by a test elsewhere, by a CI tool, or by review. A rule with no enforcement column is not a rule; it is a wish.
 
-Companion documents: [`README.md`](../README.md) (what it is), [`API.md`](API.md) (every endpoint and env var), [`adr/`](adr/README.md) (why the big decisions), [`VRAM.md`](VRAM.md) (the GPU budget), [`../PRIVACY.md`](../PRIVACY.md).
+Companion documents: [`README.md`](../README.md) (what it is), [`API.md`](API.md) (every endpoint and env var), [`adr/`](adr/README.md) (why the big decisions), [`VRAM.md`](VRAM.md) (the GPU budget), [`tower-design-system.html`](tower-design-system.html) (the console UI system, §12), [`../PRIVACY.md`](../PRIVACY.md).
 
 ---
 
@@ -150,7 +150,20 @@ Known gap, stated: the console and `/metrics` are unauthenticated. They expose r
 - Run evals on a quiet GPU or accept 3–4× runtime (`VRAM.md`); a run killed by the deadline writes nothing.
 - Write the result into the plan the same day, including the failures.
 
-## 12. Static analysis (CI, every push)
+## 12. Console UI — the Tower design system
+
+The console (`console/static/`) is built on **Tower**: hand-written CSS, `--tower-*` tokens, a `tower-*` class per component, a 20-line `h()` DOM helper, no framework, no chart library. The living reference is [`tower-design-system.html`](tower-design-system.html) — it links the shipped `tower.css`, so what it shows is what runs. Read it before adding or changing anything the console renders. The backlog of agreed improvements, each with a demo, is [`tower-enhancements.html`](tower-enhancements.html).
+
+- **Tokens only.** Every colour is a `--tower-*` custom property declared once in `:root` of `tower.css`. No hex literal in `app.js`, `index.html`, or anywhere else in the stylesheet. A new colour is a new token with a name and a reason. — `TestPolicyConsoleColoursAreTokens`
+- **A component is a `tower-*` class in `tower.css`**, placed in the matching `/* ===== */` block, and it exists before it is used. A class used by the console that the stylesheet does not define is a build failure, not a visual bug found later. — `TestPolicyConsoleClassesExist`
+- **Reuse before inventing.** Panel, metric row, table, pill, chip, chip-button, input, form-row, empty (inline and tall), error box with Retry, skeleton, toast, note, key-value grid, waterfall, span tree. Check the design-system page's spec tables; if the component is there, use it. — review
+- **State is a pill, a fact is a chip.** `pill(state, label)` only for healthy / degraded / critical. `chip(text)` for tier, backend, reason, model, kind. A chip is never coloured. — review
+- **One accent.** Amber marks the thing to look at: active nav, the page's one primary button, the quality-tier bar, the selected trace. Nothing decorative is amber. — review
+- **Every page renders four states**: skeleton → live, plus empty (tells the operator the next action) and error (with Retry). A page that renders only the live state is not done. — review
+- **DOM is built with `h()`**, children are text or nodes; there is no `html:` attribute and no `innerHTML` anywhere. Numbers that change are `.tower-mono`; ids link to `#/traces/<id>`. — review (SonarCloud flags `innerHTML`)
+- **Add the example to the design-system page** with the function it is used in, in the same change. The page is the contract; a component that is not on it does not exist.
+
+## 13. Static analysis (CI, every push)
 
 | Tool | What it catches | Job |
 |---|---|---|
@@ -172,7 +185,7 @@ Local: `gofmt -l . && go vet ./... && go test -race ./... && go run honnef.co/go
 - `govulncheck@latest` deliberately tracks the live vulnerability database: a new CVE in a dependency turns `main` red on the next push. That is the intended signal — bump the module (as with `golang.org/x/text`, GO-2026-5970), do not pin the scanner to hide it.
 - SonarCloud runs as an app-side automatic analysis (no workflow file); it is advisory here and is not a required check.
 
-## 13. Executable policies (`policy/policy_test.go`)
+## 14. Executable policies (`policy/policy_test.go`)
 
 These fail the build when a rule above is broken. Names are the rules.
 
@@ -189,5 +202,7 @@ These fail the build when a rule above is broken. Names are the rules.
 | `TestPolicyADRsIndexed` | every ADR file is in `docs/adr/README.md`; every `ADR-NNNN` cited in the README exists |
 | `TestPolicyRouterDoesNotRetrySameBackend` | a failing backend is called once per candidate, never retried |
 | `TestPolicyRulesCiteRealTests` | every test name cited in this document exists — an enforcement column cannot go stale |
+| `TestPolicyConsoleColoursAreTokens` | no hex colour in `app.js` / `index.html`, none in `tower.css` outside `:root` — the console uses `--tower-*` tokens |
+| `TestPolicyConsoleClassesExist` | every `tower-*` name the console references is defined in `tower.css` |
 
 Adding a rule: write the test first, watch it fail on the current code or a scratch breakage, then add the row here. A rule that cannot be tested gets the word **review** in its enforcement column above and a reviewer, not a wish.

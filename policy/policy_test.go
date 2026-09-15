@@ -355,3 +355,49 @@ func TestPolicyRulesCiteRealTests(t *testing.T) {
 		t.Fatalf("docs/RULES.md cites tests that do not exist: %v", missing)
 	}
 }
+
+// RULE the console is built from the Tower design system: colours are --tower-* tokens
+// declared once in the :root block of tower.css, never hex literals in JS, HTML or the
+// rest of the stylesheet (docs/RULES.md §12, docs/tower-design-system.html).
+func TestPolicyConsoleColoursAreTokens(t *testing.T) {
+	hex := regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b`)
+	for _, rel := range []string{"console/static/app.js", "console/static/index.html"} {
+		for _, m := range hex.FindAllString(read(t, rel), -1) {
+			if !strings.HasPrefix(m, "#/") { // hash routes are fine
+				t.Errorf("%s: hex colour %q — use a --tower-* token", rel, m)
+			}
+		}
+	}
+	css := read(t, "console/static/tower.css")
+	root := regexp.MustCompile(`(?s):root\s*\{.*?\}`)
+	outside := root.ReplaceAllString(css, "")
+	for _, m := range hex.FindAllString(outside, -1) {
+		t.Errorf("tower.css: hex colour %q outside :root — add a token", m)
+	}
+}
+
+// RULE every tower-* class the console references exists in tower.css. A typo'd class
+// passes gofmt, vet, the Go tests and the browser — only the screen breaks.
+func TestPolicyConsoleClassesExist(t *testing.T) {
+	css := read(t, "console/static/tower.css")
+	cls := regexp.MustCompile(`tower-[a-z0-9-]+`)
+	seen := map[string]bool{}
+	for _, rel := range []string{"console/static/app.js", "console/static/index.html"} {
+		for _, m := range cls.FindAllString(read(t, rel), -1) {
+			seen[m] = true
+		}
+	}
+	var missing []string
+	for name := range seen {
+		if !strings.Contains(css, name) {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("tower-* names used by the console but absent from tower.css: %v", missing)
+	}
+	if len(seen) < 40 {
+		t.Fatalf("only %d tower-* names found — the scan is broken, not the console", len(seen))
+	}
+}

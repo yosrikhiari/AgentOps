@@ -55,7 +55,12 @@ services:
     container_name: agentops
     environment:
       OLLAMA_URL: http://host.docker.internal:11434
-      POSTGRES_DSN: postgres://${POSTGRES_USER:-agentops}:${POSTGRES_PASSWORD:-agentops}@postgres:5432/${POSTGRES_DB:-agentops}
+      # No DSN literal here: the binary assembles it (defaultDSN in config.go) from these
+      # parts, which are the same ones the postgres service above is started with.
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-agentops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentops}
+      POSTGRES_DB: ${POSTGRES_DB:-agentops}
       FAST_MODEL: ${FAST_MODEL:-qwen2.5:3b-instruct}
       QUALITY_MODEL: ${QUALITY_MODEL:-qwen2.5:7b-instruct-q4_K_M}
     ports:

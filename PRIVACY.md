@@ -1,7 +1,12 @@
 # Privacy
 
-- Prompts are stored in `spans.attrs` for debugging but **redacted on every read path** (HTTP `/v1/traces`, CLI `--trace`, MCP `inspect_trace`) — `prompt/input/text/output` keys never leave the database.
-- Span rows are retained 30 days; eval scores are kept indefinitely (no personal data in them).
-- No raw embeddings are written to logs.
-- Everything runs locally against Ollama; the only optional outbound call is the Groq judge (`JUDGE_BACKEND=groq`), which receives golden claims and corpus chunks — never live user prompts.
+What AgentOps stores, and what never leaves the machine.
+
+- **Prompts are not persisted by the gateway.** A router chat writes three spans; their attributes are the routing decision (`tier`, `reason`, `sensitive`, `candidates`), the model/backend, latency and token counts — never the prompt or the answer. Tracker steps store an `output_snippet` (first 200 characters of the step's output) for the trace view; every read path (HTTP `/v1/traces`, CLI `--trace`, MCP `inspect_trace`, the console) additionally strips any `prompt/input/text/output` key defensively.
+- **Sensitive requests never leave the box.** A request marked sensitive (`X-AgentOps-Sensitive: true`, `"sensitive": true`, or a keyword such as `password`/`iban`/`passport`) is routed to local backends only; a cloud model is never a fallback for it and naming one explicitly is refused. The flag is recorded on the trace.
+- **API keys:** only the SHA-256 of a key is stored (`api_keys.key_hash`); the secret is printed once at creation. Usage counters are per key, not per prompt.
+- **Cloud judge:** the optional Groq judge (`JUDGE_BACKEND=groq`) receives golden-set claims and corpus chunks during an eval run — never live user traffic. Default judging is local.
+- **Retention:** span rows 30 days (policy; no automatic sweep yet — see the plan backlog), eval scores indefinitely (no personal data in them), API-key usage indefinitely.
+- **Logs:** no raw embeddings, no prompts; the gateway logs trace ids, backends and errors.
+- **Console:** `GET /` and its `/v1/overview|requests|evals|workflows` endpoints are unauthenticated, like `/metrics`. They expose routing metadata and step snippets, not prompts. Put a reverse proxy or firewall in front if the port is reachable beyond localhost.
 - No accounts, no telemetry, no real users; this is a solo portfolio project.

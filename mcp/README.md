@@ -15,7 +15,8 @@ Build once, then point Claude Desktop at the binary:
       "env": {
         "OLLAMA_URL": "http://localhost:11434",
         "FAST_MODEL": "qwen2.5:3b-instruct",
-        "QUALITY_MODEL": "qwen2.5:7b-instruct-q4_K_M"
+        "QUALITY_MODEL": "qwen2.5:7b-instruct-q4_K_M",
+        "POSTGRES_DSN": "postgres://agentops:agentops@localhost:5432/agentops"
       }
     }
   }
@@ -41,3 +42,10 @@ Dev alternative without building: `command: go`, `args: ["run", ".", "--mcp"]`,
 
 Ask: "which model handled the most traffic today" — Claude calls `get_stats` and answers
 from real counters.
+
+## Notes
+
+- `inspect_trace` and `get_drift_report` read Postgres (`POSTGRES_DSN`); the other three work without it.
+- `route_test_request` goes through the same gateway path as HTTP — anonymous routing, the fail-closed sensitive rule, span emission — so a call from Claude shows up in the Tower console's recent requests.
+- The same information is available to humans at `http://localhost:8080` (Tower console) when the binary runs in HTTP mode.
+

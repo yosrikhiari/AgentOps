@@ -84,6 +84,19 @@ Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (eve
 | `REQUIRE_API_KEY` | `false` | reject anonymous requests |
 | `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |
 | `SENSITIVE_KEYWORDS` | built-in list | comma-separated override |
+| `ADDR` | `:8080` | listen address |
+| `POSTGRES_DSN` | `postgres://agentops:agentops@localhost:5432/agentops` | spans, traces, evals, workflows, api keys |
+
+Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval suite*, `--ingest`, `--draft-golden`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `JUDGE_MODEL` | `qwen3:8b` | local Ollama judge (temperature 0) |
+| `JUDGE_BACKEND` + `GROQ_API_KEY` | — | `groq` switches the judge to `llama-3.1-8b-instant` |
+| `EVAL_THRESHOLD` | `0.7` | faithfulness below this raises `alert` in the drift report |
+| `EVAL_TIMEOUT` | `90m` | budget for one suite run (see `docs/VRAM.md` on GPU contention) |
+| `EMBED_MODEL` | `nomic-embed-text` | embeddings for ingest and retrieval (768 dims) |
+| `DRAFT_MODEL` | `qwen3:8b` | model that drafts golden pairs |
 
 ## Observability endpoints
 

@@ -22,7 +22,7 @@ func runScheduler(dsn, ollamaURL, goldenPath, goldenVersion, every string) {
         log.Printf(&quot;next scheduled eval in %s&quot;, d)
         time.Sleep(d)
     }
-}</code></pre><p>Two properties worth naming: <b>it shares <code>scoreOnce</code></b> with <code>--score</code>, so there is one code path to test; and the golden file is <b>re-read every tick</b>, so freezing <code>v1.jsonl</code> is picked up without a restart. The HTTP server loads the <code>eval_faithfulness</code> gauge from the latest stored run at startup.</p>
+}</code></pre><p>Two properties worth naming: <b>it shares <code>scoreOnce</code></b> with <code>--score</code> and with the console's <i>Run eval suite</i> button (single-flight: a second click gets 409), so there is one code path to test; and the golden file is <b>re-read every tick</b>, so freezing a new version is picked up without a restart. A run is bounded by <code>EVAL_TIMEOUT</code> (default 90 min) — needed because an eval and live traffic contend for the 8 GB GPU (see <code>docs/VRAM.md</code>). The HTTP server loads the <code>eval_faithfulness</code> gauge from the latest stored run at startup.</p>
 <h2>Try it yourself</h2>
 <p><pre class="code"><code>go run . --schedule-evals 30m --golden evals/golden/v1_draft.jsonl --golden-version v1_draft</code></pre></p>
 <h2>Interview questions</h2>

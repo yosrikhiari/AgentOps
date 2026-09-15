@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v15, 2026-09-15 — v1.0 Tracks A+B+C shipped: Docker/CI/release, hardened gateway, Tower console live in the browser; 57 tests; 33 lessons)
+# AgentOps Platform — Project Plan (v16, 2026-09-15 — v1.0.0 released; documentation pass: README, CHANGELOG, 8 ADRs, PRIVACY, API/env reference, lessons and corpus v3 reconciled with the shipped code)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -52,6 +52,15 @@ worth touching yet) so that doesn't get lost again.
 > identifiers, ingest prunes stale chunks) → golden v2 drafted, reviewed, frozen (48 pairs)
 > and scored **1.000** on the final run. Qwen2.5 3B pulled; the 7B pull hit repeated network
 > resets and is retrying. 39 tests. Details: §8 9th pass.
+
+> **Current state (v16, 2026-09-15).** Released **v1.0.0** on `github.com/yosrikhiari/AgentOps`
+> (CI green, binaries attached). Five of six MVP checkboxes closed live; #1 waits on the 7B
+> blob download, #3 on the MCP recording. v1.0 Tracks A (ops), B (gateway) and C (console) are
+> done — see §9. Documentation set: `README.md` (front door), `CHANGELOG.md`, `docs/API.md`
+> (every endpoint + env var), `docs/adr/` (8 decision records), `docs/VRAM.md`, `PRIVACY.md`,
+> `mcp/README.md`, `lessons/` (33), and `corpus/` (v3, the RAG target, matches the code).
+> Sections 1–8 below are the MVP record and are kept as history; §7 marks what has since
+> shipped; §9 is the product track list; Tracks D/E/F are the next work.
 
 ---
 
@@ -226,7 +235,7 @@ proven — this is your Section 7 stretch goal, not MVP).
   yes (a whole eval framework, a whole gateway), write your own. If no (durable-execution
   primitives, an HTTP router, a Postgres driver), use the well-built free thing.
 - **Repo structure:** one monorepo, single `go.mod`, packages `/router`, `/tracker`, `/evals`,
-  `/dashboard`, `/mcp`. ADR-0001. `handler → service → repo` inside each package; one JSON
+  `/mcp`, `/console` (v1.0) plus `/dashboard` assets. ADR-0001 (`docs/adr/`). `handler → service → repo` inside each package; one JSON
   error shape `{error:{code,message,trace_id}}`; `config.go` reads env with a default for
   every value (nothing is required — the trailing empty-check is dead code, kept harmless).
 - **Phase 1 model pair:** Qwen2.5 3B-Instruct (fast) + Qwen2.5 7B-Instruct Q4 (quality) — same
@@ -242,10 +251,11 @@ proven — this is your Section 7 stretch goal, not MVP).
   tiny 15-20-doc corpus (GED's 2000/500 was for huge French PDFs — too coarse here). Minimal
   cleaner: strip HTML/nav → normalize → chunk → dedup by hash. Add one mapping test so a
   `status=Indexed`-style filter can never silently match nothing (your GED bug lesson).
-- **Postgres minimal (MVP tables only):** `workflows`, `steps`, `eval_runs(golden_version,
-  judge_model, score)`, `spans(trace_id, span_id, parent_id, attrs JSONB)`. Migrations in
-  `migrations/*.sql`, indexes on `(workflow_id,seq)`, `(trace_id)`, `(created_at)`. Spans
-  retention 30d, evals forever.
+- **Postgres tables (as shipped):** `docs`, `chunks(embedding vector(768), HNSW)`,
+  `workflows`, `steps`, `spans(trace_id, span_id, parent_id, attrs JSONB)`, `eval_runs`,
+  `eval_pair_scores` (0002), `api_keys` (0003, v1.0), `schema_migrations` (v1.0, tracks
+  applied files). Migrations in `migrations/*.sql`, applied once each by `--migrate`. Spans
+  retention 30d (policy), evals forever.
 - **Golden set:** generate a draft with an LLM from your own source documents (DeepEval/RAGAS
   Synthesizer pattern), manually review and correct every pair before use. `evals/golden/v1/`
   + hash; bump version on any doc change.
@@ -330,7 +340,12 @@ Each phase is independently demoable.
 golden-set method, judge model + real rate limits, toy RAG target, Postgres-native tracker
 (ADR-0003: stdlib+pgx row-status durability; DBOS Go SDK studied, not a dependency).
 
-**Still open:**
+**Decided since (2026-09-13/15):** corpus = 15 self-written AgentOps docs (now v3, matching
+the shipped code); router classifier = heuristic (length + keywords), learned classifier /
+shadow-test stays Track F. Nothing in this section is open any more; the original two
+questions are kept below for the record.
+
+**Originally open:**
 - Which ~15-20 documents will you use as your fresh RAG corpus? Pick a topic you can write
   confidently about, so manually reviewing the golden set is fast and accurate. Good cheap
   options: your own AgentOps docs, Tunisia travel notes, or cooking — anything with short,
@@ -353,15 +368,13 @@ Pull from this list only after the six MVP checkboxes are all checked.
 task type once proven equivalent (needs a real sample-size gate, e.g. n≥100, p<0.05 — not vibes).
 
 **Hardening, once the MVP is solid:**
-- A one-page threat model (STRIDE-lite) and a fail-closed rule: sensitive input never silently
-  falls back to a cloud judge.
-- SLOs per phase (e.g., router overhead budget, judge scheduler success rate) with a basic load
-  test (`k6`, a few hundred RPS — proving the shape works, not chasing production-scale numbers).
-- ADRs (one page each) for your 4-5 biggest decisions — good practice, cheap to write once
-  decisions are actually made, wasteful to write speculatively now. Stub list parked:
-  `0001-monorepo, 0002-ollama-first, 0003-pg-native-tracker (DBOS studied, parked),
-  0004-pgvector, 0005-eval-runs-plus-pair-scores, 0006-scheduler-is-a-flag`.
-- CI (`lint → test → build → docker build`) once there's enough code for CI to matter.
+- A one-page threat model (STRIDE-lite). ~~Fail-closed rule~~ — shipped in v1.0 Track B for
+  routing (ADR-0007); the eval judge is still local-by-default only, not enforced.
+- SLOs per phase (e.g., router overhead budget, judge scheduler success rate). ~~Basic load
+  test~~ — k6 gate shipped and passed (0/2725 at 50 RPS, p99 70 ms); formal SLOs not written.
+- ~~ADRs~~ — written 2026-09-15: `docs/adr/0001…0008` (monorepo, ollama-first, pg-native
+  durability, pgvector, eval rows, scheduler-as-flag, backends + fail-closed, console).
+- ~~CI~~ — shipped in v1.0 Track A (gofmt/vet/race/build/docker + release on tags).
 - Trajectory evals (tool-selection accuracy, ordered tool-call match) once the basic faithfulness
   scorer works — this is the natural "v2" of Phase 3, not part of v1.
 - Hybrid BM25 + vector search tuning, reranking (`bge-m3`), chunking-strategy experiments —
@@ -370,17 +383,13 @@ task type once proven equivalent (needs a real sample-size gate, e.g. n≥100, p
   when you get there.
 - Vector-store comparison (OpenSearch 2-node vs Qdrant vs pgvector) — parked. pgvector is
   decided for MVP; your prior art with all three stays as experience, not as MVP work.
-- **License + privacy (Later, from `legal:legal-advisor`):** pick Apache-2.0 (matches
-  Bifrost/DeepEval/RAGAS ecosystem) or MIT (matches DBOS Go SDK) before first public push —
-  one line in README + `LICENSE` file. Privacy note: traces redact prompts by default,
-  spans retention 30d, no raw embeddings in logs; add 5-line `PRIVACY.md` when repo goes
-  public. No GDPR machinery for MVP (no real users).
-- **Dashboard hardening (Later, from `frontend:frontend-api-integration-patterns`):**
-  cancel in-flight trace fetches on new click, retry once on 5xx with backoff, one error
-  shape to the UI (`{code,message,trace_id}`), empty/loading/error states for the trace
-  view. 1-2 hours of work, only after `trace-min` works.
-- **Supply-chain hygiene (Later, from `security`):** Dependabot for Go modules + Docker
-  base, `go vet` in CI, SBOM on release tag. Non-blocking; enable when CI exists.
+- ~~**License + privacy**~~ — Apache-2.0 `LICENSE` and `PRIVACY.md` shipped with the first
+  push (2026-09-15); PRIVACY rewritten in the v16 doc pass (the gateway never stores prompts).
+  Still open: an automatic 30-day sweep of `spans` (policy only today).
+- ~~**Dashboard hardening**~~ — shipped in v1.0 Track C (AbortController per page, retry on
+  5xx, inline error + Retry, empty/loading states).
+- **Supply-chain hygiene:** ~~Dependabot~~ and ~~`go vet` in CI~~ shipped (Track A); SBOM on
+  release tag still open.
 - **Tracker span parentage (Later, cosmetic):** tracker step spans 1..n carry
   `parent_id = workflow_id`, which is the trace id, not a span id. Router spans already chain
   `parent_id = previous span_id`. Cheapest fix: emit one root `workflow` span whose
@@ -816,6 +825,13 @@ Brief: the router becomes a gateway an OpenAI-style client can point at.
 - [x] Graceful shutdown (`http.Server.Shutdown` with the request timeout, health prober stopped, span queue drained via `spanWriter.Close`), `ReadHeaderTimeout`, per-request `REQUEST_TIMEOUT` → 504, `X-Trace-ID` + `X-Request-ID` echo → live: `docker stop` 3 s into a 150-token chat, chat returned 200 (171 tokens), log `draining … bye` 48 s later
 Done: `docs/API.md` written; README gateway section; 52 tests.
 Deferred to Track D/E: nothing. Noted for later: the limiter is per-process (fine for one gateway; a second replica needs a shared counter), and usage is charged asynchronously so a budget can overshoot by one request.
+
+### What's next after v1.0.0
+Tracks **D** (tracker v2: generic workflows via API, resume lease, `failed` state, root span),
+**E** (evals v2: hybrid retrieval, judge disagreement metric, trajectory evals, "pause routing
+during eval" for shared GPUs) and **F** (shadow-test auto-promotion) — in that order, each
+one a §9 track with tickets and exit criteria before code. Two box-level items stay yours:
+the 7B model pull and the MCP recording.
 
 ### Track C — Tower console (3–4 days) — DONE 2026-09-15
 Brief: the mockup, real. Served by the same binary from `embed.FS` at `/`, hand-written

@@ -7,19 +7,21 @@
 <div class="part">Part 2 · The router</div>
 <h1>The HTTP server and one error shape</h1>
 <h2>In one sentence</h2>
-<div class="one">A standard-library <code>net/http</code> server with three routes and exactly one JSON error format.</div>
+<div class="one">A standard-library <code>net/http</code> server — four routes in the router package, a few more mounted by <code>main.go</code> — and exactly one JSON error format.</div>
 <h2>Why it exists</h2>
 <p>No web framework. Go 1.22+ routing patterns (<code>"POST /v1/chat/completions"</code>) make the stdlib enough. One error shape means every client — curl, Grafana, Claude via MCP — can parse failures the same way.</p>
 <h2>How it works in this project</h2>
 <pre class="code"><code>// router/server.go
-func NewServer(fastModel, qualityModel string, gen Generator) *Server {
-    s := &amp;Server{FastModel: fastModel, QualityModel: qualityModel, Ollama: gen, Metrics: NewMetrics()}
+func NewServer(fastModel, qualityModel string, local Backend) *Server {
+    s := &amp;Server{…, Metrics: NewMetrics(), Limiter: NewRateLimiter(), RequestTimeout: 300 * time.Second}
     s.mux = http.NewServeMux()                          // built ONCE (deep-review fix #3)
-    s.mux.HandleFunc(&quot;POST /v1/chat/completions&quot;, s.handleChat)
+    s.mux.HandleFunc(&quot;POST /v1/chat/completions&quot;, s.handleChat)   // auth → parse → plan → backend (or SSE)
+    s.mux.HandleFunc(&quot;GET /v1/models&quot;, s.handleModels)
     s.mux.HandleFunc(&quot;GET /health&quot;, s.handleHealth)
     s.mux.HandleFunc(&quot;GET /metrics&quot;, s.handleMetrics)
     return s
 }
+// main.go mounts on top: GET /v1/traces/{id}, GET /v1/drift/report, and the console&#x27;s / and /v1/{overview,requests,evals,workflows}
 
 type ErrorBody struct{ Error ErrorDetail `json:&quot;error&quot;` }
 type ErrorDetail struct {
@@ -33,6 +35,6 @@ type ErrorDetail struct {
 <h2>Interview questions</h2>
 <div class="qa"><div class="q"><span class="tag">Q</span> Why 502 and not 500 when Ollama is down?</div><div class="a"><span class="tag">A</span> 502 Bad Gateway means 'the thing behind me failed'. That's precisely what happened, and it tells an operator where to look.</div><div class="q"><span class="tag">Q</span> What was the ServeMux bug?</div><div class="a"><span class="tag">A</span> The first version built a new ServeMux inside ServeHTTP — on every request. It worked but allocated and re-registered routes per call. Deep-review caught it; now it's built once in NewServer.</div><div class="q"><span class="tag">Q</span> Why put trace_id in errors?</div><div class="a"><span class="tag">A</span> So a failing request is debuggable. The user pastes the id, I run <code>go run . --trace &lt;id&gt;</code> and see what happened.</div></div>
 <h2>Remember</h2>
-<div class="remember"><ul><li>stdlib net/http, three routes, no framework.</li><li>One error shape: {error:{code,message,trace_id}}.</li><li>Build the mux once.</li></ul></div>
+<div class="remember"><ul><li>stdlib net/http, no framework; router routes + main.go routes on one mux.</li><li>One error shape: {error:{code,message,trace_id}} — 400/401/403/404/429/502/504 all use it.</li><li>Build the mux once.</li></ul></div>
 <nav class="bottom"><a href="07-routing-rule.html">← 7. The routing rule (the 'traffic cop')</a><a href="09-interfaces-and-fakes.html">9. Interfaces and fakes: how the tests stay fast →</a></nav>
 </div></body></html>

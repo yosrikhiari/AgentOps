@@ -34,7 +34,7 @@ func (w *spanWriter) Sink() router.SpanSink {
         default: w.dropped.Add(1)           // queue full → drop, count, don&#x27;t block
         }
     }
-}</code></pre><p>The router itself only knows a <code>SpanSink</code> function type; in tests it's a slice-appending closure, in production it's this writer. The pgx <b>pool</b> (not a per-call connection) is shared by spans, traces and drift queries.</p>
+}</code></pre><p>The router itself only knows a <code>SpanSink</code> function type; in tests it's a slice-appending closure, in production it's this writer. The pgx <b>pool</b> (not a per-call connection) is shared by spans, traces and drift queries. On SIGTERM (v1.0) the HTTP server drains in-flight chats, then <code>spanWriter.Close()</code> closes the queue and waits for the loop to finish, so the last traces are not lost.</p>
 <h2>Try it yourself</h2>
 <p>Stop Postgres (<code>docker compose stop</code>) and send a chat. It still returns in model-time; the log shows one 'span sink: first write failure' line, not one per span.</p>
 <h2>Interview questions</h2>

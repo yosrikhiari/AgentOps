@@ -24,5 +24,5 @@ type Config struct {
 <div class="qa"><div class="q"><span class="tag">Q</span> Why env vars and not a YAML file?</div><div class="a"><span class="tag">A</span> Fewer moving parts. Env vars work everywhere (shell, Docker, Claude Desktop's JSON config) and need no parser.</div><div class="q"><span class="tag">Q</span> What happens with a bad EVAL_THRESHOLD like 'abc'?</div><div class="a"><span class="tag">A</span> It silently falls back to 0.7. Acceptable for a solo tool; in production I'd fail fast and log the bad value.</div><div class="q"><span class="tag">Q</span> Where is the DB connection string?</div><div class="a"><span class="tag">A</span> POSTGRES_DSN, read in main.go, not in Config — because only DB modes need it and the router tests never touch a database.</div></div>
 <h2>Remember</h2>
 <div class="remember"><ul><li>Env vars → Config struct, read once.</li><li>Defaults match the plan's model pair.</li><li>Docs must match code — I found one that didn't.</li></ul></div>
-<nav class="bottom"><a href="04-one-binary-many-modes.html">← 4. One binary, many modes</a><a href="06-ollama-client.html">6. Talking to a local LLM: the Ollama client →</a></nav>
+<nav class="bottom"><a href="04-one-binary-many-modes.html">← 4. One binary, many modes</a><a href="06-ollama-client.html">6. Talking to a local LLM: the Ollama backend →</a></nav>
 </div></body></html>

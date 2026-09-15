@@ -23,11 +23,13 @@ scheduleEvals:= flag.String(&quot;schedule-evals&quot;, &quot;&quot;, &quot;run 
 runTracker   := flag.Bool(&quot;run-tracker&quot;, false, &quot;run toy workflow and exit&quot;)
 resumeTracker:= flag.String(&quot;resume-tracker&quot;, &quot;&quot;, &quot;resume toy workflow ID and exit&quot;)
 traceID      := flag.String(&quot;trace&quot;, &quot;&quot;, &quot;print redacted spans for TRACE_ID and exit&quot;)
+createKey    := flag.String(&quot;create-key&quot;, &quot;&quot;, &quot;mint an API key NAME, print the secret once, exit&quot;)   // v1.0
+showVersion  := flag.Bool(&quot;version&quot;, false, &quot;print version and exit&quot;)                               // v1.0
 flag.Parse()
 if *migrate { runMigrate(dsn); return }
 if *ingest  { runIngest(dsn, cfg.OllamaURL); return }
 // ... one if per mode ...
-// no flag → build the pgx pool, the router, the MCP server, and serve HTTP</code></pre><p>The CLI modes open <b>one short-lived connection</b> (connect, do the work, exit). The long-running server mode opens a <b>connection pool</b> because it handles many requests.</p>
+// no flag → pgx pool, backends + health prober, API-key store, router, console, MCP wiring, HTTP server with graceful shutdown</code></pre><p>The CLI modes open <b>one short-lived connection</b> (connect, do the work, exit). The long-running server mode opens a <b>connection pool</b> because it handles many requests.</p>
 <h2>Try it yourself</h2>
 <p>Run <code>go run . --help</code>. Every mode is listed with a one-line description. Nothing is hidden.</p>
 <h2>Interview questions</h2>

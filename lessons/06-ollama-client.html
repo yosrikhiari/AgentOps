@@ -1,38 +1,38 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>06 · Talking to a local LLM: the Ollama client — AgentOps Lessons</title>
+<title>06 · Talking to a local LLM: the Ollama backend — AgentOps Lessons</title>
 <link rel="stylesheet" href="style.css"></head>
 <body><div class="wrap">
 <header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 6 of 33</span></header>
 <div class="part">Part 2 · The router</div>
-<h1>Talking to a local LLM: the Ollama client</h1>
+<h1>Talking to a local LLM: the Ollama backend</h1>
 <h2>In one sentence</h2>
-<div class="one">Ollama runs models on your GPU and exposes a plain HTTP API; the router calls <code>POST /api/generate</code> with the standard library.</div>
+<div class="one">Ollama runs models on your GPU and exposes a plain HTTP API; the gateway calls <code>POST /api/chat</code> with the standard library — one JSON reply, or a newline-delimited stream.</div>
 <h2>Why it exists</h2>
-<p>No SDK, no LiteLLM. Calling Ollama directly is ~50 lines and shows you understand what an LLM API actually is: JSON in, JSON out, plus token counts.</p>
+<p>No SDK, no LiteLLM. Calling Ollama directly is ~100 lines and shows you understand what an LLM API actually is: messages in, text and token counts out, and a stream that ends with a final object carrying the counts.</p>
 <h2>How it works in this project</h2>
-<pre class="code"><code>// router/ollama.go
-type ollamaGenerateRequest struct {
-    Model   string         `json:&quot;model&quot;`
-    Prompt  string         `json:&quot;prompt&quot;`
-    Stream  bool           `json:&quot;stream&quot;`             // false: one JSON reply, not a stream
-    Options map[string]any `json:&quot;options,omitempty&quot;`  // {&quot;num_predict&quot;: maxTokens}
+<pre class="code"><code>// router/ollama.go — one of the Backend implementations (see lesson 31)
+type ollamaChatRequest struct {
+    Model    string         `json:&quot;model&quot;`
+    Messages []Message      `json:&quot;messages&quot;`
+    Stream   bool           `json:&quot;stream&quot;`
+    Options  map[string]any `json:&quot;options,omitempty&quot;`   // {&quot;num_predict&quot;: maxTokens}
 }
-type ollamaGenerateResponse struct {
-    Response        string `json:&quot;response&quot;`
-    PromptEvalCount int    `json:&quot;prompt_eval_count&quot;`  // input tokens
-    EvalCount       int    `json:&quot;eval_count&quot;`         // output tokens
+type ollamaChatResponse struct {
+    Message         Message `json:&quot;message&quot;`            // .content is the text (or a delta)
+    Done            bool    `json:&quot;done&quot;`               // last line of a stream
+    PromptEvalCount int     `json:&quot;prompt_eval_count&quot;`  // input tokens
+    EvalCount       int     `json:&quot;eval_count&quot;`         // output tokens
 }
 
-func (c *OllamaClient) Generate(model, prompt string, maxTokens int) (string, int, error) {
-    // marshal → POST → check 200 → decode → return text + total tokens
-    return out.Response, out.PromptEvalCount + out.EvalCount, nil
-}</code></pre><p>Two details that matter:</p><ul><li><code>Timeout: 120s</code> on the HTTP client — a 7B model on a laptop GPU can take a while; a missing timeout would hang forever if Ollama dies.</li><li><code>max_tokens</code> maps to Ollama's <code>num_predict</code>. A deep-review found it was accepted and ignored before; now it's forwarded (test: <code>TestMaxTokensForwarded</code>).</li></ul>
+func (c *OllamaClient) Generate(ctx, model, msgs, maxTokens) (string, Usage, error)   // stream:false
+func (c *OllamaClient) Stream(ctx, model, msgs, maxTokens, emit func(string)) (Usage, error)   // stream:true, NDJSON
+func (c *OllamaClient) Health(ctx) error                                              // GET /api/tags</code></pre><p>Three details that matter:</p><ul><li>A 300 s client timeout <i>and</i> the request context — a 7B model on a laptop GPU can take a while; a missing timeout would hang forever if Ollama dies, and a cancelled client must stop the model call.</li><li><code>max_tokens</code> maps to Ollama's <code>num_predict</code>. A deep-review found it was accepted and ignored before; now it's forwarded (test: <code>TestMaxTokensForwarded</code>).</li><li>The stream's final line (<code>done:true</code>) carries the token counts, so a streamed request is metered exactly like a non-streamed one (<code>TestOllamaChatAndStream</code> replays real NDJSON).</li></ul>
 <h2>Try it yourself</h2>
-<p><pre class="code"><code>curl localhost:11434/api/generate -d &#x27;{&quot;model&quot;:&quot;qwen3:8b&quot;,&quot;prompt&quot;:&quot;say hi&quot;,&quot;stream&quot;:false}&#x27;</code></pre>That's exactly the request the router sends.</p>
+<p><pre class="code"><code>curl localhost:11434/api/chat -d &#x27;{&quot;model&quot;:&quot;qwen2.5:3b-instruct&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;say hi&quot;}],&quot;stream&quot;:false}&#x27;</code></pre>That's exactly the request the gateway sends. Drop <code>stream:false</code> to see the NDJSON lines.</p>
 <h2>Interview questions</h2>
-<div class="qa"><div class="q"><span class="tag">Q</span> What's Ollama?</div><div class="a"><span class="tag">A</span> A local model server. You <code>ollama pull</code> a model, it loads it onto the GPU and serves an HTTP API on :11434. One request at a time, which is fine for a solo box.</div><div class="q"><span class="tag">Q</span> Why not stream?</div><div class="a"><span class="tag">A</span> Streaming complicates metrics (when does latency end?) and traces. Non-streaming gives one reply with token counts — simpler and enough for the MVP.</div><div class="q"><span class="tag">Q</span> How do you get token counts?</div><div class="a"><span class="tag">A</span> Ollama returns <code>prompt_eval_count</code> and <code>eval_count</code>. I add them and feed the sum to the <code>router_tokens_total</code> counter.</div></div>
+<div class="qa"><div class="q"><span class="tag">Q</span> What's Ollama?</div><div class="a"><span class="tag">A</span> A local model server. You <code>ollama pull</code> a model, it loads it onto the GPU and serves an HTTP API on :11434. One request at a time, which is fine for a solo box.</div><div class="q"><span class="tag">Q</span> Why /api/chat instead of /api/generate?</div><div class="a"><span class="tag">A</span> The MVP used /api/generate with one prompt string. The v1.0 gateway speaks the OpenAI <code>messages[]</code> shape, and /api/chat takes messages natively — no prompt-templating on my side. The evals package still uses /api/generate for the judge, which really is one prompt.</div><div class="q"><span class="tag">Q</span> How do you get token counts?</div><div class="a"><span class="tag">A</span> Ollama returns <code>prompt_eval_count</code> and <code>eval_count</code>. I add them and feed the sum to the <code>router_tokens_total</code> counter — for streams, from the final done:true line.</div></div>
 <h2>Remember</h2>
-<div class="remember"><ul><li>Ollama = HTTP API on :11434.</li><li>Always set a client timeout.</li><li>Token counts come back in the response.</li></ul></div>
+<div class="remember"><ul><li>Ollama = HTTP API on :11434; /api/chat takes messages.</li><li>Timeout + context on every call.</li><li>Token counts come back in the reply — last line for streams.</li></ul></div>
 <nav class="bottom"><a href="05-config-from-env.html">← 5. Configuration from environment variables</a><a href="07-routing-rule.html">7. The routing rule (the 'traffic cop') →</a></nav>
 </div></body></html>

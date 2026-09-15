@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v12, 2026-09-15 — repo public, monitoring stack + k6 gate closed live, corpus v2 + golden v2 frozen at faith 1.000; 39 tests; 1 gate on 7B pull (network), 1 on MCP recording)
+# AgentOps Platform — Project Plan (v13, 2026-09-15 — v1.0 started: §9 tracks A/B/C agreed, Track A shipped (Docker, CI, release v0.1.0, tracked migrations); 40 tests)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -779,14 +779,14 @@ real clients can talk to. Scope agreed 2026-09-15: tracks **A, B, C** now; D (tr
 E (evals v2), F (shadow-test promotion) stay in §7 until these ship. One track at a time,
 each shipped as tested commits on `main`, check-in between tracks.
 
-### Track A — ops foundation (½ day)
+### Track A — ops foundation (½ day) — DONE 2026-09-15
 Brief: make every later change safe to ship. No product behaviour changes.
-- [ ] `Dockerfile` (multi-stage, static binary, non-root) + `.dockerignore`; `docker compose --profile app` runs the router against the host's Ollama → Verify: `docker build` + `docker run --rm agentops --help`
-- [ ] `.github/workflows/ci.yml`: gofmt check, `go vet`, `go test -race`, `go build`, docker build on every push/PR; on a `v*` tag, build linux/windows binaries and attach to a GitHub release → Verify: green run on `main`
-- [ ] `schema_migrations(filename, applied_at)`: `Migrate` records each applied file and skips it next time, so the first `ALTER` migration is safe → Verify: `TestMigrateSkipsApplied`; live `--migrate` twice reports `applied 0`
-- [ ] `.github/dependabot.yml` (gomod, docker, github-actions weekly) → Verify: file present, CI green
-- [ ] tag `v0.1.0` = the MVP as shipped → Verify: release page shows the binaries
-Done: CI badge in README, `v0.1.0` release exists.
+- [x] `Dockerfile` (multi-stage, static binary, distroless nonroot, 21.7 MB) + `.dockerignore`; `docker compose --profile app` runs the router against the host's Ollama → Verified: image builds, `--version` runs, containerised chat + `/v1/drift/report` answered live
+- [x] `.github/workflows/ci.yml`: gofmt, `go vet`, `go test -race`, `go build`, docker build on push/PR; on `v*` tags builds linux/windows/darwin binaries + `SHA256SUMS` and creates a release → Verified: run 34944183047 green (go ✓ docker ✓ release skipped)
+- [x] `schema_migrations(filename, applied_at)`: `Migrate` records + skips applied files, returns the count → Verified: `TestMigrateSkipsApplied`; live `--migrate` → "applied 2", then "applied 0"
+- [x] `.github/dependabot.yml` (gomod, docker, github-actions weekly) → Verified: Dependabot opened its first actions PR within a minute
+- [x] tag `v0.1.0` → Verified: run 34944393352 release ✓; assets `agentops-v0.1.0-{linux,windows,darwin}-amd64` + `SHA256SUMS`
+Done: CI + release badges in README; `--version` flag stamped from the tag. 40 tests.
 
 ### Track B — gateway hardening (2–3 days)
 Brief: the router becomes a gateway an OpenAI-style client can point at.

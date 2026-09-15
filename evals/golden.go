@@ -12,6 +12,20 @@ import (
 // silent wrong score: an unknown doc id makes recall meaningless, a duplicate question
 // collides on the eval_pair_scores primary key, and an answer with no scorable claim
 // (SplitClaims drops fragments under 10 runes) always scores faithfulness 0.
+// leadingSubordinator returns the opening word when the answer begins with a clause that
+// only makes sense next to the question ("Because the scorer…"). "When X, Y" keeps its
+// main clause and is fine; "Because X." has none.
+// The judge never sees the question, and such answers scored 0 in v1/v2 runs.
+func leadingSubordinator(answer string) string {
+	first := strings.ToLower(strings.TrimSpace(answer))
+	for _, w := range []string{"because ", "since ", "so that ", "to ", "in order to "} {
+		if strings.HasPrefix(first, w) {
+			return strings.TrimSpace(w)
+		}
+	}
+	return ""
+}
+
 func ValidateGolden(raw []byte, knownDocs map[string]bool) (int, error) {
 	n := 0
 	seen := map[string]int{}
@@ -38,6 +52,9 @@ func ValidateGolden(raw []byte, knownDocs map[string]bool) (int, error) {
 		}
 		if len(SplitClaims(p.Answer)) == 0 {
 			return n, fmt.Errorf("line %d: answer %q yields no scorable claim — write it as a full sentence", i+1, p.Answer)
+		}
+		if w := leadingSubordinator(p.Answer); w != "" {
+			return n, fmt.Errorf("line %d: answer starts with %q — a subordinate clause is not a checkable claim on its own; start with the main clause", i+1, w)
 		}
 		n++
 	}

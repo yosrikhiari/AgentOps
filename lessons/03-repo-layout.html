@@ -25,7 +25,8 @@
 ├── load-tests/        # router.js (k6)
 ├── docs/              # VRAM.md
 ├── lessons/           # these pages
-└── docker-compose.yml # Postgres + pgvector</code></pre><p>Rule inside each package: <b>handler → service → repo</b>, and one JSON error shape everywhere: <code>{"error":{"code","message","trace_id"}}</code>.</p><p>The only external dependency is <code>github.com/jackc/pgx/v5</code> (Postgres driver). Everything else is the Go standard library.</p>
+├── README.md · LICENSE (Apache-2.0) · PRIVACY.md
+└── docker-compose.yml # Postgres + pgvector; --profile monitoring adds Prometheus + Grafana</code></pre><p>Rule inside each package: <b>handler → service → repo</b>, and one JSON error shape everywhere: <code>{"error":{"code","message","trace_id"}}</code>.</p><p>The only external dependency is <code>github.com/jackc/pgx/v5</code> (Postgres driver). Everything else is the Go standard library.</p>
 <h2>Try it yourself</h2>
 <p>Run <code>go list ./...</code> — you'll see exactly <code>agentops</code>, <code>agentops/evals</code>, <code>agentops/mcp</code>, <code>agentops/router</code>, <code>agentops/tracker</code>. Then <code>cat go.mod</code> — one direct dependency.</p>
 <h2>Interview questions</h2>

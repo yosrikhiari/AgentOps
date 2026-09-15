@@ -1,0 +1,48 @@
+{"question":"What endpoint does the router use to serve Prometheus metrics?","answer":"GET /metrics","doc_ids":["01-router"]}
+{"question":"What does the router expose as its JSON error shape?","answer":"an error object with a code, a message, and the request's trace_id","doc_ids":["01-router"]}
+{"question":"Which model is designated as the fast tier in Phase 1?","answer":"Qwen2.5 3B-Instruct","doc_ids":["02-models"]}
+{"question":"What is the quantization level of the quality tier model in Phase 1?","answer":"4-bit Q4","doc_ids":["02-models"]}
+{"question":"What port does Ollama use for its HTTP API?","answer":"11434","doc_ids":["03-ollama"]}
+{"question":"What error code does the router return when Ollama is unavailable?","answer":"502 ollama_unavailable","doc_ids":["03-ollama"]}
+{"question":"Which metric counts successful chats per model?","answer":"router_requests_total","doc_ids":["04-metrics"]}
+{"question":"What does router_tokens_total sum using Ollama's reported counts?","answer":"input plus output tokens per model","doc_ids":["04-metrics"]}
+{"question":"How many panels does the Grafana dashboard draw?","answer":"five","doc_ids":["04-metrics"]}
+{"question":"What are the requirements for the k6 script testing /health?","answer":"fewer than 1 percent failures with p99 under 100 milliseconds","doc_ids":["04-metrics"]}
+{"question":"How many tools are exposed according to the passage?","answer":"Five","doc_ids":["05-mcp"]}
+{"question":"What does the list_models tool return?","answer":"The fast and quality model names with their tiers","doc_ids":["05-mcp"]}
+{"question":"What flag is used to start the MCP server?","answer":"--mcp","doc_ids":["05-mcp"]}
+{"question":"What error code is returned for a malformed line?","answer":"-32700","doc_ids":["05-mcp"]}
+{"question":"Why must every golden answer be a full declarative sentence?","answer":"Because the scorer splits answers into claims of at least ten characters and the judge never sees the question.","doc_ids":["06-golden"]}
+{"question":"What consequence does a bad golden set have on evaluation scores?","answer":"A bad golden set silently makes every later eval score meaningless, so the manual review step is not optional.","doc_ids":["06-golden"]}
+{"question":"Where is the golden set stored?","answer":"evals/golden/ as one JSON object per line","doc_ids":["06-golden"]}
+{"question":"How is the golden set built?","answer":"A local LLM drafts two question-answer pairs per corpus chunk, then a human reviews and corrects every single pair by hand before it is frozen with --freeze-golden","doc_ids":["06-golden"]}
+{"question":"What is the faithfulness scorer's primary function according to the passage?","answer":"It checks each claim against the top five retrieved chunks with one LLM-judge call per claim.","doc_ids":["07-faithfulness"]}
+{"question":"How does the judge prompt ensure reliable verdicts?","answer":"It requires one or two sentences of evidence-based justification before the verdict line.","doc_ids":["07-faithfulness"]}
+{"question":"Why does the judge use retry with exponential backoff and jitter from day one?","answer":"Because parallel LLM-judge calls hitting timeouts and flaky errors is a known real-world pitfall.","doc_ids":["07-faithfulness"]}
+{"question":"Which client error is retried when encountering a 429 status code?","answer":"The server's Retry-After value is waited for.","doc_ids":["07-faithfulness"]}
+{"question":"What HTTP status code does Groq return when a limit is hit?","answer":"HTTP 429","doc_ids":["08-judges"]}
+{"question":"Why does the project never pay for judging?","answer":"A hard zero-dollar cost cap means the project never pays for judging.","doc_ids":["08-judges"]}
+{"question":"What is the planned judge model mentioned in the passage?","answer":"Qwen2.5 7B at 4-bit quantization","doc_ids":["08-judges"]}
+{"question":"What is the frequent checker model and its request rate according to the passage?","answer":"llama-3.1-8b-instant at 30 requests per minute and 14,400 requests per day","doc_ids":["08-judges"]}
+{"question":"What happens to steps already marked done when resuming a workflow?","answer":"They are skipped and their stored output is reused","doc_ids":["09-tracker"]}
+{"question":"What happens to the workflow's original input when resuming a workflow?","answer":"It wins over whatever input the resuming process was launched with","doc_ids":["09-tracker"]}
+{"question":"What are the three steps in the toy agent?","answer":"Researcher retrieves the top three corpus chunks from pgvector, Drafter writes a three-sentence brief with the fast model, and Reviewer approves a non-empty draft.","doc_ids":["09-tracker"]}
+{"question":"What database and drivers are used to build the task tracker?","answer":"Postgres with the standard library and the pgx driver.","doc_ids":["09-tracker"]}
+{"question":"What is the format of a trace ID?","answer":"a 16-character hex string","doc_ids":["10-traces"]}
+{"question":"How many spans does a router chat emit?","answer":"Three spans: route.decide, model.generate, and router.respond","doc_ids":["10-traces"]}
+{"question":"What are the three methods used to read back spans?","answer":"GET /v1/traces/{id}, the --trace command-line flag, and the inspect_trace MCP tool","doc_ids":["10-traces"]}
+{"question":"How long are span rows retained?","answer":"30 days","doc_ids":["10-traces"]}
+{"question":"What triggers a drift alert according to the passage?","answer":"When faithfulness drops below the configured threshold.","doc_ids":["11-drift"]}
+{"question":"What are the three possible reasons for drift mentioned in the passage?","answer":"The documents changed without a golden bump, the judge model changed behavior, or retrieval quality regressed after a chunking or embedding change.","doc_ids":["11-drift"]}
+{"question":"Why was pgvector chosen over OpenSearch and Qdrant for solo use?","answer":"Because the corpus is tiny — fifteen documents and a few dozen chunks — where a two-node search cluster would be pure overhead.","doc_ids":["12-pgvector"]}
+{"question":"What hybrid weights were proven earlier and are they portable if the store changes?","answer":"BM25 0.6, vector 0.4, RRF k=60 stay portable if the store ever changes.","doc_ids":["12-pgvector"]}
+{"question":"Where are vectors stored according to the passage?","answer":"in the same Postgres instance as the tracker","doc_ids":["12-pgvector"]}
+{"question":"What columns does the chunks table store?","answer":"text, source document id, content hash, and an embedding column of type vector 768","doc_ids":["12-pgvector"]}
+{"question":"Where is the swap rule documented?","answer":"docs/VRAM.md","doc_ids":["13-vram"]}
+{"question":"What is the restriction on running models according to the swap rule?","answer":"Only one chat or judge model can be active at a time.","doc_ids":["13-vram"]}
+{"question":"What is the VRAM capacity of the RTX 4060?","answer":"8GB","doc_ids":["13-vram"]}
+{"question":"How much VRAM does the nomic-embed-text model require?","answer":"About 274 megabytes","doc_ids":["13-vram"]}
+{"question":"How many packages does the agentops project have?","answer":"five","doc_ids":["14-monorepo"]}
+{"question":"What is the command to build all packages in the monorepo?","answer":"go build ./...","doc_ids":["14-monorepo"]}
+{"question":"Which tools are explicitly prohibited as dependencies under the Independence rule?","answer":"TensorZero, LiteLLM, DeepEval, and Helicone","doc_ids":["15-independence"]}
+{"question":"What are the allowed infrastructure primitives mentioned in the passage?","answer":"Postgres driver, DBOS Go SDK for durable execution, pgx driver for Postgres, and Prometheus and Grafana as observability infrastructure","doc_ids":["15-independence"]}

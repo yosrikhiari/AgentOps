@@ -19,6 +19,7 @@ func TestValidateGolden(t *testing.T) {
 		"duplicate q":  `{"question":"q","answer":"A full sentence here.","doc_ids":["01-router"]}` + "\n" + `{"question":"q","answer":"Another full sentence.","doc_ids":["01-router"]}`,
 		"empty answer": `{"question":"q","answer":"  ","doc_ids":["01-router"]}`,
 		"no claim":     `{"question":"q","answer":"Three","doc_ids":["01-router"]}`,
+		"subordinate":  `{"question":"q","answer":"Because the scorer splits answers into claims.","doc_ids":["01-router"]}`,
 		"malformed":    `{"question":`,
 		"empty file":   "\n\n",
 	}

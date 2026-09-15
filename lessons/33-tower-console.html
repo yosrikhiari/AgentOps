@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>33 · The Tower console: a UI with no framework and no build — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 33 of 33</span></header>
+<div class="part">Part 8 · v1.0 product</div>
+<h1>The Tower console: a UI with no framework and no build</h1>
+<h2>In one sentence</h2>
+<div class="one">Three static files embedded in the binary — HTML, CSS on the Tower design tokens, and a small JS hash router — read a handful of JSON endpoints and show overview, traces, evals and workflows.</div>
+<h2>Why it exists</h2>
+<p>The MVP's 'dashboard' was JSON endpoints plus Grafana. An operator wants to see routing, health, the eval score and a trace on one screen, and click 'run eval' or 'resume workflow'. Doing it without a framework keeps the whole product one binary with zero JS toolchain.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>console/
+  handler.go      GET /  (embed.FS)  + /v1/overview /v1/requests /v1/evals/* /v1/workflows*
+  store.go        SQL over the same tiny Queryer interface; RecentRequests groups spans per trace
+  static/         index.html · tower.css (mockup tokens) · app.js (~350 lines)
+
+// app.js — every page owns an AbortController; 5xx get one retry; 502 → inline error + Retry
+async function api(path, opts, signal) { … }</code></pre><p>Rules the UI follows: navigating away cancels the previous page's fetches; store failures render an error box with a Retry button instead of a blank page; polling refreshes data panels in place and never replaces a field the user is typing in (the first version re-rendered the whole page every 4 s and ate a click — caught in the browser check).</p><p>The overview is derived from spans, not from a separate metrics table: <code>model.generate</code> spans of the last hour give requests, p50/p99, tokens and errors; <code>route.decide</code> gives tier, reason and the sensitive flag. One source of truth.</p>
+<h2>Try it yourself</h2>
+<p>Run <code>go run .</code> and open <code>http://localhost:8080</code>. Stop Postgres (<code>docker stop agentops-postgres</code>): the page shows an error with Retry, while <code>curl …/v1/chat/completions</code> still answers — telemetry is off the request path. Start Postgres, click Retry.</p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why no React?</div><div class="a"><span class="tag">A</span> The console is four pages of tables and two SVG charts. A ~350-line vanilla script covers it with no build step, so the product stays one <code>go build</code>. The design tokens came straight from the mockup's CSS.</div><div class="q"><span class="tag">Q</span> How does the UI get its data?</div><div class="a"><span class="tag">A</span> From spans. Recent requests join a trace's <code>route.decide</code> and <code>model.generate</code> spans; the KPI header aggregates the last hour of them. No second bookkeeping table to keep in sync.</div><div class="q"><span class="tag">Q</span> What broke in the browser check?</div><div class="a"><span class="tag">A</span> Clicking 'Start workflow' did nothing — the page re-rendered itself every 4 s while a workflow was running, replacing the button under the cursor and wiping the input. Fixed by building forms once and refreshing only the data panels.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Embedded static files; no framework, no build step.</li><li>Overview derived from spans — one source of truth.</li><li>AbortController per page, retry on 5xx, never yank a focused input.</li></ul></div>
+<nav class="bottom"><a href="32-api-keys-and-fail-closed.html">← 32. Virtual API keys and the fail-closed rule</a><a href="index.html">Back to index →</a></nav>
+</div></body></html>

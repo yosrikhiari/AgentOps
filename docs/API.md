@@ -95,3 +95,20 @@ Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (eve
 ## Shutdown
 
 `SIGINT`/`SIGTERM`: the listener closes, in-flight requests finish (up to `REQUEST_TIMEOUT`), queued spans are flushed, then the process exits 0. `docker stop -t 120 agentops` is the safe way to stop the container.
+
+## Tower console (`GET /`)
+
+The web UI is served by the same binary from embedded files — no build step, no framework. It reads the endpoints below; they are unauthenticated like `/metrics`, so put the whole thing behind a reverse proxy or firewall if it is ever exposed beyond localhost.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /v1/overview` | KPI header: last-hour traffic (`requests_last_hour/minute`, `p50/p99_latency_s`, `tokens_last_hour`, `errors_last_hour`, `by_model`) from spans, `models` + `backends` with health, `since_start` counters, latest `drift` for the default golden, `judge_cost_usd` (0 — local + Groq free tier), `version` |
+| `GET /v1/requests?limit=30` | newest router chats first, one row per trace assembled from its `route.decide` + `model.generate` spans: model, backend, tier, reason, sensitive, latency, tokens, fallback, error |
+| `GET /v1/evals/runs?golden=v2&limit=50` | every `eval_runs` row for a golden version + its drift report (worst cases included) |
+| `GET /v1/evals/status` | `{running, started_at, finished_at, error, golden_version}` of the console-triggered run |
+| `POST /v1/evals/run` `{"golden_version":"v2"}` | starts one suite run in the background → `202`; a second while one runs → `409 eval_running` |
+| `GET /v1/workflows?limit=20` | workflows newest first with their steps (`seq, name, status, attempts, output_snippet`) |
+| `POST /v1/workflows` `{"input":"…"}` | starts the toy Researcher → Drafter → Reviewer workflow → `202 {id}` |
+| `POST /v1/workflows/{id}/resume` | re-runs the same id (done steps skipped) → `202`; unknown id → `404 workflow_not_found`; already done → `502 workflow_failed` |
+
+Store failures on any of these return `502 store_unavailable` in the one error shape; the UI shows an inline error with a Retry button and keeps whatever you were typing.

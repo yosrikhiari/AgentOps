@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"agentops/console"
 	"agentops/evals"
 	"agentops/mcp"
 	"agentops/router"
@@ -257,16 +258,11 @@ func runTrace(dsn, traceID string) {
 	log.Printf("trace %s:\n%s", traceID, string(raw))
 }
 
-func runTracker(dsn, ollamaURL, resumeID, input string, fastModel string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
-	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close(ctx)
-	db := trackerAdapter{pgAdapter{conn}}
-	store := tracker.SQLStore{Exec: db, Query: db}
+// toyWorkflow builds the Researcher → Drafter → Reviewer step functions over any pgDB
+// (a CLI connection or the server's pool) so the CLI and the console share one agent.
+func toyWorkflow(db pgDB, ollamaURL, fastModel string) (tracker.Store, tracker.StepFunc, tracker.StepFunc, tracker.StepFunc) {
+	ad := trackerAdapter{pgAdapter{db}}
+	store := tracker.SQLStore{Exec: ad, Query: ad}
 	embedModel := os.Getenv("EMBED_MODEL")
 	if embedModel == "" {
 		embedModel = "nomic-embed-text"
@@ -274,19 +270,20 @@ func runTracker(dsn, ollamaURL, resumeID, input string, fastModel string) {
 	embedder := evals.NewEmbedder(ollamaURL, embedModel)
 	client := router.NewOllamaClient(ollamaURL)
 	researcher := func(ctx context.Context, q string) (string, error) {
-		rows, err := conn.Query(ctx,
+		vec, err := embedder.Embed(q)
+		if err != nil {
+			return "", err
+		}
+		rows, err := db.Query(ctx,
 			`SELECT doc_id, hash, text, source FROM chunks ORDER BY embedding <=> $1::vector LIMIT 3`,
-			evals.VectorLiteral(mustEmbed(ctx, embedder, q)))
+			evals.VectorLiteral(vec))
 		if err != nil {
 			return "", err
 		}
 		defer rows.Close()
 		var parts []string
-		var doc string
-		var hash string
-		var text string
-		var source string
 		for rows.Next() {
+			var doc, hash, text, source string
 			if err := rows.Scan(&doc, &hash, &text, &source); err != nil {
 				return "", err
 			}
@@ -314,6 +311,18 @@ func runTracker(dsn, ollamaURL, resumeID, input string, fastModel string) {
 		}
 		return "approved: " + trimmed, nil
 	}
+	return store, researcher, drafter, reviewer
+}
+
+func runTracker(dsn, ollamaURL, resumeID, input string, fastModel string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	store, researcher, drafter, reviewer := toyWorkflow(conn, ollamaURL, fastModel)
 	workflowID := resumeID
 	if workflowID == "" {
 		workflowID = tracker.NewWorkflowID()
@@ -323,14 +332,6 @@ func runTracker(dsn, ollamaURL, resumeID, input string, fastModel string) {
 		log.Fatalf("tracker workflow %s: %v", workflowID, err)
 	}
 	log.Printf("tracker workflow %s done: %.120q", workflowID, final)
-}
-
-func mustEmbed(ctx context.Context, embedder *evals.Embedder, q string) []float32 {
-	vec, err := embedder.Embed(q)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return vec
 }
 
 func runDraftGolden(ollamaURL, version string) {
@@ -720,6 +721,53 @@ func main() {
 		return
 	}
 	mux := http.NewServeMux()
+	// Tower console: UI at / plus its read endpoints and two actions, all on the pool.
+	runWorkflow := func(id, input string) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			store, researcher, drafter, reviewer := toyWorkflow(pool, cfg.OllamaURL, cfg.FastModel)
+			if _, err := tracker.RunToy(ctx, store, id, input, researcher, drafter, reviewer); err != nil {
+				log.Printf("workflow %s: %v", id, err)
+				return
+			}
+			log.Printf("workflow %s done", id)
+		}()
+	}
+	ui := console.New(console.Deps{
+		Store:         console.SQLStore{Query: pgAdapter{pool}},
+		Router:        srv,
+		GoldenVersion: *driftGolden,
+		Version:       version,
+		Drift: func(ctx context.Context, golden string) (any, error) {
+			return queryDrift(pool, golden, evalThreshold())
+		},
+		RunEval: func(ctx context.Context, golden string) error {
+			return scoreOnce(dsn, cfg.OllamaURL, "evals/golden/"+golden+".jsonl", golden)
+		},
+		StartWorkflow: func(ctx context.Context, input string) (string, error) {
+			id := tracker.NewWorkflowID()
+			runWorkflow(id, input)
+			return id, nil
+		},
+		ResumeWork: func(ctx context.Context, id string) error {
+			var status string
+			if err := pool.QueryRow(ctx, `SELECT status FROM workflows WHERE id = $1`, id).Scan(&status); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return console.ErrNotFound
+				}
+				return err
+			}
+			if status == tracker.StatusDone {
+				return fmt.Errorf("workflow %s is already done", id)
+			}
+			runWorkflow(id, "")
+			return nil
+		},
+	})
+	for _, pattern := range ui.Routes() {
+		mux.Handle(pattern, ui)
+	}
 	mux.HandleFunc("GET /v1/drift/report", func(w http.ResponseWriter, r *http.Request) {
 		data, err := queryDrift(pool, *driftGolden, evalThreshold())
 		if err != nil {

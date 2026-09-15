@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v14, 2026-09-15 — v1.0 Tracks A+B shipped: Docker/CI/release, OpenAI-compatible streaming gateway with backends, health, API keys, fail-closed sensitive rule, graceful drain; 52 tests)
+# AgentOps Platform — Project Plan (v15, 2026-09-15 — v1.0 Tracks A+B+C shipped: Docker/CI/release, hardened gateway, Tower console live in the browser; 57 tests; 33 lessons)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -420,6 +420,18 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-15 (10th pass, v1.0 Tracks A/B/C — see §9 for per-ticket proof).** Track A: Docker
+(21.7 MB distroless), CI (gofmt/vet/race/build/docker), release job → `v0.1.0` with 3 binaries,
+`schema_migrations`, Dependabot. Track B: `Backend` interface, Ollama on `/api/chat` + NDJSON
+stream, OpenAI-style cloud backend, OpenAI request/response shape + SSE, health prober +
+`router_backend_up`, virtual API keys (`0003_api_keys.sql`, `--create-key`), fail-closed
+`Plan()`, graceful drain — all live-verified (401→200→SSE→429; docker stop mid-chat completed
+the chat). Track C: `console/` package + embedded Tower UI (overview, traces, evals, workflows)
+verified page by page in the browser, including the Postgres-down error path. Findings on
+the way: (1) console re-render race ate a click and wiped input — fixed; (2) two pre-v9
+workflows sat at `status=running` with all steps done (they predate `SetWorkflowStatus`);
+Resume on one of them re-ran the id, skipped all three done steps and marked the workflow
+done in under a second — the durable-resume path self-heals stale rows. 57 tests.
 **2026-09-15 (9th pass, "run a loop making all of this").**
 1. **Repo.** `git init -b main`, `.gitignore`, `.gitattributes` (LF), `README.md` (pitch,
    status table, quickstart, flags, layout, decisions), `LICENSE` Apache-2.0 (fetched via
@@ -799,13 +811,16 @@ Brief: the router becomes a gateway an OpenAI-style client can point at.
 Done: `docs/API.md` written; README gateway section; 52 tests.
 Deferred to Track D/E: nothing. Noted for later: the limiter is per-process (fine for one gateway; a second replica needs a shared counter), and usage is charged asynchronously so a budget can overshoot by one request.
 
-### Track C — Tower console (3–4 days)
+### Track C — Tower console (3–4 days) — DONE 2026-09-15
 Brief: the mockup, real. Served by the same binary from `embed.FS` at `/`, hand-written
 HTML/CSS/JS on the Tower tokens (no framework, no build step), reading the JSON API.
-- [ ] `GET /v1/overview` (req/min, p50/p99, faithfulness 24h, judge cost, backend health) + `GET /v1/requests?limit=30` (recent requests with model/reason/latency from spans) → Verify: JSON tests
-- [ ] Overview page: KPI header, routing-traffic bars (last 30), backend health list → Verify: renders against the live box, empty/loading/error states
-- [ ] Trace inspector page: paste/click a trace id → step list with attrs, expandable → Verify: router chat + tracker workflow both render
-- [ ] Evals page: score history (all runs for a golden version), drift card, worst cases, "run eval" button (`POST /v1/evals/run`) → Verify: runs 3–6 chart, button triggers `scoreOnce` in the background
-- [ ] Workflows page: list + start/resume the toy workflow → Verify: kill/resume visible in the UI
-- [ ] Dashboard hardening from §7: cancel in-flight fetch on navigation, retry once on 5xx, one error toast shape → Verify: browser check with Postgres stopped
-Done: screenshots of each page in `docs/tower/`; §7 "Dashboard hardening" item struck.
+- [x] `console/` package: `GET /v1/overview` (last-hour traffic from `model.generate` spans: requests, p50/p99, tokens, errors, by-model; models + backends with health; drift; version), `GET /v1/requests?limit` (one row per trace from `route.decide` + `model.generate`), `GET /v1/evals/runs`, `GET/POST /v1/evals/run|status` (single-flight: 202 then 409), `GET/POST /v1/workflows`, `POST /v1/workflows/{id}/resume` → `TestStaticAndOverview`, `TestStoreDownIsOneErrorShape`, `TestEvalRunSingleFlight`, `TestWorkflowActions`, `TestRecentRequestsGroupsSpansPerTrace`
+- [x] Overview page: status strip (router live / backend down, models, faithfulness, p50, version), KPI row, routing-traffic SVG bars (height = latency, amber = quality/cloud, red = error, click → trace), backend health, recent requests with `sensitive`/`fallback`/`error` chips → verified in the browser against the live box (6 req/h, p50 19 s, faithfulness 1.000, 17 bars)
+- [x] Trace inspector: id input, one step per span with dot/name/meta, expandable k/v attrs, router chats and workflows → verified on chat `07da498d…` (sensitive chip, 3 chained spans) and workflow `615181b4…` (3 steps, `output_snippet` only)
+- [x] Evals page: latest/delta/runs/status metrics, score-history SVG with the 0.7 threshold line, worst cases, runs table, **Run eval suite** button → verified: runs 5→6 chart; `POST /v1/evals/run` 202 then 409 live, run 7 started from the console
+- [x] Workflows page: start input + button, table with per-step pills (`drafter ×2` shows the recorded kill-resume), Resume on non-done rows → verified: started `615181b4288a13f4` from the UI, 3 steps done in ~90 s, opened in the inspector
+- [x] Dashboard hardening (§7 item struck): AbortController per page, one retry on 5xx, `502 store_unavailable` → inline error + Retry, polling refreshes in place and never replaces a focused input → verified: Postgres stopped → error box; chat still 200; Postgres started → Retry → page back
+Done: `docs/API.md` console section; README; lessons 31–33 (Part 8 · v1.0). 57 tests.
+Browser check found one real bug before shipping: the workflows page re-rendered every 4 s while a workflow was running, so the Start button was replaced under the click and the input was wiped — fixed (form built once, list refreshes in place). Screenshots: not saved as files (pane cannot export); every page verified live, see the §8 10th pass.
+Not in this track (deliberate): key management in the UI (CLI only), auth on console endpoints (localhost tool; put a proxy in front), light theme.
+

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>31 · From router to gateway: OpenAI shape, streaming, backends — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 31 of 33</span></header>
+<div class="part">Part 8 · v1.0 product</div>
+<h1>From router to gateway: OpenAI shape, streaming, backends</h1>
+<h2>In one sentence</h2>
+<div class="one">v1.0 made the router something a real client can point at: OpenAI-compatible <code>messages[]</code> in and out, SSE streaming, and pluggable backends (Ollama + any OpenAI-style cloud API) behind one <code>Backend</code> interface.</div>
+<h2>Why it exists</h2>
+<p>Every LLM client library speaks the OpenAI chat shape. If the gateway speaks it too, swapping AgentOps in front of an app is a base-URL change. Streaming matters because a 7B model on a laptop takes seconds — users need to see tokens arrive.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>// router/backend.go — one interface, three implementations (Ollama, OpenAI-style, test fake)
+type Backend interface {
+    Name() string
+    Generate(ctx, model string, msgs []Message, maxTokens int) (string, Usage, error)
+    Stream(ctx, model string, msgs []Message, maxTokens int, emit func(delta string)) (Usage, error)
+    Health(ctx) error
+}
+type Local interface{ Local() bool }   // sensitive data may only use backends that say true
+
+// router/server.go — the same handler serves both shapes
+{&quot;prompt&quot;:&quot;hi&quot;}                                     // MVP body, still accepted
+{&quot;model&quot;:&quot;auto&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;hi&quot;}],&quot;stream&quot;:true}   // OpenAI body</code></pre><p>Ollama streams newline-delimited JSON with the token counts on the final <code>done:true</code> line; OpenAI-style APIs stream <code>data:</code> SSE lines ending in <code>[DONE]</code>, with usage either in the last chunk (<code>stream_options.include_usage</code>) or in Groq's <code>x_groq</code> block. Both are parsed in ~40 lines each and tested against real protocol bytes with <code>httptest</code>.</p><p>The response is an OpenAI <code>chat.completion</code> plus AgentOps extensions (<code>reason</code>, <code>backend</code>, <code>trace_id</code>, <code>fallback</code>). OpenAI clients ignore the extras; the MVP's clients keep reading <code>text</code>. Streaming counts metrics once, at the end, with the streamed usage.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>curl -N localhost:8080/v1/chat/completions -d &#x27;{&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;count to 5&quot;}],&quot;stream&quot;:true}&#x27;
+# data: {&quot;choices&quot;:[{&quot;delta&quot;:{&quot;content&quot;:&quot;1&quot;},…}]}   … data: [DONE]</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Why one Backend interface?</div><div class="a"><span class="tag">A</span> So routing, metrics, spans and the fail-closed rule are written once against <code>Generate/Stream/Health</code>, and a new provider is one file. The test fake implements the same interface, so the whole gateway is unit-tested offline.</div><div class="q"><span class="tag">Q</span> How do you handle an error in the middle of a stream?</div><div class="a"><span class="tag">A</span> Before the first delta, it is a normal HTTP error and the router can try the next candidate. After the first delta the status is already 200, so the failure becomes a <code>data: {"error":…}</code> event followed by <code>[DONE]</code>.</div><div class="q"><span class="tag">Q</span> What does 'health' buy you?</div><div class="a"><span class="tag">A</span> A 15-second prober sets <code>router_backend_up{backend}</code>, feeds <code>GET /v1/models</code> and the console, and lets the router skip a fallback it already knows is down instead of paying a timeout.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>One Backend interface: Generate / Stream / Health.</li><li>OpenAI shape in and out; MVP body still works.</li><li>Streaming: errors before the first delta are HTTP errors, after it they are events.</li></ul></div>
+<nav class="bottom"><a href="30-interview-story.html">← 30. How to tell this story in an interview</a><a href="32-api-keys-and-fail-closed.html">32. Virtual API keys and the fail-closed rule →</a></nav>
+</div></body></html>

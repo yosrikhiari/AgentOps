@@ -16,6 +16,8 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
                      │        eval_runs + eval_pair_scores → drift report + alert                    │
   Claude Desktop ──► │ mcp (--mcp): list_models · get_stats · route_test_request · inspect_trace ·   │
                      │             get_drift_report  (JSON-RPC 2.0 over stdio)                      │
+  browser  /  ─────► │ Tower console: overview · traffic · backend health · trace inspector ·        │
+                     │                evals & drift · workflows   (embedded, no build step)         │
                      └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -30,7 +32,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 | 5 | Durable tracker surviving `kill -9` mid-task | **✓ automated `TestKillResume` + live kill** |
 | 6 | One trace view: pick a request, see every step | **✓ `GET /v1/traces/{id}`, CLI, MCP** |
 
-52 tests, `go vet` + `-race` in CI. Full history, decisions (ADR-0001…0006) and every defect found by the review passes are in [`AgentOps_Project_Plan.md`](AgentOps_Project_Plan.md).
+57 tests, `go vet` + `-race` in CI. Full history, decisions (ADR-0001…0006) and every defect found by the review passes are in [`AgentOps_Project_Plan.md`](AgentOps_Project_Plan.md).
 
 ## Quickstart
 
@@ -42,7 +44,7 @@ docker compose --profile monitoring up -d # optional: Prometheus :9090 + Grafana
 go run . --migrate                        # migrations/*.sql
 python scripts/clean_docs.py              # corpus/*.md → evals/corpus/clean/*.jsonl
 go run . --ingest                         # embed chunks with nomic-embed-text → pgvector
-go run .                                  # HTTP router on :8080
+go run .                                  # gateway + Tower console on :8080 — open http://localhost:8080
 ```
 
 Or containerised (21 MB distroless image, talks to Ollama on the host):
@@ -83,6 +85,7 @@ router/      gateway: classify → plan → backends (Ollama, OpenAI-style) → 
 tracker/     workflows/steps row-status durability, spans   (Store iface: SQLStore + MemStore)
 evals/       corpus ingest, pgvector search, golden, judge, retry/backoff, drift
 mcp/         JSON-RPC 2.0 over stdio, 5 tools
+console/     Tower web UI (embedded static/) + its JSON endpoints
 migrations/  0001_init.sql, 0002_drift.sql, 0003_api_keys.sql
 corpus/      15 short docs describing this system — the RAG target (v2 matches the shipped code)
 dashboard/   grafana/router.json + provisioning, prometheus/prometheus.yml
@@ -102,6 +105,7 @@ docs/        API.md (gateway reference), VRAM.md (swap rule), tower-design-syste
 - **Golden answers are standalone propositions** — the judge never sees the question, so one-word, list-fragment and "Because…" answers score 0 regardless of truth; `--freeze-golden` rejects them. Learned from v1 (0.969) → v2 (1.000).
 - **Telemetry never on the request path** — spans go through a 1024-deep channel to one writer goroutine; a dead DB costs a chat nothing.
 - **Fail-closed on sensitive data** — a request flagged sensitive (header, body flag or keyword) never reaches a cloud backend, even when every local model is down; naming a cloud model explicitly is refused. The routing plan is built once and the rule is applied there.
+- **The console is read-mostly and framework-free** — three static files embedded in the binary on the Tower design tokens; every page owns an AbortController, 5xx get one retry, store failures render an inline error with Retry, and polling never replaces a field you are typing in. Only two write actions: run eval, start/resume workflow.
 - **Gateway, not just router** — OpenAI-compatible `messages[]`/streaming, virtual API keys with RPM + token budgets, pluggable backends (Ollama + any OpenAI-style API) with health probes, graceful drain on SIGTERM. Full reference in [`docs/API.md`](docs/API.md).
 
 ## Privacy & license

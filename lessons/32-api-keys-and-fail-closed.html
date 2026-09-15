@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>32 · Virtual API keys and the fail-closed rule — AgentOps Lessons</title>
+<link rel="stylesheet" href="style.css"></head>
+<body><div class="wrap">
+<header class="top"><a href="index.html">AgentOps Lessons</a><span>Lesson 32 of 33</span></header>
+<div class="part">Part 8 · v1.0 product</div>
+<h1>Virtual API keys and the fail-closed rule</h1>
+<h2>In one sentence</h2>
+<div class="one">Callers get virtual keys with a per-minute limit and a lifetime token budget; and a request flagged sensitive never reaches a cloud backend — even when every local model is down.</div>
+<h2>Why it exists</h2>
+<p>A gateway without keys is an open proxy to your GPU. A gateway that quietly falls back to a cloud API when Ollama dies will, one day, send a customer's IBAN to a third party. Both rules are cheap to build and expensive to bolt on later.</p>
+<h2>How it works in this project</h2>
+<pre class="code"><code>go run . --create-key alice --key-rpm 60 --key-budget 2000000   # prints ak_… once; SHA-256 stored
+Authorization: Bearer ak_…
+
+401 missing_api_key / invalid_api_key     403 api_key_disabled / budget_exceeded     429 rate_limited (+ Retry-After)
+
+// router/router.go — the plan is built ONCE, and the rule lives there
+func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Route, error) {
+    // explicit cloud model + sensitive → ErrSensitiveCloud (403)
+    // auto: chosen tier, then the other local tier, then cloud — cloud only if !sensitive
+}</code></pre><p>Sensitive is set by header <code>X-AgentOps-Sensitive: true</code>, by <code>"sensitive":true</code> in the body, or by a small keyword list (<code>password</code>, <code>iban</code>, <code>passport</code>, <code>confidentiel</code>…). The flag is written into the <code>route.decide</code> span, so every trace shows whether the rule applied.</p><p>Keys: only the hash is stored; the rate limiter is a fixed one-minute window per key in memory; usage is charged asynchronously after the response so a budget can overshoot by one request. Both trade-offs are written down in the plan.</p>
+<h2>Try it yourself</h2>
+<p><pre class="code"><code>KEY=$(go run . --create-key demo --key-rpm 2 | grep -o &#x27;ak_[0-9a-f]*&#x27;)
+for i in 1 2 3; do curl -s -o /dev/null -w &quot;%{http_code} &quot; localhost:8080/v1/chat/completions -H &quot;Authorization: Bearer $KEY&quot; -d &#x27;{&quot;prompt&quot;:&quot;hi&quot;}&#x27;; done
+# 200 200 429</code></pre></p>
+<h2>Interview questions</h2>
+<div class="qa"><div class="q"><span class="tag">Q</span> Where exactly is the fail-closed rule enforced?</div><div class="a"><span class="tag">A</span> In <code>Plan()</code>, once, when the candidate list is built. Sensitive requests simply never have a non-local candidate, so no later code path can leak — and an explicit cloud model is refused up front with 403.</div><div class="q"><span class="tag">Q</span> Why store only a hash of the key?</div><div class="a"><span class="tag">A</span> A database dump then reveals nothing usable. The secret is printed once at creation; lose it and you mint a new one.</div><div class="q"><span class="tag">Q</span> What did the live test show?</div><div class="a"><span class="tag">A</span> 401 without a key, 200 with one, then 200/429/429/429 on a 2-rpm key with a Retry-After header, and <code>tokens_used</code> climbing in the table.</div></div>
+<h2>Remember</h2>
+<div class="remember"><ul><li>Keys: hash stored, RPM window, token budget, one error shape.</li><li>Sensitive → cloud removed from the plan; explicit cloud → 403.</li><li>Trade-offs (per-process limiter, async charge) are documented, not hidden.</li></ul></div>
+<nav class="bottom"><a href="31-gateway-openai-streaming.html">← 31. From router to gateway: OpenAI shape, streaming, backends</a><a href="33-tower-console.html">33. The Tower console: a UI with no framework and no build →</a></nav>
+</div></body></html>

@@ -27,6 +27,9 @@ import (
 	"agentops/tracker"
 )
 
+// version is stamped by the release build (-ldflags "-X main.version=v1.2.3").
+var version = "dev"
+
 var errEmptyDraft = errors.New("empty draft")
 
 // pgDB is the slice of pgx shared by *pgx.Conn, *pgxpool.Pool and pgx.Tx.
@@ -83,10 +86,11 @@ func runMigrate(dsn string) {
 		log.Fatal(err)
 	}
 	defer conn.Close(ctx)
-	if err := evals.Migrate(ctx, pgAdapter{conn}, "migrations"); err != nil {
+	n, err := evals.Migrate(ctx, pgAdapter{conn}, pgAdapter{conn}, "migrations")
+	if err != nil {
 		log.Fatal(err)
 	}
-	log.Print("migrations applied")
+	log.Printf("migrations: applied %d new file(s)", n)
 }
 
 func evalThreshold() float64 {
@@ -529,7 +533,12 @@ func main() {
 	resumeTracker := flag.String("resume-tracker", "", "resume toy workflow ID and exit")
 	trackerInput := flag.String("tracker-input", "what does agentops do?", "input question for --run-tracker")
 	traceID := flag.String("trace", "", "print redacted spans for TRACE_ID and exit")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("agentops " + version)
+		return
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
@@ -643,6 +652,6 @@ func main() {
 		_ = json.NewEncoder(w).Encode(data)
 	})
 	mux.Handle("/", srv)
-	log.Printf("agentops router on %s fast=%s quality=%s", cfg.Addr, cfg.FastModel, cfg.QualityModel)
+	log.Printf("agentops %s router on %s fast=%s quality=%s", version, cfg.Addr, cfg.FastModel, cfg.QualityModel)
 	log.Fatal(http.ListenAndServe(cfg.Addr, mux))
 }

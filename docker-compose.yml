@@ -46,5 +46,25 @@ services:
     depends_on:
       - prometheus
 
+  # docker compose --profile app up -d   → the router in a container, talking to Ollama on the
+  # host and to the postgres service. Run `--migrate` once: docker compose run --rm agentops --migrate
+  agentops:
+    build: .
+    image: agentops:local
+    profiles: ["app"]
+    container_name: agentops
+    environment:
+      OLLAMA_URL: http://host.docker.internal:11434
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-agentops}:${POSTGRES_PASSWORD:-agentops}@postgres:5432/${POSTGRES_DB:-agentops}
+      FAST_MODEL: ${FAST_MODEL:-qwen2.5:3b-instruct}
+      QUALITY_MODEL: ${QUALITY_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   agentops-pgdata:

@@ -104,22 +104,56 @@ type Execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (int64, error)
 }
 
-func Migrate(ctx context.Context, db Execer, dir string) error {
+// Migrate applies migrations/*.sql in name order, once each: every applied file name is
+// recorded in schema_migrations and skipped on later runs. The MVP relied on every statement
+// being IF NOT EXISTS; tracking makes the first ALTER/DROP migration safe to write. It
+// returns how many files were applied this run.
+func Migrate(ctx context.Context, db Execer, q Queryer, dir string) (int, error) {
+	if _, err := db.Exec(ctx,
+		`CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+		return 0, fmt.Errorf("schema_migrations: %w", err)
+	}
+	applied := map[string]bool{}
+	rows, err := q.Query(ctx, `SELECT filename FROM schema_migrations`)
+	if err != nil {
+		return 0, fmt.Errorf("read schema_migrations: %w", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		applied[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	sort.Strings(files)
+	n := 0
 	for _, f := range files {
+		name := filepath.Base(f)
+		if applied[name] {
+			continue
+		}
 		raw, err := os.ReadFile(f)
 		if err != nil {
-			return err
+			return n, err
 		}
 		if _, err := db.Exec(ctx, string(raw)); err != nil {
-			return fmt.Errorf("%s: %w", f, err)
+			return n, fmt.Errorf("%s: %w", name, err)
 		}
+		if _, err := db.Exec(ctx, `INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING`, name); err != nil {
+			return n, fmt.Errorf("record %s: %w", name, err)
+		}
+		n++
 	}
-	return nil
+	return n, nil
 }
 
 func Ingest(ctx context.Context, db Execer, chunks []Chunk, embed *Embedder) (int, error) {

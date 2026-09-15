@@ -46,17 +46,66 @@ func (f *fakeExec) Exec(ctx context.Context, sql string, args ...any) (int64, er
 	return 1, nil
 }
 
+// fakeRows replays one string column; fakeQueryer serves it for the schema_migrations read.
+type fakeRows struct {
+	vals []string
+	i    int
+}
+
+func (r *fakeRows) Next() bool {
+	if r.i >= len(r.vals) {
+		return false
+	}
+	r.i++
+	return true
+}
+func (r *fakeRows) Scan(dest ...any) error { *(dest[0].(*string)) = r.vals[r.i-1]; return nil }
+func (r *fakeRows) Err() error             { return nil }
+func (r *fakeRows) Close()                 {}
+
+type fakeQueryer struct{ applied []string }
+
+func (f *fakeQueryer) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return &fakeRows{vals: f.applied}, nil
+}
+
 func TestMigrateRunsSQLFiles(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "0001_a.sql"), []byte("SELECT 1"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	fx := &fakeExec{}
-	if err := Migrate(context.Background(), fx, dir); err != nil {
-		t.Fatal(err)
+	n, err := Migrate(context.Background(), fx, &fakeQueryer{}, dir)
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
 	}
-	if len(fx.stmts) != 1 || !strings.Contains(fx.stmts[0], "SELECT 1") {
+	// create table, the migration itself, the record insert
+	if len(fx.stmts) != 3 || !strings.Contains(fx.stmts[1], "SELECT 1") || !strings.Contains(fx.stmts[2], "INSERT INTO schema_migrations") {
 		t.Fatalf("got %+v", fx.stmts)
+	}
+}
+
+// A file already listed in schema_migrations must not run again — that is the whole point
+// of tracking, and what makes a future ALTER migration safe.
+func TestMigrateSkipsApplied(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"0001_a.sql", "0002_b.sql"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("SELECT '"+f+"'"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fx := &fakeExec{}
+	n, err := Migrate(context.Background(), fx, &fakeQueryer{applied: []string{"0001_a.sql"}}, dir)
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	for _, s := range fx.stmts {
+		if strings.Contains(s, "0001_a.sql'") {
+			t.Fatalf("0001_a.sql ran again: %+v", fx.stmts)
+		}
+	}
+	if !strings.Contains(strings.Join(fx.stmts, "\n"), "0002_b.sql") {
+		t.Fatalf("0002_b.sql did not run: %+v", fx.stmts)
 	}
 }
 

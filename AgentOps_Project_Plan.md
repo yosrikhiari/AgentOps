@@ -768,3 +768,43 @@ worst_cases:[3]}`; `eval_faithfulness 0.000000` present in `/metrics` after rest
 
 *Update this as you build. The six MVP checkboxes are the contract with yourself — everything
 else is allowed to change.*
+
+---
+
+## 9. v1.0 — beyond the MVP (started 2026-09-15)
+
+The MVP proved the four tools work. v1.0 turns them into something a person can install and
+use: the **Tower** console from `docs/tower-design-system.html`, on top of a gateway that
+real clients can talk to. Scope agreed 2026-09-15: tracks **A, B, C** now; D (tracker v2),
+E (evals v2), F (shadow-test promotion) stay in §7 until these ship. One track at a time,
+each shipped as tested commits on `main`, check-in between tracks.
+
+### Track A — ops foundation (½ day)
+Brief: make every later change safe to ship. No product behaviour changes.
+- [ ] `Dockerfile` (multi-stage, static binary, non-root) + `.dockerignore`; `docker compose --profile app` runs the router against the host's Ollama → Verify: `docker build` + `docker run --rm agentops --help`
+- [ ] `.github/workflows/ci.yml`: gofmt check, `go vet`, `go test -race`, `go build`, docker build on every push/PR; on a `v*` tag, build linux/windows binaries and attach to a GitHub release → Verify: green run on `main`
+- [ ] `schema_migrations(filename, applied_at)`: `Migrate` records each applied file and skips it next time, so the first `ALTER` migration is safe → Verify: `TestMigrateSkipsApplied`; live `--migrate` twice reports `applied 0`
+- [ ] `.github/dependabot.yml` (gomod, docker, github-actions weekly) → Verify: file present, CI green
+- [ ] tag `v0.1.0` = the MVP as shipped → Verify: release page shows the binaries
+Done: CI badge in README, `v0.1.0` release exists.
+
+### Track B — gateway hardening (2–3 days)
+Brief: the router becomes a gateway an OpenAI-style client can point at.
+- [ ] OpenAI-compatible request/response on `POST /v1/chat/completions` (`messages[]`, `model` optional = "auto", `choices[0].message`, `usage`), legacy `{prompt}` body still accepted → Verify: existing tests + `TestOpenAIShape`
+- [ ] Streaming (`stream:true` → SSE chunks) end-to-end from Ollama → Verify: `curl -N` shows deltas; metrics still count once
+- [ ] Provider abstraction: `Backend` interface, Ollama + OpenAI-compatible HTTP (Groq) implementations, per-backend health probe + `router_backend_up{backend}` gauge → Verify: `list_models`/UI show health; killing Ollama flips the gauge
+- [ ] Virtual API keys: `api_keys(key_hash, name, budget_tokens, rpm, disabled)`; `Authorization: Bearer ak_…`; 401/403/429 with the one error shape; per-key `router_requests_total{key}` → Verify: tests + live 429 on a 2-rpm key
+- [ ] Fail-closed rule: a request flagged `sensitive` (header or keyword list) never routes to a cloud backend, even on local failure → Verify: `TestSensitiveNeverLeavesBox`
+- [ ] Graceful shutdown (drain in-flight, flush span queue), request timeout, `X-Request-ID`/trace id echo → Verify: SIGTERM during a chat finishes it, then exits 0
+Done: `curl` with the OpenAI shape + a key works; `docs/API.md` written.
+
+### Track C — Tower console (3–4 days)
+Brief: the mockup, real. Served by the same binary from `embed.FS` at `/`, hand-written
+HTML/CSS/JS on the Tower tokens (no framework, no build step), reading the JSON API.
+- [ ] `GET /v1/overview` (req/min, p50/p99, faithfulness 24h, judge cost, backend health) + `GET /v1/requests?limit=30` (recent requests with model/reason/latency from spans) → Verify: JSON tests
+- [ ] Overview page: KPI header, routing-traffic bars (last 30), backend health list → Verify: renders against the live box, empty/loading/error states
+- [ ] Trace inspector page: paste/click a trace id → step list with attrs, expandable → Verify: router chat + tracker workflow both render
+- [ ] Evals page: score history (all runs for a golden version), drift card, worst cases, "run eval" button (`POST /v1/evals/run`) → Verify: runs 3–6 chart, button triggers `scoreOnce` in the background
+- [ ] Workflows page: list + start/resume the toy workflow → Verify: kill/resume visible in the UI
+- [ ] Dashboard hardening from §7: cancel in-flight fetch on navigation, retry once on 5xx, one error toast shape → Verify: browser check with Postgres stopped
+Done: screenshots of each page in `docs/tower/`; §7 "Dashboard hardening" item struck.

@@ -1,5 +1,7 @@
 # AgentOps
 
+[![ci](https://github.com/yosrikhiari/AgentOps/actions/workflows/ci.yml/badge.svg)](https://github.com/yosrikhiari/AgentOps/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/yosrikhiari/AgentOps?include_prereleases)](https://github.com/yosrikhiari/AgentOps/releases) ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
+
 A small, from-scratch **AI operations toolkit** in one Go binary: a model **router**, a **durable task tracker**, a **faithfulness eval + drift alert** loop, **OTel-shaped traces**, and an **MCP server** so an AI assistant can query all of it.
 
 Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.com) models — informed by how TensorZero, Bifrost, Temporal and Langfuse solve the same problems, but with every core piece written here so it can be explained line by line. Standard library + one dependency (`pgx`).
@@ -28,7 +30,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 | 5 | Durable tracker surviving `kill -9` mid-task | **✓ automated `TestKillResume` + live kill** |
 | 6 | One trace view: pick a request, see every step | **✓ `GET /v1/traces/{id}`, CLI, MCP** |
 
-39 tests, `go vet` clean. Full history, decisions (ADR-0001…0006) and every defect found by the review passes are in [`AgentOps_Project_Plan.md`](AgentOps_Project_Plan.md).
+40 tests, `go vet` + `-race` in CI. Full history, decisions (ADR-0001…0006) and every defect found by the review passes are in [`AgentOps_Project_Plan.md`](AgentOps_Project_Plan.md).
 
 ## Quickstart
 
@@ -42,6 +44,15 @@ python scripts/clean_docs.py              # corpus/*.md → evals/corpus/clean/*
 go run . --ingest                         # embed chunks with nomic-embed-text → pgvector
 go run .                                  # HTTP router on :8080
 ```
+
+Or containerised (21 MB distroless image, talks to Ollama on the host):
+
+```bash
+docker compose --profile app up -d --build   # router on :8080 + postgres
+docker compose run --rm agentops --migrate   # once
+```
+
+Releases ship `agentops-vX.Y.Z-{linux,windows,darwin}-amd64` binaries built by CI on every `v*` tag.
 
 Then:
 

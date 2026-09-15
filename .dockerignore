@@ -1,0 +1,12 @@
+.git
+.github
+.ruff_cache
+lessons
+docs
+dashboard
+load-tests
+corpus
+scripts
+*.md
+*.exe
+*.log

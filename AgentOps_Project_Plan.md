@@ -431,7 +431,13 @@ verified page by page in the browser, including the Postgres-down error path. Fi
 the way: (1) console re-render race ate a click and wiped input — fixed; (2) two pre-v9
 workflows sat at `status=running` with all steps done (they predate `SetWorkflowStatus`);
 Resume on one of them re-ran the id, skipped all three done steps and marked the workflow
-done in under a second — the durable-resume path self-heals stale rows. 57 tests.
+done in under a second — the durable-resume path self-heals stale rows. (3) The eval run
+started from the console during the browser checks **failed at pair 38 after 30 min**
+(`context deadline exceeded`): `scoreOnce` had a hard-coded 1800 s budget and the judge was
+swapping against the 3B chat model on the 8 GB GPU for every request I sent meanwhile. No
+row was written (atomic), the console showed `failed` + the error. Fix: `EVAL_TIMEOUT` env
+(default 90 min) and the contention rule in `docs/VRAM.md`; Track E should add a "pause
+routing during eval" or a smaller judge for shared boxes. 57 tests.
 **2026-09-15 (9th pass, "run a loop making all of this").**
 1. **Repo.** `git init -b main`, `.gitignore`, `.gitattributes` (LF), `README.md` (pitch,
    status table, quickstart, flags, layout, decisions), `LICENSE` Apache-2.0 (fetched via

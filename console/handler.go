@@ -210,7 +210,7 @@ func (h *Handler) evalRun(w http.ResponseWriter, r *http.Request) {
 	h.evalLast = evalStatus{Running: true, StartedAt: time.Now(), Golden: body.Golden}
 	h.mu.Unlock()
 	go func(golden string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour) // scoreOnce applies its own EVAL_TIMEOUT
 		defer cancel()
 		err := h.deps.RunEval(ctx, golden)
 		h.mu.Lock()

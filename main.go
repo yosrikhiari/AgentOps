@@ -465,8 +465,18 @@ func runScheduler(dsn, ollamaURL, goldenPath, goldenVersion, every string) {
 	}
 }
 
+// evalTimeout bounds one suite run. 48 pairs take ~8 min on an idle 4060 but well over 30
+// when the judge shares the GPU with live traffic (every request swaps models), so the
+// default is generous and EVAL_TIMEOUT overrides it.
+func evalTimeout() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("EVAL_TIMEOUT")); err == nil && d > 0 {
+		return d
+	}
+	return 90 * time.Minute
+}
+
 func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), evalTimeout())
 	defer cancel()
 	raw, err := os.ReadFile(goldenPath)
 	if err != nil {

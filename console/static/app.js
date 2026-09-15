@@ -180,48 +180,158 @@
     pollTimer = setTimeout(() => { if (location.hash.startsWith('#/overview') || location.hash === '' || location.hash === '#/') pageOverview(signal, '', true); }, 5000);
   }
 
+  // ---------- traces page: list + waterfall + span tree ----------
+  function parseAttrs(s) { try { return JSON.parse(s || '{}'); } catch (e) { return {}; } }
+  fmt.ago = iso => {
+    const d = new Date(iso); if (isNaN(d)) return '';
+    const s = Math.max(0, (Date.now() - d.getTime()) / 1000);
+    if (s < 60) return Math.round(s) + ' s ago';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' d ago';
+  };
+
+  // Build the span tree (children under parents, unknown parents at the root) and a
+  // timeline: offset from the first span, and a duration where the span carries one
+  // (model.generate has latency_s; other spans get the gap to the next span).
+  function buildTimeline(spans) {
+    // Spans are emitted when their work completes, so started_at is really the end. A span
+    // with latency_s starts latency before it; a span without one is a point in time.
+    const sorted = spans.slice().sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+    let rows = sorted.map(s => {
+      const attrs = parseAttrs(s.attrs);
+      const end = new Date(s.started_at).getTime();
+      const dur = attrs.latency_s != null ? Number(attrs.latency_s) * 1000 : 0;
+      return { span: s, attrs, end: isNaN(end) ? 0 : end, dur: isNaN(dur) ? 0 : Math.max(0, dur), depth: 0 };
+    });
+    const t0 = rows.length ? Math.min(...rows.map(r => r.end - r.dur)) : 0;
+    rows.forEach(r => { r.start = r.end - r.dur - t0; });
+    rows.sort((a, b) => a.start - b.start || a.end - b.end);
+    const byId = {}; rows.forEach(r => byId[r.span.span_id] = r);
+    rows.forEach(r => { let p = r.span.parent_id, d = 0, guard = 0; while (p && byId[p] && guard++ < 32) { d++; p = byId[p].span.parent_id; } r.depth = d; });
+    const total = Math.max(1, ...rows.map(r => r.start + r.dur));
+    return { rows, total };
+  }
+
+  function traceKind(spans) {
+    const names = new Set(spans.map(s => s.name));
+    if (names.has('route.decide')) return 'chat';
+    if (names.has('researcher') || names.has('drafter') || names.has('reviewer')) return 'workflow';
+    return 'trace';
+  }
+
   function traceView(data) {
     const spans = data.spans || [];
-    const byId = {}; spans.forEach(s => byId[s.span_id] = s);
-    const steps = spans.map((s, i) => {
-      let attrs = {}; try { attrs = JSON.parse(s.attrs || '{}'); } catch (e) { }
-      const failed = attrs.error;
+    const { rows, total } = buildTimeline(spans);
+    const kind = traceKind(spans);
+    const decide = rows.find(r => r.span.name === 'route.decide');
+    const gen = rows.find(r => r.span.name === 'model.generate');
+    const failed = rows.some(r => r.attrs.error);
+    const head = h('div', { class: 'tower-trace-head' },
+      h('div', null,
+        h('div', { class: 'tower-trace-title' }, h('span', { class: 'tower-mono' }, data.trace_id), ' ', chip(kind), failed ? pill('critical', 'failed') : pill('healthy', 'ok')),
+        h('div', { class: 'tower-panel-sub' },
+          spans.length + ' spans · ' + fmt.ms(total / 1000) + ' end to end',
+          rows.length ? ' · started ' + fmt.date(rows[0].span.started_at) : '',
+          decide ? ' · ' + (decide.attrs.reason || '') : '',
+          decide && decide.attrs.sensitive ? ' · sensitive' : '')),
+      h('div', { class: 'tower-form-row' },
+        h('button', { class: 'tower-btn ghost', onclick: () => { navigator.clipboard && navigator.clipboard.writeText(data.trace_id); toast('trace id copied'); } }, 'Copy id'),
+        h('a', { class: 'tower-btn ghost', href: '/v1/traces/' + encodeURIComponent(data.trace_id), target: '_blank' }, 'JSON')));
+
+    // waterfall
+    const wf = h('div', { class: 'tower-waterfall' }, ...rows.map(r => {
+      const left = (r.start / total) * 100, width = Math.max(0.6, (r.dur / total) * 100);
+      const color = r.attrs.error ? 'var(--tower-red)' : r.span.name === 'model.generate' ? 'var(--tower-amber)' : r.span.name.startsWith('route') || r.span.name.startsWith('router') ? 'var(--tower-ink-faint)' : 'var(--tower-green)';
+      return h('div', { class: 'tower-wf-row' },
+        h('div', { class: 'tower-wf-name', style: 'padding-left:' + (r.depth * 14) + 'px' }, r.span.name),
+        h('div', { class: 'tower-wf-track' },
+          h('div', { class: 'tower-wf-bar', style: `left:${left}%;width:${width}%;background:${color}`, title: fmt.ms(r.dur / 1000) })),
+        h('div', { class: 'tower-wf-dur tower-mono' }, r.dur ? fmt.ms(r.dur / 1000) : '–'));
+    }));
+
+    // span tree with expandable attributes
+    const steps = rows.map(r => {
+      const s = r.span, attrs = r.attrs;
       const detail = h('div', { class: 'tower-trace-detail' },
         h('div', { class: 'tower-kv' }, ...Object.entries(attrs).flatMap(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, typeof v === 'object' ? JSON.stringify(v) : String(v))]),
+          h('span', { class: 'k' }, 'started_at'), h('span', { class: 'v' }, fmt.date(s.started_at)),
           h('span', { class: 'k' }, 'span_id'), h('span', { class: 'v' }, s.span_id),
           h('span', { class: 'k' }, 'parent_id'), h('span', { class: 'v' }, s.parent_id || '(root)')));
       const body = h('div', { class: 'tower-trace-body', onclick: () => detail.classList.toggle('open') },
         h('div', { class: 'tower-trace-top' },
           h('span', { class: 'tower-trace-name' }, s.name),
           h('span', { class: 'tower-trace-meta' },
-            attrs.latency_s != null ? h('span', { class: 'tower-mono' }, fmt.ms(attrs.latency_s)) : null,
+            r.dur ? h('span', { class: 'tower-mono' }, fmt.ms(r.dur / 1000)) : null,
             attrs.model ? h('span', { class: 'tower-mono' }, attrs.model) : null,
             attrs.backend ? chip(attrs.backend) : null,
+            attrs.tier ? chip(attrs.tier) : null,
+            attrs.fallback_from ? chip('fallback') : null,
             attrs.sensitive ? chip('sensitive') : null,
-            failed ? pill('critical', 'failed') : null,
+            attrs.error ? pill('critical', 'failed') : null,
             h('span', null, '▾'))),
         detail);
-      return h('div', { class: 'tower-trace-step ' + (failed ? 'active' : 'done') }, h('span', { class: 'tower-trace-dot' }), body);
+      return h('div', { class: 'tower-trace-step ' + (attrs.error ? 'active' : 'done'), style: 'margin-left:' + (11 + r.depth * 14) + 'px' }, h('span', { class: 'tower-trace-dot' }), body);
     });
-    return h('div', { class: 'tower-trace' }, ...steps);
+    return h('div', null, head, h('h4', { class: 'tower-sub-h' }, 'Timeline'), wf, h('h4', { class: 'tower-sub-h' }, 'Spans'), h('div', { class: 'tower-trace' }, ...steps),
+      gen && gen.attrs.fallback_from ? h('div', { class: 'tower-note' }, 'Fallback: ' + gen.attrs.fallback_from.join(', ') + ' failed → served by ' + gen.attrs.model) : null);
   }
 
   async function pageTraces(signal, id) {
+    let filter = 'all';
     const input = h('input', { class: 'tower-input', placeholder: 'trace id or workflow id', value: id || '' });
     const go = () => { const v = input.value.trim(); if (v) location.hash = '#/traces/' + v; };
     input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
-    const form = h('div', { class: 'tower-form-row' }, input, h('button', { class: 'tower-btn primary', onclick: go }, 'Inspect'));
-    const result = h('div', null);
-    content.replaceChildren(panel('Trace inspector', 'A router chat has 3 chained spans; a workflow has one span per step. Prompts are redacted.', h('div', null, form, h('div', { style: 'height:14px' }), result)));
-    if (!id) { result.replaceChildren(h('div', { class: 'tower-empty' }, 'Paste a trace id, or click a request on the overview.')); return; }
-    result.replaceChildren(skeleton(3));
-    try {
-      const data = await api('/v1/traces/' + encodeURIComponent(id), null, signal);
-      result.replaceChildren(h('div', { class: 'tower-panel-sub', style: 'margin-bottom:10px' }, 'trace ', h('span', { class: 'tower-mono' }, id), ' · ', data.spans.length + ' spans'), traceView(data));
-    } catch (e) {
-      if (e.name === 'AbortError') return;
-      result.replaceChildren(errorBox(e.code === 'trace_not_found' ? 'No spans for that id.' : 'Could not load trace: ' + e.message));
+    const filters = h('div', { class: 'tower-filters' });
+    const listBody = h('div', { class: 'tower-trace-list' }, skeleton(6));
+    const detail = h('div', null);
+    const listPanel = h('section', { class: 'tower-panel' },
+      h('div', { class: 'tower-panel-head' }, h('div', null, h('h3', null, 'Recent traces'), h('div', { class: 'tower-panel-sub' }, 'Router chats and workflows, newest first')), null),
+      filters, listBody);
+    const detailPanel = h('section', { class: 'tower-panel' }, detail);
+    content.replaceChildren(
+      panel('Trace inspector', 'Every request is a tree of spans with trace_id / span_id / parent_id. Prompts are never stored.',
+        h('div', { class: 'tower-form-row' }, input, h('button', { class: 'tower-btn primary', onclick: go }, 'Inspect'))),
+      h('div', { class: 'tower-grid-traces' }, listPanel, detailPanel));
+
+    let items = [];
+    function renderFilters() {
+      filters.replaceChildren(...[['all', 'All'], ['chat', 'Chats'], ['workflow', 'Workflows'], ['error', 'Errors'], ['sensitive', 'Sensitive'], ['fallback', 'Fallbacks']].map(([k, label]) =>
+        h('button', { class: 'tower-chip tower-chip-btn' + (filter === k ? ' on' : ''), onclick: () => { filter = k; renderList(); renderFilters(); } }, label)));
     }
+    function renderList() {
+      const shown = items.filter(it => filter === 'all' || (filter === 'chat' && it.kind === 'chat') || (filter === 'workflow' && it.kind === 'workflow') || (filter === 'error' && it.error) || (filter === 'sensitive' && it.sensitive) || (filter === 'fallback' && it.fallback));
+      if (!shown.length) { listBody.replaceChildren(h('div', { class: 'tower-empty' }, items.length ? 'Nothing matches this filter.' : 'No traces yet — send a request: curl localhost:8080/v1/chat/completions -d \'{"prompt":"hi"}\'')); return; }
+      listBody.replaceChildren(...shown.map(it => h('div', { class: 'tower-trace-item' + (it.id === id ? ' selected' : ''), onclick: () => { location.hash = '#/traces/' + it.id; } },
+        h('div', { class: 'tower-trace-item-top' },
+          h('span', null, chip(it.kind), ' ', h('span', { class: 'tower-mono' }, fmt.short(it.id))),
+          h('span', { class: 'tower-mono tower-muted' }, fmt.ago(it.at))),
+        h('div', { class: 'tower-trace-item-sub' }, it.label),
+        h('div', { class: 'tower-trace-item-meta' },
+          it.latency != null ? h('span', { class: 'tower-mono' }, fmt.ms(it.latency)) : null,
+          it.error ? pill('critical', 'error') : null,
+          it.sensitive ? chip('sensitive') : null,
+          it.fallback ? chip('fallback') : null,
+          it.status ? (it.status === 'done' ? pill('healthy', 'done') : pill('degraded', it.status)) : null))));
+    }
+    async function loadList() {
+      try {
+        const [reqs, wfs] = await Promise.all([api('/v1/requests?limit=50', null, signal), api('/v1/workflows?limit=20', null, signal)]);
+        const a = (reqs.requests || []).map(r => ({ id: r.trace_id, kind: 'chat', at: r.at, label: (r.model || '–') + ' · ' + (r.reason || ''), latency: r.latency_s, error: !!r.error, sensitive: r.sensitive, fallback: !!(r.fallback && r.fallback.length) }));
+        const b = (wfs.workflows || []).map(w => ({ id: w.id, kind: 'workflow', at: w.created_at, label: w.input, status: w.status, error: false }));
+        items = a.concat(b).sort((x, y) => new Date(y.at) - new Date(x.at));
+        renderList();
+      } catch (e) { if (e.name === 'AbortError') return; listBody.replaceChildren(errorBox('Could not load traces: ' + e.message, loadList)); }
+    }
+    async function loadDetail() {
+      if (!id) { detail.replaceChildren(h('div', { class: 'tower-empty tower-empty-tall' }, h('div', { class: 'tower-empty-title' }, 'Pick a trace'), 'Click one on the left, paste an id above, or click a bar on the overview.')); return; }
+      detail.replaceChildren(skeleton(5));
+      try { detail.replaceChildren(traceView(await api('/v1/traces/' + encodeURIComponent(id), null, signal))); }
+      catch (e) { if (e.name === 'AbortError') return; detail.replaceChildren(errorBox(e.code === 'trace_not_found' ? 'No spans for ' + id + '.' : 'Could not load trace: ' + e.message, loadDetail)); }
+    }
+    renderFilters();
+    loadList();
+    loadDetail();
   }
 
   function scoreChart(runs) {
@@ -351,6 +461,7 @@
     const parts = location.hash.replace(/^#\/?/, '').split('/');
     const name = pages[parts[0]] ? parts[0] : 'overview';
     document.querySelectorAll('.tower-rail-btn').forEach(b => b.dataset.active = String(b.dataset.page === name));
+    if (name !== 'overview') api('/v1/overview', null, pageCtl.signal).then(updateStrip).catch(() => { /* strip is best-effort */ });
     pages[name](pageCtl.signal, parts.slice(1).join('/'));
   }
   document.querySelectorAll('.tower-rail-btn').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.page; }));

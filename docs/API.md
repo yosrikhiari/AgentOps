@@ -101,7 +101,7 @@ Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval
 ## Observability endpoints
 
 - `GET /metrics` — Prometheus exposition (`router_requests_total`, `router_errors_total`, `router_tokens_total`, `router_latency_seconds`, `router_backend_up`, `router_key_*`, `eval_faithfulness`).
-- `GET /v1/traces/{trace_id}` — every span of one request or workflow, prompts redacted; `404 trace_not_found`.
+- `GET /v1/traces/{trace_id}` — every span of one request or workflow (`trace_id, span_id, parent_id, name, started_at, attrs`), prompts redacted; `404 trace_not_found`. Spans are written when their work completes, so `started_at` is the end time; `attrs.latency_s` (router `model.generate`, every tracker step) gives the duration.
 - `GET /v1/drift/report` — last two eval runs for the default golden version.
 - `GET /health` — liveness.
 

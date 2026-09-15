@@ -429,6 +429,13 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-15 (13th pass, Traces page UX).** `#/traces` was an input box with no data. Now: list of
+recent traces (router chats + workflows, filters, relative time, chips) → waterfall + indented
+span tree with expandable attrs, Copy id / JSON, deep links keep the list, empty state with a
+next action; strip refreshes on every route. Backend: `Span.StartedAt` in the trace JSON;
+tracker steps emit `latency_s` + `attempts` (spans are emitted at completion, so the timeline
+places a bar at `started_at − latency`). Verified in the browser on a fresh workflow (5.17 s /
+5.94 s / 14 ms, 11.21 s end to end) and a sensitive chat that fell back to the 3B.
 **2026-09-15 (12th pass, market study → security fix).** `docs/MARKET.md` written from
 verified sources: TensorZero archived 2026-06-12 (founders returned most of a $7.3M seed),
 Langfuse → ClickHouse (Jan 16), Helicone → Mintlify (Mar 3, maintenance mode), Promptfoo →

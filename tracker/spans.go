@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 type Span struct {
-	TraceID  string `json:"trace_id"`
-	SpanID   string `json:"span_id"`
-	ParentID string `json:"parent_id"`
-	Name     string `json:"name"`
-	Attrs    string `json:"attrs"`
+	TraceID   string    `json:"trace_id"`
+	SpanID    string    `json:"span_id"`
+	ParentID  string    `json:"parent_id"`
+	Name      string    `json:"name"`
+	StartedAt time.Time `json:"started_at"`
+	Attrs     string    `json:"attrs"`
 }
 
 func RedactAttrs(raw string) string {
@@ -34,7 +36,7 @@ func RedactAttrs(raw string) string {
 
 func (s SQLStore) ListSpans(ctx context.Context, traceID string) ([]Span, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT trace_id, span_id, parent_id, name, attrs::text FROM spans WHERE trace_id = $1 ORDER BY started_at, span_id`,
+		`SELECT trace_id, span_id, parent_id, name, started_at, attrs::text FROM spans WHERE trace_id = $1 ORDER BY started_at, span_id`,
 		traceID)
 	if err != nil {
 		return nil, err
@@ -43,7 +45,7 @@ func (s SQLStore) ListSpans(ctx context.Context, traceID string) ([]Span, error)
 	var out []Span
 	for rows.Next() {
 		var sp Span
-		if err := rows.Scan(&sp.TraceID, &sp.SpanID, &sp.ParentID, &sp.Name, &sp.Attrs); err != nil {
+		if err := rows.Scan(&sp.TraceID, &sp.SpanID, &sp.ParentID, &sp.Name, &sp.StartedAt, &sp.Attrs); err != nil {
 			return nil, err
 		}
 		sp.Attrs = RedactAttrs(sp.Attrs)

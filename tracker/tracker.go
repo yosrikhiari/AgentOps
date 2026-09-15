@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 const (
@@ -250,7 +251,7 @@ func (m *MemStore) EmitSpan(ctx context.Context, traceID, spanID, parentID, name
 	}
 	m.spans++
 	m.spanNames = append(m.spanNames, name)
-	m.spanData = append(m.spanData, Span{TraceID: traceID, SpanID: spanID, ParentID: parentID, Name: name, Attrs: attrs})
+	m.spanData = append(m.spanData, Span{TraceID: traceID, SpanID: spanID, ParentID: parentID, Name: name, StartedAt: time.Now(), Attrs: attrs})
 	return nil
 }
 
@@ -262,12 +263,14 @@ func (m *MemStore) SpanCount() int {
 
 type StepFunc func(ctx context.Context, input string) (string, error)
 
-func spanAttrs(seq int, output string) string {
+// spanAttrs carries the step index, a redacted snippet and the step's wall time. Spans are
+// emitted when a step completes, so readers reconstruct the start as started_at - latency_s.
+func spanAttrs(seq int, output string, attempts int, latency time.Duration) string {
 	snip := output
 	if len(snip) > 200 {
 		snip = snip[:200]
 	}
-	raw, _ := json.Marshal(map[string]any{"seq": seq, "output_snippet": snip})
+	raw, _ := json.Marshal(map[string]any{"seq": seq, "output_snippet": snip, "attempts": attempts, "latency_s": latency.Seconds()})
 	return string(raw)
 }
 
@@ -299,6 +302,7 @@ func RunToy(ctx context.Context, store Store, workflowID, input string, research
 		if err := store.SetRunning(ctx, workflowID, st.Seq); err != nil {
 			return "", err
 		}
+		stepStart := time.Now()
 		out, err := fns[i](ctx, current)
 		if err != nil {
 			return "", err
@@ -310,7 +314,7 @@ func RunToy(ctx context.Context, store Store, workflowID, input string, research
 		if i > 0 {
 			parent = workflowID
 		}
-		if err := store.EmitSpan(ctx, workflowID, "", parent, st.Name, spanAttrs(st.Seq, out)); err != nil {
+		if err := store.EmitSpan(ctx, workflowID, "", parent, st.Name, spanAttrs(st.Seq, out, st.Attempts+1, time.Since(stepStart))); err != nil {
 			return "", err
 		}
 		current = out

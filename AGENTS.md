@@ -28,6 +28,20 @@ Anything that renders in the console (`console/static/`) is built on **Tower**. 
 
 The agreed backlog of UI/UX improvements, each with a live demo, is `docs/tower-enhancements.html` — if you are asked to improve the console, start there and cite the example number.
 
+## Which tool reads what
+
+This file is the only instruction file with content. Every other agent file is a pointer to it, so the rules cannot fork per tool. `TestPolicyAgentFilesPointHere` fails the build if a pointer stops pointing here or this file stops citing the rule book and the design system.
+
+| Tool | Reads | Notes |
+|---|---|---|
+| OpenCode | `AGENTS.md` (native) · `opencode.json` → `instructions` | config lists it explicitly too, so a global OpenCode config cannot shadow it |
+| Claude Code | `CLAUDE.md` → `@AGENTS.md` | import, not a copy |
+| Codex CLI / Copilot coding agent | `AGENTS.md` (native) | |
+| Cursor | `.cursor/rules/agents.mdc` (`alwaysApply`) | newer Cursor also reads `AGENTS.md` directly |
+| GitHub Copilot (IDE chat) | `.github/copilot-instructions.md` | |
+| Gemini CLI | `GEMINI.md` | |
+| Anything else | point it at `AGENTS.md` | add a row here and a line to the policy test |
+
 ## Where things are
 
 | Path | What |

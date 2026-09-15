@@ -1,0 +1,5 @@
+---
+description: AgentOps project rules — the rule book, the Tower design system, the traps
+alwaysApply: true
+---
+Read and follow `AGENTS.md` at the repository root before changing anything. It is the single instruction file for every coding agent in this repo; the rules it points to (`docs/RULES.md`) are enforced by `go test ./policy/` in CI. Anything rendered in the console uses the Tower design system: open `docs/tower-design-system.html` first.

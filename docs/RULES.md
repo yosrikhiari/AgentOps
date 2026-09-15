@@ -204,5 +204,6 @@ These fail the build when a rule above is broken. Names are the rules.
 | `TestPolicyRulesCiteRealTests` | every test name cited in this document exists — an enforcement column cannot go stale |
 | `TestPolicyConsoleColoursAreTokens` | no hex colour in `app.js` / `index.html`, none in `tower.css` outside `:root` — the console uses `--tower-*` tokens |
 | `TestPolicyConsoleClassesExist` | every `tower-*` name the console references is defined in `tower.css` |
+| `TestPolicyAgentFilesPointHere` | `AGENTS.md` cites this document and the design system; every per-tool agent file (`CLAUDE.md`, `GEMINI.md`, `opencode.json`, Cursor, Copilot) points at `AGENTS.md` and carries no rules of its own |
 
 Adding a rule: write the test first, watch it fail on the current code or a scratch breakage, then add the row here. A rule that cannot be tested gets the word **review** in its enforcement column above and a reviewer, not a wish.

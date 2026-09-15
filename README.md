@@ -107,7 +107,8 @@ load-tests/  router.js (k6: 50 RPS on /health, p99 gate)
 lessons/     33 plain-language HTML lessons on this repo — open lessons/index.html
 docs/        MARKET.md (market study + roadmap) · RULES.md (engineering rules) · API.md · VRAM.md · adr/ (8 decision records) · tower-design-system.html (the console design system, live against console/static/tower.css) · tower-enhancements.html (20 worked UI/UX enhancements with demos)
 policy/      executable policies: tests that fail the build when a rule in docs/RULES.md is broken
-AGENTS.md    what a coding agent must read first (rules, the Tower design system, the traps); CLAUDE.md imports it
+AGENTS.md    what a coding agent must read first (rules, the Tower design system, the traps). OpenCode/Codex read it natively;
+             CLAUDE.md, GEMINI.md, opencode.json, .cursor/rules/, .github/copilot-instructions.md are pointers to it
 ```
 
 ## Rules and decisions

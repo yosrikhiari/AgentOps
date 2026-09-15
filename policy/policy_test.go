@@ -401,3 +401,22 @@ func TestPolicyConsoleClassesExist(t *testing.T) {
 		t.Fatalf("only %d tower-* names found — the scan is broken, not the console", len(seen))
 	}
 }
+
+// RULE AGENTS.md is the one agent instruction file; every per-tool file points to it, and it
+// cites the rule book and the design system (AGENTS.md → "Which tool reads what").
+func TestPolicyAgentFilesPointHere(t *testing.T) {
+	agents := read(t, "AGENTS.md")
+	for _, must := range []string{"docs/RULES.md", "docs/tower-design-system.html", "go test -count=1 ./policy/"} {
+		if !strings.Contains(agents, must) {
+			t.Errorf("AGENTS.md no longer mentions %q", must)
+		}
+	}
+	for _, rel := range []string{"CLAUDE.md", "GEMINI.md", "opencode.json", ".cursor/rules/agents.mdc", ".github/copilot-instructions.md"} {
+		if !strings.Contains(read(t, rel), "AGENTS.md") {
+			t.Errorf("%s does not point at AGENTS.md", rel)
+		}
+	}
+	if strings.Contains(read(t, "CLAUDE.md"), "## ") {
+		t.Errorf("CLAUDE.md has its own sections — it must stay a pointer (@AGENTS.md), not a second rule file")
+	}
+}

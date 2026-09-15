@@ -1,0 +1,1 @@
+All agent instructions for this repository live in `AGENTS.md` at the root (shared with every coding agent). Read it first and follow it: the rules in `docs/RULES.md` are enforced by `go test ./policy/`, and anything rendered in the console uses the Tower design system in `docs/tower-design-system.html`.

@@ -119,7 +119,7 @@ Known gap, stated: the console and `/metrics` are unauthenticated. They expose r
 
 | Guardrail | Behaviour | Test |
 |---|---|---|
-| Fail-closed routing | Sensitive → no cloud candidate; explicit cloud model → 403 | `TestSensitiveNeverLeavesBox` |
+| Fail-closed routing | Sensitive → every non-local candidate removed, primary included; Ollama `:cloud` models are non-local; explicit non-local model → 403 | `TestSensitiveNeverLeavesBox`, `TestCloudSuffixModelIsNotLocal`, `TestPolicySensitiveHasNoCloudCandidate` |
 | Unknown model | 400 `unknown_model`, never a silent fallback to "auto" | `TestExplicitModel` |
 | Backend health | Known-down fallbacks skipped, not tried | `TestHealthProberGaugeAndModels` |
 | Budgets and rates | 403 `budget_exceeded`, 429 `rate_limited` + `Retry-After` | `TestAPIKeyBudget`, `TestAPIKeyRateLimit` |

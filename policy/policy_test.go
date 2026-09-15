@@ -129,6 +129,20 @@ func TestPolicySensitiveHasNoCloudCandidate(t *testing.T) {
 	if _, err := router.Plan("c", msgs, true, refs); err == nil {
 		t.Fatal("explicit cloud model on sensitive data must be refused")
 	}
+	// Ollama-hosted models look local to the backend; the model name must veto locality.
+	hosted := []router.ModelRef{
+		{Tier: "fast", Model: "qwen2.5:3b-instruct", Backend: local},
+		{Tier: "quality", Model: "kimi-k2.6:cloud", Backend: local},
+	}
+	r, err = router.Plan("auto", []router.Message{{Role: "user", Content: strings.Repeat("secret ", 40)}}, true, hosted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.Candidates {
+		if !c.Local() {
+			t.Fatalf("hosted :cloud model reachable by a sensitive request: %+v", c.Model)
+		}
+	}
 }
 
 // RULE one error shape: every non-2xx from the router carries {error:{code,message,trace_id}}.

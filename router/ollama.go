@@ -26,7 +26,10 @@ func NewOllamaClient(baseURL string) *OllamaClient {
 }
 
 func (c *OllamaClient) Name() string { return "ollama" }
-func (c *OllamaClient) Local() bool  { return true }
+
+// Local is true for the Ollama process itself; whether a *model* stays local is decided per
+// ModelRef (Ollama ":cloud" models are hosted). See ModelRef.Local.
+func (c *OllamaClient) Local() bool { return true }
 
 type ollamaChatRequest struct {
 	Model    string         `json:"model"`

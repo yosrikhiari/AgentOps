@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v17, 2026-09-15 — engineering rule set `docs/RULES.md` + 11 executable policies in `policy/`; staticcheck + govulncheck in CI (one real CVE fixed); 68 tests)
+# AgentOps Platform — Project Plan (v18, 2026-09-15 — market study `docs/MARKET.md` (TensorZero archived, Langfuse/Helicone/Promptfoo acquired; beachhead = the LLM-ops layer for Ollama) + the `:cloud` fail-closed fix it found; 69 tests)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -429,6 +429,23 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-15 (12th pass, market study → security fix).** `docs/MARKET.md` written from
+verified sources: TensorZero archived 2026-06-12 (founders returned most of a $7.3M seed),
+Langfuse → ClickHouse (Jan 16), Helicone → Mintlify (Mar 3, maintenance mode), Promptfoo →
+OpenAI (Mar 9); survivors are enterprise gateways (LiteLLM, Portkey, Bifrost, AISIX) and
+cloud-plane eval platforms. Ollama itself now serves hosted `name:cloud` models through the
+same local API. **That last fact was a hole here:** `OllamaClient.Local()` was true for every
+model, and `Plan()` only filtered non-local *fallbacks* — a sensitive prompt classified to a
+quality tier configured as `deepseek-v4-pro:cloud` would have left the machine as its
+*primary* route. Fixed: `ModelRef.Local()` (backend local AND model not `:cloud`/`Cloud`),
+`Plan()` drops every non-local candidate for sensitive requests including the primary and
+refuses with 403 if none remain; `TestCloudSuffixModelIsNotLocal` + policy case. Study
+conclusions: beachhead = individuals/small teams/regulated shops in front of Ollama; P0 =
+`:cloud` fix (done), hybrid retrieval (golden v3 pair 12 was the first vector-only miss),
+retrieval-miss reported separately from unfaithful, OTLP `gen_ai.*` export, Anthropic
+Messages API; P1 = shadow-test promotion, sovereignty policy engine, spend in currency, opt-in
+encrypted capture, MCP tool-call governance; P2 = installers, Open WebUI recipe, Promptfoo
+import, migration guides, multi-replica correctness. 69 tests.
 **2026-09-15 (11th pass, rules + executable policies).** `docs/RULES.md` written: problem fit,
 optimization order, success measures, architecture (modular monolith, sync core + bounded
 async edges, explicitly not event-driven and why), the sync/async rule (bounded, non-blocking,
@@ -838,6 +855,7 @@ Done: `docs/API.md` written; README gateway section; 52 tests.
 Deferred to Track D/E: nothing. Noted for later: the limiter is per-process (fine for one gateway; a second replica needs a shared counter), and usage is charged asynchronously so a budget can overshoot by one request.
 
 ### What's next after v1.0.0
+The market study (`docs/MARKET.md` §6) re-orders the backlog: **P0** hybrid retrieval + retrieval-miss reporting, OTLP export, Anthropic API; **P1** shadow-test promotion (= Track F), sovereignty policy engine, spend, opt-in capture, MCP tool governance; **P2** distribution. The original track list stays valid as containers:
 Tracks **D** (tracker v2: generic workflows via API, resume lease, `failed` state, root span),
 **E** (evals v2: hybrid retrieval, judge disagreement metric, trajectory evals, "pause routing
 during eval" for shared GPUs) and **F** (shadow-test auto-promotion) — in that order, each

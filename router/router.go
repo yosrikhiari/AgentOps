@@ -51,14 +51,30 @@ func IsSensitive(msgs []Message, keywords []string) bool {
 	return false
 }
 
-// ModelRef is a model on a backend, with the tier it serves.
+// ModelRef is a model on a backend, with the tier it serves. Cloud, when set, marks the
+// model as leaving the machine even though its backend is local — since 2026 Ollama serves
+// hosted models (":cloud" suffix) through the same local API, so locality is a property of
+// the model, not only of the backend.
 type ModelRef struct {
 	Tier    string
 	Model   string
 	Backend Backend
+	Cloud   bool
 }
 
-func (r ModelRef) local() bool { return r.Backend != nil && isLocal(r.Backend) }
+// IsCloudModel recognises Ollama's hosted-model naming ("name:cloud", "name:cloud-…").
+func IsCloudModel(model string) bool {
+	i := strings.LastIndex(model, ":")
+	return i >= 0 && strings.HasPrefix(model[i+1:], "cloud")
+}
+
+// Local reports whether a request to this model stays on the machine: the backend must be
+// local AND the model must not be a hosted one.
+func (r ModelRef) Local() bool {
+	return r.Backend != nil && isLocal(r.Backend) && !r.Cloud && !IsCloudModel(r.Model)
+}
+
+func (r ModelRef) local() bool { return r.Local() }
 
 // Route is the plan for one request: the primary model, the fallbacks to try in order if
 // the primary fails, and why. The fail-closed rule is applied here, once: a sensitive
@@ -111,30 +127,33 @@ func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Ro
 		return route, nil
 	}
 	route.Tier, route.Reason = Classify(prompt)
+	// Candidate order: the classified tier, then the other local models, then non-local
+	// ones. A sensitive request then drops every non-local candidate — primary included, so
+	// a quality tier that happens to be a hosted model is skipped, not merely de-prioritised.
+	var primary []ModelRef
+	var locals, remote []ModelRef
 	for _, r := range refs {
-		if r.Tier == route.Tier {
-			route.Candidates = append(route.Candidates, r)
-			break
+		switch {
+		case r.Tier == route.Tier && len(primary) == 0:
+			primary = append(primary, r)
+		case r.local():
+			locals = append(locals, r)
+		default:
+			remote = append(remote, r)
 		}
 	}
-	if len(route.Candidates) == 0 {
+	if len(primary) == 0 {
 		return route, fmt.Errorf("no model serves tier %q", route.Tier)
 	}
-	// Fallbacks: other local tiers first, then cloud — cloud only when nothing is sensitive.
-	for _, r := range refs {
-		if r.Model == route.Candidates[0].Model && r.Backend == route.Candidates[0].Backend {
+	chain := append(append(primary, locals...), remote...)
+	for _, r := range chain {
+		if sensitive && !r.local() {
 			continue
 		}
-		if r.local() {
-			route.Candidates = append(route.Candidates, r)
-		}
+		route.Candidates = append(route.Candidates, r)
 	}
-	if !sensitive {
-		for _, r := range refs {
-			if !r.local() {
-				route.Candidates = append(route.Candidates, r)
-			}
-		}
+	if len(route.Candidates) == 0 {
+		return route, ErrSensitiveCloud{Model: primary[0].Model}
 	}
 	return route, nil
 }

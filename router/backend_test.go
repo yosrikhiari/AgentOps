@@ -127,3 +127,35 @@ func names(refs []ModelRef) string {
 	}
 	return strings.Join(out, ",")
 }
+
+// Ollama serves hosted ":cloud" models through the local API; they must never count as
+// local, so a sensitive request cannot be routed to one even via an all-local backend.
+func TestCloudSuffixModelIsNotLocal(t *testing.T) {
+	local := &fakeBackend{name: "ollama", local: true}
+	refs := []ModelRef{
+		{Tier: "fast", Model: "qwen2.5:3b-instruct", Backend: local},
+		{Tier: "quality", Model: "deepseek-v4-pro:cloud", Backend: local},
+	}
+	if refs[0].Local() != true || refs[1].Local() != false {
+		t.Fatalf("locality: fast=%v cloud=%v", refs[0].Local(), refs[1].Local())
+	}
+	msgs := []Message{{Role: "user", Content: "my passport number is X"}}
+	r, err := Plan("auto", msgs, true, refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.Candidates {
+		if IsCloudModel(c.Model) {
+			t.Fatalf("sensitive plan contains a :cloud model: %s", names(r.Candidates))
+		}
+	}
+	if _, err := Plan("deepseek-v4-pro:cloud", msgs, true, refs); err == nil {
+		t.Fatal("explicit :cloud model on sensitive data must be refused")
+	}
+	// long sensitive prompt would classify to quality; with quality on :cloud it must stay on fast
+	long := []Message{{Role: "user", Content: strings.Repeat("confidential ", 40)}}
+	r, _ = Plan("auto", long, true, refs)
+	if len(r.Candidates) != 1 || r.Candidates[0].Model != "qwen2.5:3b-instruct" {
+		t.Fatalf("sensitive quality-tier request should fall to the local fast model only, got %s", names(r.Candidates))
+	}
+}

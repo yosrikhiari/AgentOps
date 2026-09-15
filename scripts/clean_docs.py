@@ -25,7 +25,9 @@ def normalize(text):
     text = text.replace("\r\n", "\n")
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
-    text = re.sub(r"[`*_>\[\]()#|-]", " ", text)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)  # list bullets
+    # keep `_` and `-` so identifiers like router_requests_total / nomic-embed-text survive
+    text = re.sub(r"[`*>\[\]()#|]", " ", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -52,6 +54,8 @@ def chunk(text):
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in OUT_DIR.glob("*.jsonl"):  # full rebuild: a changed doc must not keep old chunks
+        stale.unlink()
     docs = sorted(CORPUS.glob("*.md"))
     if not docs:
         print("no docs in corpus/", file=sys.stderr)

@@ -2,6 +2,8 @@ package evals
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,5 +57,23 @@ func TestMigrateRunsSQLFiles(t *testing.T) {
 	}
 	if len(fx.stmts) != 1 || !strings.Contains(fx.stmts[0], "SELECT 1") {
 		t.Fatalf("got %+v", fx.stmts)
+	}
+}
+
+// Ingest must prune chunks the cleaner no longer emits, otherwise an edited doc leaves its
+// old text retrievable next to the new one.
+func TestIngestPrunesStaleChunks(t *testing.T) {
+	embed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"embeddings":[[0.1,0.2]]}`))
+	}))
+	defer embed.Close()
+	fx := &fakeExec{}
+	n, err := Ingest(context.Background(), fx, []Chunk{{DocID: "d", Hash: "h1", Text: "t", Source: "d.md"}}, NewEmbedder(embed.URL, "m"))
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	last := fx.stmts[len(fx.stmts)-1]
+	if !strings.Contains(last, "DELETE FROM chunks WHERE NOT (hash = ANY($1))") {
+		t.Fatalf("last statement should prune stale chunks, got %q", last)
 	}
 }

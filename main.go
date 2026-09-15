@@ -294,7 +294,7 @@ func mustEmbed(ctx context.Context, embedder *evals.Embedder, q string) []float3
 	return vec
 }
 
-func runDraftGolden(ollamaURL string) {
+func runDraftGolden(ollamaURL, version string) {
 	genModel := os.Getenv("DRAFT_MODEL")
 	if genModel == "" {
 		genModel = "qwen3:8b"
@@ -310,7 +310,7 @@ func runDraftGolden(ollamaURL string) {
 	if err := os.MkdirAll("evals/golden", 0755); err != nil {
 		log.Fatal(err)
 	}
-	fh, err := os.Create("evals/golden/v1_draft.jsonl")
+	fh, err := os.Create("evals/golden/" + version + "_draft.jsonl")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -322,13 +322,14 @@ func runDraftGolden(ollamaURL string) {
 		}
 	}
 	fh.Close()
-	log.Printf("drafted %d pairs from %d chunks", len(pairs), len(chunks))
+	log.Printf("drafted %d pairs from %d chunks → evals/golden/%s_draft.jsonl", len(pairs), len(chunks), version)
 }
 
-func runFreezeGolden() {
-	raw, err := os.ReadFile("evals/golden/v1.jsonl")
+func runFreezeGolden(version string) {
+	path := "evals/golden/" + version + ".jsonl"
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatal("create evals/golden/v1.jsonl from the reviewed draft first: ", err)
+		log.Fatalf("create %s from the reviewed draft first: %v", path, err)
 	}
 	chunks, err := evals.ReadClean("evals/corpus/clean")
 	if err != nil {
@@ -343,10 +344,10 @@ func runFreezeGolden() {
 		log.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
-	if err := os.WriteFile("evals/golden/v1.sha256", []byte(hex.EncodeToString(sum[:])+"  v1.jsonl\n"), 0644); err != nil {
+	if err := os.WriteFile("evals/golden/"+version+".sha256", []byte(hex.EncodeToString(sum[:])+"  "+version+".jsonl\n"), 0644); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("frozen v1: %d pairs", n)
+	log.Printf("frozen %s: %d pairs sha256=%s…", version, n, hex.EncodeToString(sum[:8]))
 }
 
 func runScore(dsn, ollamaURL, goldenPath, goldenVersion string) {
@@ -516,11 +517,11 @@ func main() {
 	migrate := flag.Bool("migrate", false, "apply SQL migrations and exit")
 	ingest := flag.Bool("ingest", false, "embed clean corpus into pgvector and exit")
 	search := flag.String("search", "", "cosine-search the corpus for QUERY and exit")
-	draftGolden := flag.Bool("draft-golden", false, "draft golden QA pairs with local LLM and exit")
-	freezeGolden := flag.Bool("freeze-golden", false, "validate evals/golden/v1.jsonl and freeze hash")
+	draftGolden := flag.Bool("draft-golden", false, "draft golden QA pairs with local LLM into evals/golden/<golden-version>_draft.jsonl and exit")
+	freezeGolden := flag.Bool("freeze-golden", false, "validate evals/golden/<golden-version>.jsonl and freeze its hash")
 	score := flag.Bool("score", false, "run faithfulness + retrieval suite over golden file and exit")
-	goldenPath := flag.String("golden", "evals/golden/v1.jsonl", "golden file for --score")
-	goldenVersion := flag.String("golden-version", "v1", "golden version recorded in eval_runs")
+	goldenPath := flag.String("golden", "", "golden file for --score (default evals/golden/<golden-version>.jsonl)")
+	goldenVersion := flag.String("golden-version", "v1", "golden version: names the draft/frozen files and tags eval_runs")
 	driftFlag := flag.Bool("drift", false, "print drift report for golden version and exit")
 	driftGolden := flag.String("drift-golden", "v1", "golden version for --drift and report endpoint")
 	scheduleEvals := flag.String("schedule-evals", "", "run eval suite every INTERVAL (e.g. 24h) forever; empty disables")
@@ -532,6 +533,9 @@ func main() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *goldenPath == "" {
+		*goldenPath = "evals/golden/" + *goldenVersion + ".jsonl"
 	}
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
@@ -550,11 +554,11 @@ func main() {
 		return
 	}
 	if *draftGolden {
-		runDraftGolden(cfg.OllamaURL)
+		runDraftGolden(cfg.OllamaURL, *goldenVersion)
 		return
 	}
 	if *freezeGolden {
-		runFreezeGolden()
+		runFreezeGolden(*goldenVersion)
 		return
 	}
 	if *score {

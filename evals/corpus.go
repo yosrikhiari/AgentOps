@@ -143,6 +143,15 @@ func Ingest(ctx context.Context, db Execer, chunks []Chunk, embed *Embedder) (in
 		}
 		done++
 	}
+	// Full-sync semantics: a chunk that is no longer produced by the cleaner (doc edited or
+	// removed) must stop being retrievable, or v1 text would keep answering v2 questions.
+	hashes := make([]string, 0, len(chunks))
+	for _, c := range chunks {
+		hashes = append(hashes, c.Hash)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM chunks WHERE NOT (hash = ANY($1))`, hashes); err != nil {
+		return done, fmt.Errorf("prune stale chunks: %w", err)
+	}
 	return done, nil
 }
 

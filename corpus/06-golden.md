@@ -1,14 +1,18 @@
 # Golden set
 
 The golden set is the ground truth the fact-checker scores against. It lives in
-`evals/golden/v1.jsonl` with one JSON object per line holding a question, the
-expected answer, and the ids of the source documents that support it.
+`evals/golden/` as one JSON object per line holding a question, the expected
+answer, and the ids of the source documents that support it. Each frozen version
+has its SHA-256 hash stored next to it, for example `v1.jsonl` and `v1.sha256`.
 
 It is built the standard way used by DeepEval's Synthesizer and RAGAS testset
-generation: an LLM drafts 20 to 30 question-answer pairs from the project's own
-source documents, then a human reviews and corrects every single pair by hand
-before it is frozen. The file hash is recorded so any later change is visible.
+generation: a local LLM drafts two question-answer pairs per corpus chunk, then a
+human reviews and corrects every single pair by hand before it is frozen with
+`--freeze-golden`. Freezing rejects empty fields, unknown document ids, duplicate
+questions, and any answer that yields no scorable claim.
 
-A bad golden set silently makes every later eval score meaningless, so the
-manual review step is not optional. Any document change bumps the version to v2
-and reruns the full suite.
+Every golden answer must be a full declarative sentence, because the scorer splits
+answers into claims of at least ten characters and the judge never sees the
+question. A bad golden set silently makes every later eval score meaningless, so
+the manual review step is not optional. Any document change bumps the version and
+reruns the full suite.

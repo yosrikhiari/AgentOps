@@ -4,6 +4,7 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- CI hardening: per-ref concurrency with cancel-in-progress, job timeouts, least-privilege permissions, `GOTOOLCHAIN=local`, Go cache; Actions bumped (checkout v7, setup-go v7, buildx v4, build-push v7, gh-release v3) and `golang:1.27-alpine` base — the six open Dependabot PRs folded into one commit; Dependabot now groups updates per ecosystem (one PR per week each) so they stop conflicting on `ci.yml`.
 - `docs/RULES.md`: the engineering rule set (problem fit, what we optimize for, success measures, architecture style, sync vs async, retries, latency, scalability, security, guardrails, testing/experiments, static analysis).
 - `policy/` package: 11 executable policies (single direct dependency, prompts never in spans, sensitive never cloud, one error shape, non-blocking span sink, env vars and flags documented, contiguous migrations, ADRs indexed, no same-backend retry, rules cite real tests). Found two undocumented flags on its first run.
 - CI `policy` job: `staticcheck` (v0.8.1), `govulncheck`, policy tests. `govulncheck` found GO-2026-5970 in `golang.org/x/text` (indirect via pgx) — bumped to v0.39.0.

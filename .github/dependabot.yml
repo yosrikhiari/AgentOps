@@ -1,11 +1,22 @@
 version: 2
 updates:
+  # One grouped PR per ecosystem per week instead of one PR per dependency, so the updates
+  # never conflict with each other on ci.yml / Dockerfile and a single green run merges them.
   - package-ecosystem: gomod
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
+    groups:
+      go-deps:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
+    groups:
+      docker-images:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions:
+        patterns: ["*"]

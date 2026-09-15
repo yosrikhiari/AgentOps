@@ -6,17 +6,29 @@ on:
     tags: ["v*"]
   pull_request:
 
+# One run per ref at a time: a new push cancels the previous run of the same branch/PR, so
+# Dependabot rebases and quick follow-up commits do not pile up in the queue.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege by default; only the release job needs to write.
 permissions:
-  contents: write   # release upload on tags; read-only for everything else
+  contents: read
+
+env:
+  GOTOOLCHAIN: local   # use the setup-go toolchain, never auto-download another one
 
 jobs:
   go:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: true
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet
@@ -30,11 +42,13 @@ jobs:
   # a staticcheck finding, or a known vulnerability in the module graph.
   policy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: true
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
       - name: govulncheck
@@ -44,12 +58,13 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: go
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -60,12 +75,16 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [go, policy, docker]
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: true
       - name: build binaries
         run: |
           set -e
@@ -75,7 +94,7 @@ jobs:
             CGO_ENABLED=0 GOOS=$os GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/agentops-${GITHUB_REF_NAME}-${os}-amd64${ext}" .
           done
           (cd dist && sha256sum * > SHA256SUMS)
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true

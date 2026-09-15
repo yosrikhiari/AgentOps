@@ -163,6 +163,15 @@ Known gap, stated: the console and `/metrics` are unauthenticated. They expose r
 
 Local: `gofmt -l . && go vet ./... && go test -race ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./... && go run golang.org/x/vuln/cmd/govulncheck@latest ./...`.
 
+**Pipeline hygiene (so merges are boring).**
+- `concurrency: ci-${{ github.ref }}` with `cancel-in-progress` — a new push or a Dependabot rebase cancels the stale run for that ref instead of queueing behind it.
+- Every job has `timeout-minutes`; `permissions: contents: read` at the top, `write` only on `release`.
+- `GOTOOLCHAIN=local` — CI never silently downloads a different Go than `go.mod` + `setup-go` selected.
+- Dependabot updates are **grouped per ecosystem** (one PR a week for Go modules, one for Docker images, one for Actions). Six single-dependency PRs that all edit `ci.yml` conflict with each other after the first merge; one grouped PR does not.
+- A job that says *"failed to be acquired"* never ran — that is the GitHub runner pool, not the code. Re-run the job; do not "fix" anything.
+- `govulncheck@latest` deliberately tracks the live vulnerability database: a new CVE in a dependency turns `main` red on the next push. That is the intended signal — bump the module (as with `golang.org/x/text`, GO-2026-5970), do not pin the scanner to hide it.
+- SonarCloud runs as an app-side automatic analysis (no workflow file); it is advisory here and is not a required check.
+
 ## 13. Executable policies (`policy/policy_test.go`)
 
 These fail the build when a rule above is broken. Names are the rules.

@@ -443,7 +443,9 @@ refuses with 403 if none remain; `TestCloudSuffixModelIsNotLocal` + policy case.
 conclusions: beachhead = individuals/small teams/regulated shops in front of Ollama; P0 =
 `:cloud` fix (done), hybrid retrieval (golden v3 pair 12 was the first vector-only miss),
 retrieval-miss reported separately from unfaithful, OTLP `gen_ai.*` export, Anthropic
-Messages API; P1 = shadow-test promotion, sovereignty policy engine, spend in currency, opt-in
+Messages API. **Golden v3 result** (`eval_run 7`, quiet GPU, 8 min): faith **0.972**, recall
+0.972, precision 0.325; the two zeros (pairs 12 and 66) are both recall-0 retrieval misses
+— every pair whose chunk was retrieved scored 1.000. Default golden version → v3; P1 = shadow-test promotion, sovereignty policy engine, spend in currency, opt-in
 encrypted capture, MCP tool-call governance; P2 = installers, Open WebUI recipe, Promptfoo
 import, migration guides, multi-replica correctness. 69 tests.
 **2026-09-15 (11th pass, rules + executable policies).** `docs/RULES.md` written: problem fit,

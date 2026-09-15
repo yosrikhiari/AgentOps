@@ -33,7 +33,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 | Virtual API keys with per-minute limits and token budgets | `router/keys.go`, `--create-key` | live 200/429/429/429 on a 2-rpm key |
 | Hand-written Prometheus metrics + a provisioned Grafana dashboard | `router/metrics.go`, `dashboard/` | k6: 0/2725 failed at 50 RPS, p99 70 ms |
 | Keep a multi-step agent alive through `kill -9` and resume without repeating work | `tracker/` | `TestKillResume` + a recorded live kill |
-| Score answers claim-by-claim against retrieved sources, store every run, alert on drift | `evals/` | golden v2 (48 pairs) faithfulness **1.000** |
+| Score answers claim-by-claim against retrieved sources, store every run, alert on drift | `evals/` | golden v3 (72 pairs) **0.972** — 70/70 faithful where retrieval hit, 2 retrieval misses; v2 (48) 1.000 |
 | One trace per request: `trace_id / span_id / parent_id`, prompts never stored | `GET /v1/traces/{id}`, `--trace`, MCP | 3 chained spans per chat |
 | Let Claude (or any MCP client) ask "which model handled the most traffic?" | `mcp/` | 5 tools, live handshake |
 | Show it all to a human and let them run an eval or resume a workflow | `console/` → `http://localhost:8080` | verified page by page in the browser |

@@ -90,7 +90,12 @@
     document.getElementById('strip-faith').textContent = ov.drift && ov.drift.runs ? fmt.score(ov.drift.score_now) : '–';
     document.getElementById('strip-p50').textContent = fmt.ms(ov.traffic && ov.traffic.p50_latency_s);
     document.getElementById('strip-version').textContent = ov.version ? 'agentops ' + ov.version : '';
+    const sd = document.getElementById('side-dot');
+    if (sd) { sd.style.background = dot.style.background; sd.style.boxShadow = dot.style.boxShadow; }
+    const sr = document.getElementById('side-router'); if (sr) sr.textContent = allUp ? 'router live' : 'backend down';
+    const sv = document.getElementById('side-version'); if (sv) sv.textContent = ov.version ? 'agentops ' + ov.version : '';
   }
+  const pageTitles = { overview: 'Overview', traces: 'Traces', evals: 'Evals & drift', workflows: 'Workflows' };
 
   // ---------- traffic chart (hand-rolled SVG bars) ----------
   function trafficChart(reqs) {
@@ -181,6 +186,7 @@
   }
 
   // ---------- traces page: list + waterfall + span tree ----------
+  const CURL = 'curl localhost:8080/v1/chat/completions -d ' + "'" + '{"prompt":"hi"}' + "'";
   function parseAttrs(s) { try { return JSON.parse(s || '{}'); } catch (e) { return {}; } }
   fmt.ago = iso => {
     const d = new Date(iso); if (isNaN(d)) return '';
@@ -205,10 +211,11 @@
       return { span: s, attrs, end: isNaN(end) ? 0 : end, dur: isNaN(dur) ? 0 : Math.max(0, dur), depth: 0 };
     });
     const t0 = rows.length ? Math.min(...rows.map(r => r.end - r.dur)) : 0;
-    rows.forEach(r => { r.start = r.end - r.dur - t0; });
-    rows.sort((a, b) => a.start - b.start || a.end - b.end);
+    rows.forEach(r => { r.start = Math.max(0, r.end - r.dur - t0); });
     const byId = {}; rows.forEach(r => byId[r.span.span_id] = r);
     rows.forEach(r => { let p = r.span.parent_id, d = 0, guard = 0; while (p && byId[p] && guard++ < 32) { d++; p = byId[p].span.parent_id; } r.depth = d; });
+    // tree order: parents before children, siblings by completion time
+    rows.sort((a, b) => a.depth - b.depth || a.end - b.end);
     const total = Math.max(1, ...rows.map(r => r.start + r.dur));
     return { rows, total };
   }
@@ -321,12 +328,18 @@
         const b = (wfs.workflows || []).map(w => ({ id: w.id, kind: 'workflow', at: w.created_at, label: w.input, status: w.status, error: false }));
         items = a.concat(b).sort((x, y) => new Date(y.at) - new Date(x.at));
         renderList();
+        if (!id && items.length) { id = items[0].id; history.replaceState(null, '', '#/traces/' + id); renderList(); loadDetail(true); }
       } catch (e) { if (e.name === 'AbortError') return; listBody.replaceChildren(errorBox('Could not load traces: ' + e.message, loadList)); }
     }
-    async function loadDetail() {
-      if (!id) { detail.replaceChildren(h('div', { class: 'tower-empty tower-empty-tall' }, h('div', { class: 'tower-empty-title' }, 'Pick a trace'), 'Click one on the left, paste an id above, or click a bar on the overview.')); return; }
+    async function loadDetail(auto) {
+      if (!id) { detail.replaceChildren(h('div', { class: 'tower-empty tower-empty-tall' }, h('div', { class: 'tower-empty-title' }, 'No traces yet'), 'Send one request and it will appear here.',
+        h('div', { class: 'tower-empty-actions' }, h('button', { class: 'tower-btn secondary', onclick: () => { navigator.clipboard && navigator.clipboard.writeText(CURL); toast('curl command copied'); } }, 'Copy a curl')))); return; }
       detail.replaceChildren(skeleton(5));
-      try { detail.replaceChildren(traceView(await api('/v1/traces/' + encodeURIComponent(id), null, signal))); }
+      try {
+        const view = traceView(await api('/v1/traces/' + encodeURIComponent(id), null, signal));
+        if (auto) view.prepend(h('div', { class: 'tower-panel-sub', style: 'margin-bottom:10px' }, 'Showing the latest trace — pick another on the left.'));
+        detail.replaceChildren(view);
+      }
       catch (e) { if (e.name === 'AbortError') return; detail.replaceChildren(errorBox(e.code === 'trace_not_found' ? 'No spans for ' + id + '.' : 'Could not load trace: ' + e.message, loadDetail)); }
     }
     renderFilters();
@@ -460,11 +473,12 @@
     pageCtl = new AbortController();
     const parts = location.hash.replace(/^#\/?/, '').split('/');
     const name = pages[parts[0]] ? parts[0] : 'overview';
-    document.querySelectorAll('.tower-rail-btn').forEach(b => b.dataset.active = String(b.dataset.page === name));
+    document.querySelectorAll('.tower-nav-btn[data-page]').forEach(b => b.dataset.active = String(b.dataset.page === name));
+    const pt = document.getElementById('page-title'); if (pt) pt.textContent = pageTitles[name] || 'Tower';
     if (name !== 'overview') api('/v1/overview', null, pageCtl.signal).then(updateStrip).catch(() => { /* strip is best-effort */ });
     pages[name](pageCtl.signal, parts.slice(1).join('/'));
   }
-  document.querySelectorAll('.tower-rail-btn').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.page; }));
+  document.querySelectorAll('.tower-nav-btn[data-page]').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.page; }));
   window.addEventListener('hashchange', route);
   route();
   // keep the strip fresh even off the overview page

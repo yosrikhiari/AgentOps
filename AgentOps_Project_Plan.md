@@ -429,6 +429,12 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-15 (14th pass, console shell).** User feedback on a 1900 px screen: the 64 px icon rail
+looked bare, the empty detail panel was a void, the OS scrollbar glared, the strip scrolled away.
+New shell: labelled sidebar with sections and a status footer, sticky header with page title,
+themed scrollbars, 1480 px content cap, hover states; Traces auto-opens the latest trace and
+orders spans parent-first (a reconstructed start had sorted `model.generate` above
+`route.decide`). Verified at 1900×1060 and at the pane's default width.
 **2026-09-15 (13th pass, Traces page UX).** `#/traces` was an input box with no data. Now: list of
 recent traces (router chats + workflows, filters, relative time, chips) → waterfall + indented
 span tree with expandable attrs, Copy id / JSON, deep links keep the list, empty state with a

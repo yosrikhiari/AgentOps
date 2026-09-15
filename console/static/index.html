@@ -10,29 +10,54 @@
 </head>
 <body>
 <div class="tower-shell">
-  <nav class="tower-rail" aria-label="Sections">
-    <div class="tower-rail-mark" title="Tower">T</div>
-    <button class="tower-rail-btn" data-page="overview" title="Overview" aria-label="Overview">
+  <nav class="tower-side" aria-label="Sections">
+    <div class="tower-brand">
+      <div class="tower-rail-mark">T</div>
+      <div>
+        <div class="tower-brand-name">Tower</div>
+        <div class="tower-brand-sub">AgentOps console</div>
+      </div>
+    </div>
+    <div class="tower-nav-label">Operate</div>
+    <button class="tower-nav-btn" data-page="overview">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span>Overview</span>
     </button>
-    <button class="tower-rail-btn" data-page="traces" title="Trace inspector" aria-label="Trace inspector">
+    <button class="tower-nav-btn" data-page="traces">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 6h4a4 4 0 0 1 4 4v0M8 18h4a4 4 0 0 0 4-4v0"/></svg>
+      <span>Traces</span>
     </button>
-    <button class="tower-rail-btn" data-page="evals" title="Evals & drift" aria-label="Evals and drift">
+    <div class="tower-nav-label">Quality</div>
+    <button class="tower-nav-btn" data-page="evals">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg>
+      <span>Evals &amp; drift</span>
     </button>
-    <button class="tower-rail-btn" data-page="workflows" title="Workflows" aria-label="Workflows">
+    <button class="tower-nav-btn" data-page="workflows">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="6" height="6" rx="1"/><rect x="15" y="4" width="6" height="6" rx="1"/><rect x="9" y="14" width="6" height="6" rx="1"/><path d="M9 7h6M6 10v2a2 2 0 0 0 2 2h1M18 10v2a2 2 0 0 1-2 2h-1"/></svg>
+      <span>Workflows</span>
     </button>
+    <div class="tower-nav-label">Links</div>
+    <a class="tower-nav-btn" href="/metrics" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>
+      <span>Metrics</span>
+    </a>
+    <a class="tower-nav-btn" href="/v1/models" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="6" rx="1"/><rect x="3" y="13" width="18" height="6" rx="1"/></svg>
+      <span>Models</span>
+    </a>
+    <div class="tower-side-foot">
+      <div class="tower-pulse-item"><span class="tower-pulse-dot" id="side-dot"></span><span id="side-router">router</span></div>
+      <div class="tower-mono tower-muted" id="side-version"></div>
+    </div>
   </nav>
   <div class="tower-main">
     <header class="tower-statusstrip">
-      <h1>Tower</h1>
-      <div class="tower-pulse-item"><span class="tower-pulse-dot" id="strip-dot"></span><span id="strip-router">router</span></div>
+      <h1 id="page-title">Overview</h1>
       <div class="tower-pulse-item">models <span class="tower-mono" id="strip-models">–</span></div>
       <div class="tower-pulse-item">faithfulness <span class="tower-mono" id="strip-faith">–</span></div>
       <div class="tower-pulse-item">p50 <span class="tower-mono" id="strip-p50">–</span></div>
-      <div class="tower-pulse-item tower-mono" id="strip-version"></div>
+      <div class="tower-pulse-item"><span class="tower-pulse-dot" id="strip-dot"></span><span id="strip-router">router</span></div>
+      <span id="strip-version" hidden></span>
     </header>
     <main class="tower-content" id="content" aria-live="polite"></main>
   </div>

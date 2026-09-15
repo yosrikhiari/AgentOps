@@ -27,7 +27,7 @@ Dev alternative without building: `command: go`, `args: ["run", ".", "--mcp"]`,
 
 ## Tools
 
-- `list_models` — fast/quality model names and tiers.
+- `list_models` — every served model with tier, backend and last health probe, plus per-backend status.
 - `get_stats` — request + token counts per model since the process started.
 - `route_test_request` (`prompt` required) — routes one prompt, returns text, model,
   reason, trace id. Goes through the same path as HTTP, so it shows up in stats.

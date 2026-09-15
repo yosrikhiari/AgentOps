@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -14,9 +15,16 @@ type stubGen struct {
 	text string
 }
 
-func (g *stubGen) Generate(model, prompt string, maxTokens int) (string, int, error) {
-	return g.text, 9, nil
+func (g *stubGen) Name() string { return "ollama" }
+func (g *stubGen) Local() bool  { return true }
+func (g *stubGen) Generate(ctx context.Context, model string, msgs []router.Message, maxTokens int) (string, router.Usage, error) {
+	return g.text, router.Usage{TotalTokens: 9}, nil
 }
+func (g *stubGen) Stream(ctx context.Context, model string, msgs []router.Message, maxTokens int, emit func(string)) (router.Usage, error) {
+	emit(g.text)
+	return router.Usage{TotalTokens: 9}, nil
+}
+func (g *stubGen) Health(ctx context.Context) error { return nil }
 
 func runSession(t *testing.T, srv *Server, lines ...string) []map[string]any {
 	t.Helper()

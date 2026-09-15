@@ -13,8 +13,7 @@ type spanCall struct {
 }
 
 func TestChatEmitsThreeSpans(t *testing.T) {
-	gen := &fakeGen{text: "hello", tokens: 5}
-	srv := NewServer("fast-m", "quality-m", gen)
+	srv := NewServer("fast-m", "quality-m", localFake("hello", 5))
 	var calls []spanCall
 	srv.SpanSink = func(traceID, spanID, parentID, name, attrs string) {
 		calls = append(calls, spanCall{traceID, spanID, parentID, name})

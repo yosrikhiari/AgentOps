@@ -21,12 +21,42 @@ type modelStats struct {
 type Metrics struct {
 	mu               sync.Mutex
 	models           map[string]*modelStats
+	backendUp        map[string]bool
+	keyRequests      map[string]uint64
+	keyRejects       map[string]uint64
 	evalFaithfulness float64
 	evalSet          bool
 }
 
 func NewMetrics() *Metrics {
-	return &Metrics{models: map[string]*modelStats{}}
+	return &Metrics{models: map[string]*modelStats{}, backendUp: map[string]bool{}, keyRequests: map[string]uint64{}, keyRejects: map[string]uint64{}}
+}
+
+// SetBackendUp publishes the last health probe result for a backend.
+func (m *Metrics) SetBackendUp(backend string, up bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.backendUp[backend] = up
+}
+
+// ObserveKey counts a request attributed to an API key; rejected = 401/403/429 outcomes.
+func (m *Metrics) ObserveKey(name string, rejected bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rejected {
+		m.keyRejects[name]++
+	} else {
+		m.keyRequests[name]++
+	}
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (m *Metrics) Observe(model string, latencySeconds float64, tokens int) {
@@ -122,6 +152,37 @@ func (m *Metrics) Expose() string {
 		fmt.Fprintf(&sb, "router_latency_seconds_bucket{model=%q,le=\"+Inf\"} %d\n", name, st.latCount)
 		fmt.Fprintf(&sb, "router_latency_seconds_sum{model=%q} %f\n", name, st.latSum)
 		fmt.Fprintf(&sb, "router_latency_seconds_count{model=%q} %d\n", name, st.latCount)
+	}
+	if len(m.backendUp) > 0 {
+		sb.WriteString("# HELP router_backend_up 1 if the last health probe of the backend succeeded.\n")
+		sb.WriteString("# TYPE router_backend_up gauge\n")
+		for _, n := range sortedKeys(m.backendUp) {
+			v := 0
+			if m.backendUp[n] {
+				v = 1
+			}
+			fmt.Fprintf(&sb, "router_backend_up{backend=%q} %d\n", n, v)
+		}
+	}
+	if len(m.keyRequests)+len(m.keyRejects) > 0 {
+		set := map[string]bool{}
+		for n := range m.keyRequests {
+			set[n] = true
+		}
+		for n := range m.keyRejects {
+			set[n] = true
+		}
+		names := sortedKeys(set)
+		sb.WriteString("# HELP router_key_requests_total Requests accepted per API key.\n")
+		sb.WriteString("# TYPE router_key_requests_total counter\n")
+		for _, n := range names {
+			fmt.Fprintf(&sb, "router_key_requests_total{key=%q} %d\n", n, m.keyRequests[n])
+		}
+		sb.WriteString("# HELP router_key_rejected_total Requests rejected per API key (401/403/429).\n")
+		sb.WriteString("# TYPE router_key_rejected_total counter\n")
+		for _, n := range names {
+			fmt.Fprintf(&sb, "router_key_rejected_total{key=%q} %d\n", n, m.keyRejects[n])
+		}
 	}
 	if m.evalSet {
 		sb.WriteString("# HELP eval_faithfulness Last golden faithfulness score.\n")

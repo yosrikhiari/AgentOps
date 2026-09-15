@@ -30,7 +30,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 | 5 | Durable tracker surviving `kill -9` mid-task | **✓ automated `TestKillResume` + live kill** |
 | 6 | One trace view: pick a request, see every step | **✓ `GET /v1/traces/{id}`, CLI, MCP** |
 
-40 tests, `go vet` + `-race` in CI. Full history, decisions (ADR-0001…0006) and every defect found by the review passes are in [`AgentOps_Project_Plan.md`](AgentOps_Project_Plan.md).
+52 tests, `go vet` + `-race` in CI. Full history, decisions (ADR-0001…0006) and every defect found by the review passes are in [`AgentOps_Project_Plan.md`](AgentOps_Project_Plan.md).
 
 ## Quickstart
 
@@ -57,8 +57,10 @@ Releases ship `agentops-vX.Y.Z-{linux,windows,darwin}-amd64` binaries built by C
 Then:
 
 ```bash
-curl -s localhost:8080/v1/chat/completions -d '{"prompt":"hi"}'
-# {"text":"…","model":"qwen2.5:3b-instruct","reason":"short-simple-prompt","trace_id":"598d…"}
+curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}]}'
+# OpenAI shape: {"id":"chatcmpl-…","object":"chat.completion","model":"qwen2.5:3b-instruct","choices":[…],"usage":{…},
+#                "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}   ← AgentOps extensions
+curl -s -N localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}],"stream":true}'   # SSE
 curl -s localhost:8080/v1/traces/598d…     # 3 spans: route.decide → model.generate → router.respond
 curl -s localhost:8080/metrics             # router_requests_total, …_latency_seconds histogram, eval_faithfulness
 ```
@@ -68,6 +70,7 @@ Every mode is a flag on the same binary (`go run . --help`):
 | Flag | What it does |
 |---|---|
 | `--mcp` | MCP stdio server for Claude Desktop (config in [`mcp/README.md`](mcp/README.md)) |
+| `--create-key NAME --key-rpm N --key-budget T` | mint a virtual API key (secret printed once, SHA-256 stored) |
 | `--run-tracker` / `--resume-tracker <id>` | run / resume the 3-step toy agent; kill it mid-step and resume |
 | `--trace <id>` | print redacted spans for a chat or workflow |
 | `--draft-golden` → review → `--freeze-golden` | build a golden set (`--golden-version vN`): LLM drafts, human reviews, validator rejects unscorable answers, hash frozen |
@@ -76,16 +79,16 @@ Every mode is a flag on the same binary (`go run . --help`):
 ## Layout
 
 ```
-router/      classify → Ollama → metrics → spans          (stdlib net/http)
+router/      gateway: classify → plan → backends (Ollama, OpenAI-style) → metrics → spans; API keys
 tracker/     workflows/steps row-status durability, spans   (Store iface: SQLStore + MemStore)
 evals/       corpus ingest, pgvector search, golden, judge, retry/backoff, drift
 mcp/         JSON-RPC 2.0 over stdio, 5 tools
-migrations/  0001_init.sql, 0002_drift.sql
+migrations/  0001_init.sql, 0002_drift.sql, 0003_api_keys.sql
 corpus/      15 short docs describing this system — the RAG target (v2 matches the shipped code)
 dashboard/   grafana/router.json + provisioning, prometheus/prometheus.yml
 load-tests/  router.js (k6: 50 RPS on /health, p99 gate)
 lessons/     30 plain-language HTML lessons on this repo — open lessons/index.html
-docs/        VRAM.md (swap rule), tower-design-system.html (UI mockup)
+docs/        API.md (gateway reference), VRAM.md (swap rule), tower-design-system.html (UI mockup)
 ```
 
 ## Decisions worth knowing
@@ -98,6 +101,8 @@ docs/        VRAM.md (swap rule), tower-design-system.html (UI mockup)
 - **Judge bias guards** — justification before verdict, negative verdicts parsed first, temperature 0, judge model + prompt version logged, `judge_changed` flag in the drift report.
 - **Golden answers are standalone propositions** — the judge never sees the question, so one-word, list-fragment and "Because…" answers score 0 regardless of truth; `--freeze-golden` rejects them. Learned from v1 (0.969) → v2 (1.000).
 - **Telemetry never on the request path** — spans go through a 1024-deep channel to one writer goroutine; a dead DB costs a chat nothing.
+- **Fail-closed on sensitive data** — a request flagged sensitive (header, body flag or keyword) never reaches a cloud backend, even when every local model is down; naming a cloud model explicitly is refused. The routing plan is built once and the rule is applied there.
+- **Gateway, not just router** — OpenAI-compatible `messages[]`/streaming, virtual API keys with RPM + token budgets, pluggable backends (Ollama + any OpenAI-style API) with health probes, graceful drain on SIGTERM. Full reference in [`docs/API.md`](docs/API.md).
 
 ## Privacy & license
 

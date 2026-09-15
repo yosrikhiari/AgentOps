@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v13, 2026-09-15 — v1.0 started: §9 tracks A/B/C agreed, Track A shipped (Docker, CI, release v0.1.0, tracked migrations); 40 tests)
+# AgentOps Platform — Project Plan (v14, 2026-09-15 — v1.0 Tracks A+B shipped: Docker/CI/release, OpenAI-compatible streaming gateway with backends, health, API keys, fail-closed sensitive rule, graceful drain; 52 tests)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -788,15 +788,16 @@ Brief: make every later change safe to ship. No product behaviour changes.
 - [x] tag `v0.1.0` → Verified: run 34944393352 release ✓; assets `agentops-v0.1.0-{linux,windows,darwin}-amd64` + `SHA256SUMS`
 Done: CI + release badges in README; `--version` flag stamped from the tag. 40 tests.
 
-### Track B — gateway hardening (2–3 days)
+### Track B — gateway hardening (2–3 days) — DONE 2026-09-15
 Brief: the router becomes a gateway an OpenAI-style client can point at.
-- [ ] OpenAI-compatible request/response on `POST /v1/chat/completions` (`messages[]`, `model` optional = "auto", `choices[0].message`, `usage`), legacy `{prompt}` body still accepted → Verify: existing tests + `TestOpenAIShape`
-- [ ] Streaming (`stream:true` → SSE chunks) end-to-end from Ollama → Verify: `curl -N` shows deltas; metrics still count once
-- [ ] Provider abstraction: `Backend` interface, Ollama + OpenAI-compatible HTTP (Groq) implementations, per-backend health probe + `router_backend_up{backend}` gauge → Verify: `list_models`/UI show health; killing Ollama flips the gauge
-- [ ] Virtual API keys: `api_keys(key_hash, name, budget_tokens, rpm, disabled)`; `Authorization: Bearer ak_…`; 401/403/429 with the one error shape; per-key `router_requests_total{key}` → Verify: tests + live 429 on a 2-rpm key
-- [ ] Fail-closed rule: a request flagged `sensitive` (header or keyword list) never routes to a cloud backend, even on local failure → Verify: `TestSensitiveNeverLeavesBox`
-- [ ] Graceful shutdown (drain in-flight, flush span queue), request timeout, `X-Request-ID`/trace id echo → Verify: SIGTERM during a chat finishes it, then exits 0
-Done: `curl` with the OpenAI shape + a key works; `docs/API.md` written.
+- [x] OpenAI-compatible `POST /v1/chat/completions` (`messages[]`, `model` = "auto"|name|backend/name, `choices[0].message`, `usage`, `id chatcmpl-…`) with `text/reason/backend/trace_id/fallback` extensions; legacy `{prompt}` kept → `TestOpenAIShape`, `TestExplicitModel`; live: `"Blue"` with usage 24/2/26
+- [x] Streaming: `stream:true` → SSE chunks in the OpenAI shape, final chunk carries usage + reason + trace_id, `[DONE]`; error-after-first-delta becomes an error event; metrics count once → `TestStreamSSE`; live `curl -N` shows digit deltas
+- [x] `Backend` interface (`Generate/Stream/Health`, `Local()`), `OllamaClient` moved to `/api/chat` with NDJSON streaming, `OpenAIBackend` for Groq/any OpenAI-style API with SSE + `stream_options.include_usage` + Groq `x_groq.usage`; `HealthProber` every 15 s → `router_backend_up{backend}`, `GET /v1/models` with `up`, MCP `list_models` with backends → `TestOllamaChatAndStream`, `TestOpenAIBackendStreamAndAuth`, `TestHealthProberGaugeAndModels`; live gauge = 1
+- [x] Virtual API keys: `0003_api_keys.sql`, `--create-key NAME --key-rpm --key-budget` prints the secret once (SHA-256 stored), `Authorization: Bearer ak_…`, 401/403/429 in the one error shape, fixed-window per-key limiter, async usage charge, `router_key_requests_total/rejected_total{key}` → `TestAPIKeyRequired/RateLimit/Budget`; live: 401 without key, 200/429/429/429 on a 2-rpm key, `tokens_used=97` in the table
+- [x] Fail-closed: `Plan()` builds the candidate chain once — other local tier as fallback, cloud only when not sensitive; header `X-AgentOps-Sensitive`, body flag or keyword list; explicit cloud model on sensitive data → `403 sensitive_cloud_blocked` → `TestSensitiveNeverLeavesBox` (header + keyword + explicit), `TestFallsBackToCloudWhenLocalFails`, `TestPlanCandidateOrder`; live span shows `sensitive:true` and local-only candidates
+- [x] Graceful shutdown (`http.Server.Shutdown` with the request timeout, health prober stopped, span queue drained via `spanWriter.Close`), `ReadHeaderTimeout`, per-request `REQUEST_TIMEOUT` → 504, `X-Trace-ID` + `X-Request-ID` echo → live: `docker stop` 3 s into a 150-token chat, chat returned 200 (171 tokens), log `draining … bye` 48 s later
+Done: `docs/API.md` written; README gateway section; 52 tests.
+Deferred to Track D/E: nothing. Noted for later: the limiter is per-process (fine for one gateway; a second replica needs a shared counter), and usage is charged asynchronously so a budget can overshoot by one request.
 
 ### Track C — Tower console (3–4 days)
 Brief: the mockup, real. Served by the same binary from `embed.FS` at `/`, hand-written

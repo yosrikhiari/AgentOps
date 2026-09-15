@@ -12,9 +12,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -59,6 +62,19 @@ func (p pgAdapter) QueryRow(ctx context.Context, sql string, args ...any) evals.
 
 func (p pgAdapter) Query(ctx context.Context, sql string, args ...any) (evals.Rows, error) {
 	rows, err := p.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// routerAdapter serves router.SQLKeyStore, which declares its own Rows type.
+type routerAdapter struct {
+	pgAdapter
+}
+
+func (r routerAdapter) Query(ctx context.Context, sql string, args ...any) (router.Rows, error) {
+	rows, err := r.db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -177,15 +193,29 @@ type spanWriter struct {
 	db      pgDB
 	queue   chan spanRecord
 	dropped atomic.Uint64
+	done    chan struct{}
+	once    sync.Once
 }
 
 func newSpanWriter(db pgDB) *spanWriter {
-	w := &spanWriter{db: db, queue: make(chan spanRecord, 1024)}
+	w := &spanWriter{db: db, queue: make(chan spanRecord, 1024), done: make(chan struct{})}
 	go w.loop()
 	return w
 }
 
+// Close stops accepting spans, drains the queue and returns once the last one is written
+// (or after timeout). Called on graceful shutdown so in-flight traces are not lost.
+func (w *spanWriter) Close(timeout time.Duration) {
+	w.once.Do(func() { close(w.queue) })
+	select {
+	case <-w.done:
+	case <-time.After(timeout):
+		log.Printf("span sink: %d spans still queued at shutdown", len(w.queue))
+	}
+}
+
 func (w *spanWriter) loop() {
+	defer close(w.done)
 	for rec := range w.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_, err := w.db.Exec(ctx,
@@ -200,6 +230,11 @@ func (w *spanWriter) loop() {
 
 func (w *spanWriter) Sink() router.SpanSink {
 	return func(traceID, spanID, parentID, name, attrs string) {
+		defer func() {
+			if recover() != nil { // send on closed queue during shutdown: drop, count
+				w.dropped.Add(1)
+			}
+		}()
 		select {
 		case w.queue <- spanRecord{traceID, spanID, parentID, name, attrs}:
 		default:
@@ -266,7 +301,7 @@ func runTracker(dsn, ollamaURL, resumeID, input string, fastModel string) {
 		return strings.Join(parts, "\n---\n"), nil
 	}
 	drafter := func(ctx context.Context, contextText string) (string, error) {
-		text, _, err := client.Generate(fastModel, "Draft a 3-sentence brief from this context:\n"+contextText, 0)
+		text, _, err := client.Generate(ctx, fastModel, []router.Message{{Role: "user", Content: "Draft a 3-sentence brief from this context:\n" + contextText}}, 0)
 		return text, err
 	}
 	reviewer := func(ctx context.Context, draft string) (string, error) {
@@ -352,6 +387,58 @@ func runFreezeGolden(version string) {
 		log.Fatal(err)
 	}
 	log.Printf("frozen %s: %d pairs sha256=%s…", version, n, hex.EncodeToString(sum[:8]))
+}
+
+// runCreateKey mints an API key, stores its hash, and prints the secret exactly once.
+func runCreateKey(dsn, name string, rpm int, budget int64) {
+	if strings.TrimSpace(name) == "" {
+		log.Fatal("--create-key needs a name")
+	}
+	var secret string
+	err := withConn(dsn, 15*time.Second, func(ctx context.Context, conn *pgx.Conn) error {
+		var err error
+		secret, err = router.SQLKeyStore{Exec: pgAdapter{conn}, Query: routerAdapter{pgAdapter{conn}}}.Create(ctx, name, rpm, budget)
+		return err
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("api key %q created (rpm=%d budget_tokens=%d)\n%s\n", name, rpm, budget, secret)
+	fmt.Println("store it now — only its SHA-256 is kept")
+}
+
+// buildBackends wires the local Ollama backend plus an optional OpenAI-compatible cloud
+// backend (Groq by default) from the environment.
+func buildBackends(cfg Config) (*router.Server, []router.Backend) {
+	local := router.NewOllamaClient(cfg.OllamaURL)
+	srv := router.NewServer(cfg.FastModel, cfg.QualityModel, local)
+	backends := []router.Backend{local}
+	if key := os.Getenv("GROQ_API_KEY"); key != "" {
+		model := os.Getenv("CLOUD_MODEL")
+		if model == "" {
+			model = "llama-3.1-8b-instant"
+		}
+		base := os.Getenv("CLOUD_BASE_URL")
+		if base == "" {
+			base = "https://api.groq.com/openai/v1"
+		}
+		name := os.Getenv("CLOUD_BACKEND_NAME")
+		if name == "" {
+			name = "groq"
+		}
+		cloud := router.NewOpenAIBackend(name, base, key)
+		srv.AddModel(router.ModelRef{Tier: "cloud", Model: model, Backend: cloud})
+		backends = append(backends, cloud)
+	}
+	if kws := os.Getenv("SENSITIVE_KEYWORDS"); kws != "" {
+		srv.SensitiveKeywords = strings.Split(strings.ToLower(kws), ",")
+	}
+	if t := os.Getenv("REQUEST_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			srv.RequestTimeout = d
+		}
+	}
+	return srv, backends
 }
 
 func runScore(dsn, ollamaURL, goldenPath, goldenVersion string) {
@@ -534,6 +621,9 @@ func main() {
 	trackerInput := flag.String("tracker-input", "what does agentops do?", "input question for --run-tracker")
 	traceID := flag.String("trace", "", "print redacted spans for TRACE_ID and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	createKey := flag.String("create-key", "", "create an API key with NAME, print the secret once, and exit")
+	keyRPM := flag.Int("key-rpm", 0, "requests per minute for --create-key (0 = unlimited)")
+	keyBudget := flag.Int64("key-budget", 0, "lifetime token budget for --create-key (0 = unlimited)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("agentops " + version)
@@ -552,6 +642,10 @@ func main() {
 	}
 	if *migrate {
 		runMigrate(dsn)
+		return
+	}
+	if *createKey != "" {
+		runCreateKey(dsn, *createKey, *keyRPM, *keyBudget)
 		return
 	}
 	if *ingest {
@@ -599,8 +693,15 @@ func main() {
 		log.Fatalf("postgres dsn: %v", err)
 	}
 	defer pool.Close()
-	srv := router.NewServer(cfg.FastModel, cfg.QualityModel, router.NewOllamaClient(cfg.OllamaURL))
-	srv.SpanSink = newSpanWriter(pool).Sink()
+	srv, backends := buildBackends(cfg)
+	spans := newSpanWriter(pool)
+	srv.SpanSink = spans.Sink()
+	srv.Keys = router.SQLKeyStore{Exec: pgAdapter{pool}, Query: routerAdapter{pgAdapter{pool}}}
+	srv.RequireKey = strings.EqualFold(os.Getenv("REQUIRE_API_KEY"), "true")
+	srv.Prober = router.NewHealthProber(srv.Metrics, backends...)
+	probeCtx, stopProbe := context.WithCancel(context.Background())
+	defer stopProbe()
+	go srv.Prober.Run(probeCtx, 15*time.Second)
 	if v, ok := latestEvalScore(pool, *driftGolden); ok {
 		srv.Metrics.SetEvalFaithfulness(v)
 	}
@@ -652,6 +753,30 @@ func main() {
 		_ = json.NewEncoder(w).Encode(data)
 	})
 	mux.Handle("/", srv)
-	log.Printf("agentops %s router on %s fast=%s quality=%s", version, cfg.Addr, cfg.FastModel, cfg.QualityModel)
-	log.Fatal(http.ListenAndServe(cfg.Addr, mux))
+	httpSrv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	// Graceful shutdown: stop accepting, let in-flight chats finish (up to the request
+	// timeout), then flush queued spans and close the pool.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
+	log.Printf("agentops %s router on %s fast=%s quality=%s backends=%d auth=%v", version, cfg.Addr, cfg.FastModel, cfg.QualityModel, len(backends), srv.RequireKey)
+	select {
+	case err := <-errCh:
+		log.Fatal(err)
+	case sig := <-stop:
+		log.Printf("%s: draining in-flight requests", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), srv.RequestTimeout)
+		defer cancel()
+		if err := httpSrv.Shutdown(ctx); err != nil {
+			log.Printf("shutdown: %v", err)
+		}
+		stopProbe()
+		spans.Close(5 * time.Second)
+		log.Print("bye")
+	}
 }

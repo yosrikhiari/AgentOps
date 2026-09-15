@@ -57,7 +57,7 @@ func (s *Server) toolList() []toolDef {
 	return []toolDef{
 		{
 			Name:        "list_models",
-			Description: "List the models behind the router with their speed tiers.",
+			Description: "List the models behind the router with their tiers, backends and last health probe.",
 			InputSchema: schema(map[string]any{}, []string{}),
 		},
 		{
@@ -95,10 +95,19 @@ func textResult(v any) map[string]any {
 func (s *Server) callTool(name string, args map[string]any) (any, *rpcError) {
 	switch name {
 	case "list_models":
-		return textResult(map[string]any{"models": []any{
-			map[string]any{"name": s.Router.FastModel, "tier": "fast"},
-			map[string]any{"name": s.Router.QualityModel, "tier": "quality"},
-		}}), nil
+		models := make([]any, 0, len(s.Router.Models))
+		for _, ref := range s.Router.Models {
+			m := map[string]any{"name": ref.Model, "tier": ref.Tier, "backend": ref.Backend.Name()}
+			if s.Router.Prober != nil {
+				m["up"] = s.Router.Prober.Up(ref.Backend.Name())
+			}
+			models = append(models, m)
+		}
+		out := map[string]any{"models": models}
+		if s.Router.Prober != nil {
+			out["backends"] = s.Router.Prober.Statuses()
+		}
+		return textResult(out), nil
 	case "get_stats":
 		snap := s.Router.Metrics.Snapshot()
 		names := make([]string, 0, len(snap))

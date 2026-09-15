@@ -6,391 +6,399 @@
 <title>Tower — Design System for AgentOps</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- The single source of truth: the CSS the console ships. This page adds only doc chrome. -->
+<link rel="stylesheet" href="../console/static/tower.css">
 <style>
-  :root{
-    --tower-ground:#17151A;
-    --tower-surface:#201D22;
-    --tower-surface-raised:#26222A;
-    --tower-border:#342F36;
-    --tower-border-soft:#2A262C;
-    --tower-ink:#EDE8E2;
-    --tower-ink-muted:#9A9299;
-    --tower-ink-faint:#635C63;
-    --tower-amber:#F2A93B;
-    --tower-amber-dim:#4A3A1F;
-    --tower-green:#5FBE8C;
-    --tower-green-dim:#22352C;
-    --tower-red:#E2596B;
-    --tower-red-dim:#3A2229;
-    --tower-font-display:'Space Grotesk', sans-serif;
-    --tower-font-body:'Inter', -apple-system, sans-serif;
-    --tower-font-mono:'IBM Plex Mono', monospace;
-    --tower-radius-sm:4px;
-    --tower-radius-md:6px;
-  }
-  *{box-sizing:border-box;}
-  body{
-    margin:0;
-    background:var(--tower-ground);
-    color:var(--tower-ink);
-    font-family:var(--tower-font-body);
-    font-size:14px;
-    line-height:1.5;
-  }
-  h1,h2,h3,h4{
-    font-family:var(--tower-font-display);
-    font-weight:600;
-    margin:0;
-    letter-spacing:-0.01em;
-  }
-  .tower-mono{ font-family:var(--tower-font-mono); font-variant-numeric:tabular-nums; }
-
-  /* ===== Layout shell ===== */
-  .tower-shell{ display:grid; grid-template-columns:64px 1fr; min-height:100vh; }
-  .tower-rail{
-    background:var(--tower-surface);
-    border-right:1px solid var(--tower-border-soft);
-    display:flex; flex-direction:column; align-items:center;
-    padding:16px 0; gap:4px;
-  }
-  .tower-rail-mark{
-    width:32px;height:32px;border-radius:var(--tower-radius-sm);
-    background:var(--tower-amber); color:var(--tower-ground);
-    display:flex;align-items:center;justify-content:center;
-    font-family:var(--tower-font-display); font-weight:700; font-size:15px;
-    margin-bottom:20px;
-  }
-  .tower-rail-btn{
-    width:40px;height:40px; border-radius:var(--tower-radius-sm);
-    display:flex;align-items:center;justify-content:center;
-    color:var(--tower-ink-muted); background:transparent; border:none; cursor:pointer;
-    transition:background .12s ease, color .12s ease;
-  }
-  .tower-rail-btn:hover{ background:var(--tower-surface-raised); color:var(--tower-ink); }
-  .tower-rail-btn[data-active="true"]{ background:var(--tower-amber-dim); color:var(--tower-amber); }
-  .tower-rail-btn svg{ width:18px; height:18px; }
-
-  .tower-main{ display:flex; flex-direction:column; min-width:0; }
-
-  /* ===== Status strip ===== */
-  .tower-statusstrip{
-    display:flex; align-items:center; gap:24px;
-    padding:12px 24px; border-bottom:1px solid var(--tower-border-soft);
-    background:var(--tower-ground);
-  }
-  .tower-statusstrip h1{ font-size:16px; margin-right:auto; }
-  .tower-pulse-item{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--tower-ink-muted); }
-  .tower-pulse-dot{
-    width:7px;height:7px;border-radius:50%; background:var(--tower-green);
-    box-shadow:0 0 0 3px var(--tower-green-dim);
-    animation:tower-pulse 2.2s ease-in-out infinite;
-  }
-  @keyframes tower-pulse{
-    0%,100%{ opacity:1; } 50%{ opacity:.45; }
-  }
-  .tower-pulse-item .tower-mono{ color:var(--tower-ink); }
-
-  .tower-content{ padding:24px; display:flex; flex-direction:column; gap:24px; }
-
-  /* ===== Section heading ===== */
-  .tower-section-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
-  .tower-section-head h2{ font-size:14px; color:var(--tower-ink-muted); font-weight:500; text-transform:none; }
-
-  /* ===== Metric cards ===== */
-  .tower-metric-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--tower-border-soft); border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-md); overflow:hidden; }
-  .tower-metric{ background:var(--tower-surface); padding:16px 18px; display:flex; flex-direction:column; gap:6px; }
-  .tower-metric-label{ font-size:12px; color:var(--tower-ink-muted); }
-  .tower-metric-value{ font-family:var(--tower-font-mono); font-size:22px; color:var(--tower-ink); }
-  .tower-metric-delta{ font-size:12px; display:flex; align-items:center; gap:4px; }
-  .tower-metric-delta.up{ color:var(--tower-green); }
-  .tower-metric-delta.down{ color:var(--tower-red); }
-
-  /* ===== Panel ===== */
-  .tower-panel{
-    background:var(--tower-surface); border:1px solid var(--tower-border-soft);
-    border-radius:var(--tower-radius-md); padding:18px;
-  }
-  .tower-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
-  .tower-panel-head h3{ font-size:14px; }
-  .tower-panel-sub{ font-size:12px; color:var(--tower-ink-muted); margin-top:2px; }
-
-  /* ===== Traffic bar chart (hand-rolled SVG) ===== */
-  .tower-chart-legend{ display:flex; gap:16px; font-size:12px; color:var(--tower-ink-muted); }
-  .tower-legend-item{ display:flex; align-items:center; gap:6px; }
-  .tower-legend-swatch{ width:8px;height:8px;border-radius:2px; }
-
-  /* ===== Two-column grid ===== */
-  .tower-grid-2{ display:grid; grid-template-columns:1.3fr 1fr; gap:16px; align-items:start; }
-
-  /* ===== Log table ===== */
-  .tower-table{ width:100%; border-collapse:collapse; font-size:12.5px; }
-  .tower-table th{
-    text-align:left; font-weight:500; color:var(--tower-ink-faint);
-    padding:6px 10px; border-bottom:1px solid var(--tower-border-soft); font-size:11px;
-  }
-  .tower-table td{ padding:8px 10px; border-bottom:1px solid var(--tower-border-soft); color:var(--tower-ink); }
-  .tower-table tr:last-child td{ border-bottom:none; }
-  .tower-table td.tower-mono{ color:var(--tower-ink-muted); }
-
-  /* ===== Status pill (primitive) ===== */
-  .tower-pill{
-    display:inline-flex; align-items:center; gap:5px;
-    padding:2px 8px; border-radius:100px; font-size:11.5px; font-weight:500;
-  }
-  .tower-pill::before{ content:''; width:5px; height:5px; border-radius:50%; }
-  .tower-pill.healthy{ background:var(--tower-green-dim); color:var(--tower-green); }
-  .tower-pill.healthy::before{ background:var(--tower-green); }
-  .tower-pill.degraded{ background:var(--tower-amber-dim); color:var(--tower-amber); }
-  .tower-pill.degraded::before{ background:var(--tower-amber); }
-  .tower-pill.critical{ background:var(--tower-red-dim); color:var(--tower-red); }
-  .tower-pill.critical::before{ background:var(--tower-red); }
-
-  /* ===== Buttons (primitive) ===== */
-  .tower-btn{
-    font-family:var(--tower-font-body); font-size:13px; font-weight:500;
-    padding:7px 14px; border-radius:var(--tower-radius-sm); border:1px solid transparent;
-    cursor:pointer; transition:filter .12s ease;
-  }
-  .tower-btn:hover{ filter:brightness(1.1); }
-  .tower-btn.primary{ background:var(--tower-amber); color:var(--tower-ground); }
-  .tower-btn.secondary{ background:var(--tower-surface-raised); color:var(--tower-ink); border-color:var(--tower-border); }
-  .tower-btn.ghost{ background:transparent; color:var(--tower-ink-muted); }
-  .tower-btn.ghost:hover{ color:var(--tower-ink); filter:none; }
-
-  /* ===== Chip (primitive) ===== */
-  .tower-chip{
-    display:inline-flex; align-items:center; font-family:var(--tower-font-mono);
-    font-size:11px; padding:2px 7px; border-radius:var(--tower-radius-sm);
-    background:var(--tower-surface-raised); color:var(--tower-ink-muted); border:1px solid var(--tower-border-soft);
-  }
-
-  /* ===== Trace inspector (hero component) ===== */
-  .tower-trace{ display:flex; flex-direction:column; }
-  .tower-trace-step{
-    position:relative; display:flex; gap:14px; padding:14px 4px 14px 4px;
-    border-left:2px solid var(--tower-border); margin-left:11px; padding-left:22px;
-  }
-  .tower-trace-step:last-child{ border-left-color:transparent; }
-  .tower-trace-dot{
-    position:absolute; left:-7px; top:16px; width:12px; height:12px; border-radius:50%;
-    background:var(--tower-surface); border:2px solid var(--tower-ink-faint);
-  }
-  .tower-trace-step.done .tower-trace-dot{ border-color:var(--tower-green); background:var(--tower-green-dim); }
-  .tower-trace-step.active .tower-trace-dot{ border-color:var(--tower-amber); background:var(--tower-amber-dim); }
-  .tower-trace-body{ flex:1; cursor:pointer; }
-  .tower-trace-top{ display:flex; align-items:center; justify-content:space-between; }
-  .tower-trace-name{ font-weight:600; font-size:13.5px; }
-  .tower-trace-meta{ display:flex; align-items:center; gap:10px; font-size:11.5px; color:var(--tower-ink-muted); }
-  .tower-trace-detail{
-    margin-top:8px; padding:10px 12px; background:var(--tower-ground);
-    border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-sm);
-    font-size:12px; color:var(--tower-ink-muted); display:none;
-  }
-  .tower-trace-detail.open{ display:block; }
-  .tower-trace-detail p{ margin:0 0 6px 0; }
-  .tower-trace-detail p:last-child{ margin-bottom:0; }
-  .tower-trace-detail .k{ color:var(--tower-ink-faint); }
-
-  /* ===== Doc sections (this page only) ===== */
-  .tower-doc-section{ margin-bottom:40px; }
-  .tower-doc-section > h2{ font-size:12px; letter-spacing:.02em; color:var(--tower-ink-faint); margin-bottom:14px; padding-bottom:8px; border-bottom:1px solid var(--tower-border-soft); }
-  .tower-doc-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  .tower-swatch{ display:flex; flex-direction:column; gap:6px; width:110px; }
-  .tower-swatch-block{ height:56px; border-radius:var(--tower-radius-sm); border:1px solid var(--tower-border-soft); }
-  .tower-swatch-label{ font-size:11px; color:var(--tower-ink-muted); }
-  .tower-swatch-hex{ font-family:var(--tower-font-mono); font-size:11px; color:var(--tower-ink-faint); }
+  /* ===== Doc-only chrome (never copy these into the console) ===== */
+  .ds-section{ scroll-margin-top:72px; }
+  .ds-section > h2{ font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--tower-ink-faint); margin:26px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--tower-border-soft); }
+  .ds-lead{ color:var(--tower-ink-muted); font-size:13px; max-width:760px; margin:-6px 0 14px; }
+  .ds-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .ds-stack{ display:flex; flex-direction:column; gap:14px; }
+  .ds-swatch{ display:flex; flex-direction:column; gap:6px; width:118px; }
+  .ds-swatch-block{ height:56px; border-radius:var(--tower-radius-sm); border:1px solid var(--tower-border-soft); }
+  .ds-swatch-label{ font-size:11px; color:var(--tower-ink-muted); }
+  .ds-swatch-hex{ font-family:var(--tower-font-mono); font-size:11px; color:var(--tower-ink-faint); }
+  .ds-spec{ width:100%; border-collapse:collapse; font-size:12px; margin-top:12px; }
+  .ds-spec th{ text-align:left; font-weight:500; color:var(--tower-ink-faint); font-size:11px; padding:5px 8px; border-bottom:1px solid var(--tower-border-soft); }
+  .ds-spec td{ padding:6px 8px; border-bottom:1px solid var(--tower-border-soft); color:var(--tower-ink-muted); vertical-align:top; }
+  .ds-spec td:first-child{ font-family:var(--tower-font-mono); color:var(--tower-ink); white-space:nowrap; }
+  .ds-spec tr:last-child td{ border-bottom:none; }
+  .ds-code{ font-family:var(--tower-font-mono); font-size:11.5px; color:var(--tower-ink-muted); background:var(--tower-ground); border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-sm); padding:10px 12px; white-space:pre; overflow:auto; }
+  .ds-inline{ font-family:var(--tower-font-mono); font-size:11.5px; color:var(--tower-amber); }
+  .ds-frame{ border:1px dashed var(--tower-border); border-radius:var(--tower-radius-md); padding:14px; }
+  .ds-frame-label{ font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--tower-ink-faint); margin-bottom:10px; }
+  .ds-type-sample{ display:grid; grid-template-columns:150px 1fr; gap:8px 16px; align-items:baseline; font-size:12px; color:var(--tower-ink-muted); }
+  .ds-ok{ color:var(--tower-green); } .ds-bad{ color:var(--tower-red); }
+  .ds-shellmini{ display:grid; grid-template-columns:160px 1fr; border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-md); overflow:hidden; height:200px; }
+  .ds-shellmini .tower-side{ position:static; height:auto; padding:12px 8px; }
+  .ds-shellmini .tower-statusstrip{ position:static; padding:10px 14px; }
+  .ds-shellmini .tower-content{ padding:12px 14px; gap:10px; }
+  .ds-shellmini.collapsed{ grid-template-columns:52px 1fr; }
+  .ds-shellmini.collapsed .tower-nav-btn span, .ds-shellmini.collapsed .tower-brand div, .ds-shellmini.collapsed .tower-nav-label, .ds-shellmini.collapsed .tower-side-foot{ display:none; }
+  .ds-shellmini.collapsed .tower-nav-btn{ justify-content:center; }
+  .ds-toast-demo{ position:static; display:inline-flex; }
 </style>
 </head>
 <body>
 
 <div class="tower-shell">
-  <nav class="tower-rail">
-    <div class="tower-rail-mark">T</div>
-    <button class="tower-rail-btn" data-active="true" title="Traffic">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
-    </button>
-    <button class="tower-rail-btn" title="Evals">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-    </button>
-    <button class="tower-rail-btn" title="Traces">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/></svg>
-    </button>
-    <button class="tower-rail-btn" title="Alerts">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
-    </button>
+  <nav class="tower-side" aria-label="Sections">
+    <div class="tower-brand">
+      <div class="tower-rail-mark">T</div>
+      <div><div class="tower-brand-name">Tower</div><div class="tower-brand-sub">design system</div></div>
+    </div>
+    <div class="tower-nav-label">Foundations</div>
+    <a class="tower-nav-btn" href="#principles" data-active="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg><span>Principles</span></a>
+    <a class="tower-nav-btn" href="#tokens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/><path d="M13 3h8v8M3 13v8h8"/></svg><span>Tokens</span></a>
+    <a class="tower-nav-btn" href="#shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M3 9h6"/></svg><span>Shell</span></a>
+    <div class="tower-nav-label">Components</div>
+    <a class="tower-nav-btn" href="#primitives"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="8" width="18" height="8" rx="4"/></svg><span>Primitives</span></a>
+    <a class="tower-nav-btn" href="#feedback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Feedback states</span></a>
+    <a class="tower-nav-btn" href="#data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18"/></svg><span>Data display</span></a>
+    <a class="tower-nav-btn" href="#charts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg><span>Charts</span></a>
+    <a class="tower-nav-btn" href="#traces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 6h4a4 4 0 0 1 4 4v0M8 18h4a4 4 0 0 0 4-4v0"/></svg><span>Trace inspector</span></a>
+    <div class="tower-nav-label">Rules</div>
+    <a class="tower-nav-btn" href="#rules"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span>How to extend</span></a>
+    <a class="tower-nav-btn" href="tower-enhancements.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.5 6 6.5.5-5 4.3 1.6 6.4L12 16.8 6.4 20.2 8 13.8 3 9.5l6.5-.5z"/></svg><span>Enhancement study</span></a>
+    <div class="tower-side-foot">
+      <div class="tower-pulse-item"><span class="tower-pulse-dot"></span><span>console v1.0.0</span></div>
+      <div class="tower-mono tower-muted">tower.css · 255 lines</div>
+    </div>
   </nav>
 
   <div class="tower-main">
-    <div class="tower-statusstrip">
-      <h1>Tower</h1>
-      <div class="tower-pulse-item"><span class="tower-pulse-dot"></span> router live <span class="tower-mono">2 models</span></div>
-      <div class="tower-pulse-item">faithfulness <span class="tower-mono">0.94</span></div>
-      <div class="tower-pulse-item">p50 latency <span class="tower-mono">312ms</span></div>
-      <button class="tower-btn secondary">Export report</button>
-    </div>
+    <header class="tower-statusstrip">
+      <h1>Tower design system</h1>
+      <div class="tower-pulse-item">tokens <span class="tower-mono">20</span></div>
+      <div class="tower-pulse-item">components <span class="tower-mono">26</span></div>
+      <div class="tower-pulse-item">pages <span class="tower-mono">4</span></div>
+      <div class="tower-pulse-item"><span class="tower-pulse-dot"></span><span>source: console/static/tower.css</span></div>
+    </header>
 
-    <div class="tower-content">
+    <main class="tower-content">
 
-      <!-- ===================== METRIC ROW ===================== -->
-      <div class="tower-metric-row">
-        <div class="tower-metric">
-          <div class="tower-metric-label">Requests / min</div>
-          <div class="tower-metric-value">184</div>
-          <div class="tower-metric-delta up">↑ 6% vs last hour</div>
+      <!-- ===================== PRINCIPLES ===================== -->
+      <section class="ds-section" id="principles">
+        <h2>Principles</h2>
+        <div class="tower-metric-row">
+          <div class="tower-metric"><div class="tower-metric-label">01 · Operator first</div><div class="tower-metric-value" style="font-size:15px">Answer "is it healthy?" in one glance</div><div class="tower-metric-delta">status dot, pills and the strip carry state; text explains it.</div></div>
+          <div class="tower-metric"><div class="tower-metric-label">02 · One accent</div><div class="tower-metric-value" style="font-size:15px">Amber means "the thing to look at"</div><div class="tower-metric-delta">active nav, primary action, quality-tier bars, selected trace. Nothing else is amber.</div></div>
+          <div class="tower-metric"><div class="tower-metric-label">03 · No framework</div><div class="tower-metric-value" style="font-size:15px">Hand-written CSS, <span class="tower-mono">h()</span> helper</div><div class="tower-metric-delta">~255 lines of CSS, zero dependencies, embedded in the Go binary.</div></div>
+          <div class="tower-metric"><div class="tower-metric-label">04 · Every state designed</div><div class="tower-metric-value" style="font-size:15px">loading · empty · error · live</div><div class="tower-metric-delta">a page is not done until all four render.</div></div>
         </div>
-        <div class="tower-metric">
-          <div class="tower-metric-label">p50 latency</div>
-          <div class="tower-metric-value">312<span style="font-size:13px;color:var(--tower-ink-muted)">ms</span></div>
-          <div class="tower-metric-delta down">↓ 18ms</div>
-        </div>
-        <div class="tower-metric">
-          <div class="tower-metric-label">Faithfulness (24h)</div>
-          <div class="tower-metric-value">0.94</div>
-          <div class="tower-metric-delta up">↑ 0.02</div>
-        </div>
-        <div class="tower-metric">
-          <div class="tower-metric-label">Judge cost today</div>
-          <div class="tower-metric-value">$0.00</div>
-          <div class="tower-metric-delta" style="color:var(--tower-ink-muted)">Groq free tier</div>
-        </div>
-      </div>
+      </section>
 
-      <!-- ===================== TRAFFIC + LOG ===================== -->
-      <div class="tower-grid-2">
-        <div class="tower-panel">
-          <div class="tower-panel-head">
-            <div>
-              <h3>Routing traffic — last 30 requests</h3>
-              <div class="tower-panel-sub">Which backend handled each request, in order</div>
+      <!-- ===================== TOKENS ===================== -->
+      <section class="ds-section" id="tokens">
+        <h2>Tokens</h2>
+        <p class="ds-lead">Everything is a <span class="ds-inline">--tower-*</span> custom property on <span class="ds-inline">:root</span>. Three neutrals stacked (ground → surface → raised), three inks, one accent, two status hues, each with a <span class="ds-inline">-dim</span> partner for backgrounds.</p>
+        <div class="ds-stack">
+          <div class="ds-frame"><div class="ds-frame-label">Surfaces &amp; borders</div>
+            <div class="ds-row">
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-ground)"></div><div class="ds-swatch-label">ground · page</div><div class="ds-swatch-hex">#17151A</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-surface)"></div><div class="ds-swatch-label">surface · panel, sidebar</div><div class="ds-swatch-hex">#201D22</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-surface-raised)"></div><div class="ds-swatch-label">surface-raised · hover, chip</div><div class="ds-swatch-hex">#26222A</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-border-soft)"></div><div class="ds-swatch-label">border-soft · dividers</div><div class="ds-swatch-hex">#2A262C</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-border)"></div><div class="ds-swatch-label">border · inputs, hover</div><div class="ds-swatch-hex">#342F36</div></div>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Ink</div>
+            <div class="ds-row">
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-ink)"></div><div class="ds-swatch-label">ink · body, values</div><div class="ds-swatch-hex">#EDE8E2</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-ink-muted)"></div><div class="ds-swatch-label">ink-muted · labels, subs</div><div class="ds-swatch-hex">#9A9299 · 5.7:1 <span class="ds-ok">AA</span></div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-ink-faint)"></div><div class="ds-swatch-label">ink-faint · th, hints</div><div class="ds-swatch-hex">#635C63 · 2.6:1 <span class="ds-bad">fails AA</span></div></div>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Accent &amp; status (with -dim backgrounds)</div>
+            <div class="ds-row">
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-amber)"></div><div class="ds-swatch-label">amber · accent, degraded</div><div class="ds-swatch-hex">#F2A93B</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-amber-dim)"></div><div class="ds-swatch-label">amber-dim</div><div class="ds-swatch-hex">#4A3A1F</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-green)"></div><div class="ds-swatch-label">green · healthy, done</div><div class="ds-swatch-hex">#5FBE8C</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-green-dim)"></div><div class="ds-swatch-label">green-dim</div><div class="ds-swatch-hex">#22352C</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-red)"></div><div class="ds-swatch-label">red · error, critical</div><div class="ds-swatch-hex">#E2596B</div></div>
+              <div class="ds-swatch"><div class="ds-swatch-block" style="background:var(--tower-red-dim)"></div><div class="ds-swatch-label">red-dim</div><div class="ds-swatch-hex">#3A2229</div></div>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Type</div>
+            <div class="ds-type-sample">
+              <span>display · Space Grotesk 600</span><span style="font-family:var(--tower-font-display);font-weight:600;font-size:24px;color:var(--tower-ink);letter-spacing:-.01em">Headings, metric values, trace titles</span>
+              <span>body · Inter 400/500/600</span><span style="font-size:14px;color:var(--tower-ink)">Labels, table cells, buttons — 14 px base, 12.5 px in tables, 11.5 px in pills</span>
+              <span>mono · IBM Plex Mono</span><span class="tower-mono" style="color:var(--tower-ink)">ids · latencies · models · 0.972 · tabular-nums everywhere a number can change</span>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Shape &amp; motion</div>
+            <div class="ds-type-sample">
+              <span>radius</span><span><span class="tower-mono">sm 4px</span> buttons, chips, inputs, list items · <span class="tower-mono">md 6px</span> panels, metric row, toast · <span class="tower-mono">100px</span> pills only</span>
+              <span>transitions</span><span><span class="tower-mono">.12s ease</span> for background / color / border on hover; <span class="tower-mono">.1s</span> table rows. No transforms, no bounces.</span>
+              <span>animations</span><span><span class="tower-mono">tower-pulse</span> 2.2s on the live dot · <span class="tower-mono">tower-shimmer</span> 1.4s on skeletons. These are the only two.</span>
+              <span>scrollbars</span><span>thin, <span class="tower-mono">border</span> thumb on transparent track, 8 px, hover to <span class="tower-mono">ink-faint</span></span>
+            </div></div>
+        </div>
+      </section>
+
+      <!-- ===================== SHELL ===================== -->
+      <section class="ds-section" id="shell">
+        <h2>Shell</h2>
+        <p class="ds-lead">A 216 px sticky sidebar and a sticky, blurred status strip frame every page. The sidebar collapses to a 64 px icon rail under 900 px. The content column caps at 1480 px so wide monitors don't stretch tables.</p>
+        <div class="tower-grid-2">
+          <div class="ds-frame"><div class="ds-frame-label">≥ 900 px — labelled sidebar</div>
+            <div class="ds-shellmini">
+              <nav class="tower-side"><div class="tower-brand"><div class="tower-rail-mark">T</div><div><div class="tower-brand-name">Tower</div><div class="tower-brand-sub">AgentOps console</div></div></div>
+                <div class="tower-nav-label">Operate</div><button class="tower-nav-btn" data-active="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Overview</span></button><button class="tower-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/></svg><span>Traces</span></button>
+                <div class="tower-nav-label">Quality</div><button class="tower-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg><span>Evals &amp; drift</span></button>
+                <div class="tower-side-foot"><div class="tower-pulse-item"><span class="tower-pulse-dot"></span>router live</div></div></nav>
+              <div class="tower-main"><header class="tower-statusstrip"><h1 style="font-size:13px">Overview</h1><div class="tower-pulse-item">p50 <span class="tower-mono">312 ms</span></div></header><main class="tower-content"><div class="tower-skeleton"></div><div class="tower-skeleton" style="width:70%"></div></main></div>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">&lt; 900 px — icon rail (labels, section headers and footer hide)</div>
+            <div class="ds-shellmini collapsed">
+              <nav class="tower-side"><div class="tower-brand"><div class="tower-rail-mark">T</div><div></div></div>
+                <div class="tower-nav-label">Operate</div><button class="tower-nav-btn" data-active="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Overview</span></button><button class="tower-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/></svg><span>Traces</span></button><button class="tower-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg><span>Evals</span></button>
+                <div class="tower-side-foot"></div></nav>
+              <div class="tower-main"><header class="tower-statusstrip"><h1 style="font-size:13px">Overview</h1></header><main class="tower-content"><div class="tower-skeleton"></div><div class="tower-skeleton" style="width:70%"></div></main></div>
+            </div></div>
+        </div>
+        <table class="ds-spec">
+          <tr><th>class</th><th>role</th><th>notes</th></tr>
+          <tr><td>.tower-shell</td><td>grid 216px 1fr, min-height 100vh</td><td>64px 1fr under 900 px</td></tr>
+          <tr><td>.tower-side</td><td>sticky sidebar, own scroll</td><td>brand → nav-label groups → nav-btn → side-foot (margin-top:auto)</td></tr>
+          <tr><td>.tower-nav-btn</td><td>button or &lt;a&gt; with 17 px icon + label</td><td><span class="tower-mono">data-active="true"</span> = amber-dim / amber. External links use target=_blank rel=noopener</td></tr>
+          <tr><td>.tower-nav-label</td><td>10.5 px uppercase group header</td><td>Operate · Quality · Links</td></tr>
+          <tr><td>.tower-side-foot</td><td>router pulse + version</td><td>mirrors the strip so the state survives collapse</td></tr>
+          <tr><td>.tower-statusstrip</td><td>sticky header, 92 % ground + blur(6px)</td><td>h1 = page title (set by the router), then pulse items: models · faithfulness · p50 · router live/down</td></tr>
+          <tr><td>.tower-pulse-item / -dot</td><td>label + mono value, optional pulsing 7 px dot</td><td>dot colour is set inline by <span class="tower-mono">updateStrip()</span>: green all-up, red otherwise</td></tr>
+          <tr><td>.tower-content</td><td>main column, 24/28 px padding, 20 px gap, max-width 1480</td><td><span class="tower-mono">aria-live="polite"</span> in the console</td></tr>
+        </table>
+      </section>
+
+      <!-- ===================== PRIMITIVES ===================== -->
+      <section class="ds-section" id="primitives">
+        <h2>Primitives</h2>
+        <div class="ds-stack">
+          <div class="ds-frame"><div class="ds-frame-label">Buttons — primary (one per view) · secondary · ghost · disabled</div>
+            <div class="ds-row">
+              <button class="tower-btn primary">Run eval suite</button>
+              <button class="tower-btn secondary">Resume</button>
+              <button class="tower-btn ghost">Copy id</button>
+              <a class="tower-btn ghost" href="#">JSON ↗</a>
+              <button class="tower-btn primary" disabled>Running…</button>
+              <button class="tower-btn secondary" disabled>Retry</button>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Pills — state with a dot. healthy / degraded / critical only; the label says what</div>
+            <div class="ds-row">
+              <span class="tower-pill healthy">healthy</span><span class="tower-pill healthy">done</span><span class="tower-pill healthy">ok</span><span class="tower-pill healthy">0.972</span>
+              <span class="tower-pill degraded">running</span><span class="tower-pill degraded">scoring</span>
+              <span class="tower-pill critical">error</span><span class="tower-pill critical">down</span><span class="tower-pill critical">failed</span><span class="tower-pill critical">0.612</span>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Chips — mono facts, no state colour · Chip buttons — filter toggles with .on</div>
+            <div class="ds-row">
+              <span class="tower-chip">local</span><span class="tower-chip">cloud</span><span class="tower-chip">quality</span><span class="tower-chip">fast</span><span class="tower-chip">sensitive</span><span class="tower-chip">fallback</span><span class="tower-chip">keyword:iban</span><span class="tower-chip">qwen3:8b</span>
+              <span style="width:16px"></span>
+              <span class="tower-filters" style="margin:0"><button class="tower-chip tower-chip-btn on">All</button><button class="tower-chip tower-chip-btn">Chats</button><button class="tower-chip tower-chip-btn">Workflows</button><button class="tower-chip tower-chip-btn">Errors</button></span>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Inputs &amp; form row — mono input, amber focus ring, button beside it</div>
+            <div class="tower-form-row"><input class="tower-input" placeholder="trace id or workflow id"><button class="tower-btn primary">Inspect</button><span class="tower-panel-sub">Enter also submits</span></div>
+          </div>
+          <div class="ds-frame"><div class="ds-frame-label">Links &amp; text utilities</div>
+            <div class="ds-row"><a class="tower-link tower-mono" href="#">8f2a1c3d</a><span class="tower-muted">tower-muted · 3 min ago</span><span class="tower-mono">tower-mono · 312 ms</span><span class="tower-panel-sub">tower-panel-sub · a subtitle</span></div>
+          </div>
+        </div>
+        <table class="ds-spec">
+          <tr><th>class</th><th>used in</th><th>rule</th></tr>
+          <tr><td>.tower-btn.primary</td><td>Inspect · Start workflow · Run eval suite</td><td>the one thing the page is for; amber on ground; disabled = opacity .5</td></tr>
+          <tr><td>.tower-btn.secondary</td><td>Retry · Resume · Copy a curl</td><td>raised surface + border; safe secondary actions</td></tr>
+          <tr><td>.tower-btn.ghost</td><td>Copy id · JSON</td><td>no chrome; for actions next to a title. <span class="tower-mono">a.tower-btn</span> is styled the same</td></tr>
+          <tr><td>.tower-pill.*</td><td>backend up/down, run scores, workflow status, span failed</td><td>state only. A pill always has a dot. Use <span class="tower-mono">pill(state, label)</span></td></tr>
+          <tr><td>.tower-chip</td><td>tier, backend, reason, sensitive, fallback, judge model</td><td>a fact, never a state. Use <span class="tower-mono">chip(text)</span></td></tr>
+          <tr><td>.tower-chip-btn(.on)</td><td>Traces filters</td><td>a chip that toggles; <span class="tower-mono">.on</span> = amber-dim</td></tr>
+          <tr><td>.tower-input</td><td>trace id · workflow question</td><td>mono, ground background, min-width 280, amber border on focus</td></tr>
+        </table>
+      </section>
+
+      <!-- ===================== FEEDBACK ===================== -->
+      <section class="ds-section" id="feedback">
+        <h2>Feedback states</h2>
+        <p class="ds-lead">Every page renders a skeleton while its first fetch is in flight, an error box with Retry when it fails, and an empty state that tells the operator the next action. Toasts confirm actions; notes explain a surprise inside a view.</p>
+        <div class="tower-grid-2">
+          <div class="ds-stack">
+            <div class="ds-frame"><div class="ds-frame-label">Skeleton — skeleton(rows), shimmer 1.4 s</div><div style="display:flex;flex-direction:column;gap:10px"><div class="tower-skeleton"></div><div class="tower-skeleton" style="width:85%"></div><div class="tower-skeleton" style="width:60%"></div></div></div>
+            <div class="ds-frame"><div class="ds-frame-label">Error box — errorBox(msg, retry)</div><div class="tower-error"><span>Could not load overview: HTTP 502</span><button class="tower-btn secondary">Retry</button></div></div>
+            <div class="ds-frame"><div class="ds-frame-label">Note — an in-view explanation, amber-dim</div><div class="tower-note" style="margin-top:0">Fallback: qwen2.5:7b-instruct-q4_K_M failed → served by qwen2.5:3b-instruct</div></div>
+            <div class="ds-frame"><div class="ds-frame-label">Toast — toast(msg, isErr), fixed bottom-right, 4 s</div><div class="ds-row"><div class="tower-toast ds-toast-demo">trace id copied</div><div class="tower-toast err ds-toast-demo">ollama_unavailable: connection refused</div></div></div>
+          </div>
+          <div class="ds-stack">
+            <div class="ds-frame"><div class="ds-frame-label">Empty — inline, inside a panel</div><div class="tower-empty">No requests yet. Send one: curl localhost:8080/v1/chat/completions -d '{"prompt":"hi"}'</div></div>
+            <div class="ds-frame"><div class="ds-frame-label">Empty — tall, with a title and an action (trace detail)</div><div class="tower-empty tower-empty-tall" style="padding:40px 12px"><div class="tower-empty-title">No traces yet</div>Send one request and it will appear here.<div class="tower-empty-actions"><button class="tower-btn secondary">Copy a curl</button></div></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== DATA DISPLAY ===================== -->
+      <section class="ds-section" id="data">
+        <h2>Data display</h2>
+        <div class="ds-stack">
+          <div class="ds-frame"><div class="ds-frame-label">Metric row — 4 cells (cols-3 variant), 1 px gap on border-soft, display-font values, delta line coloured up/down or neutral</div>
+            <div class="tower-metric-row">
+              <div class="tower-metric"><div class="tower-metric-label">Requests / last hour</div><div class="tower-metric-value">184</div><div class="tower-metric-delta">12 in the last minute</div></div>
+              <div class="tower-metric"><div class="tower-metric-label">p50 latency</div><div class="tower-metric-value">312 ms</div><div class="tower-metric-delta">p99 1.84 s</div></div>
+              <div class="tower-metric"><div class="tower-metric-label">Faithfulness (v3)</div><div class="tower-metric-value">0.972</div><div class="tower-metric-delta up">↑ 0.014 vs previous run</div></div>
+              <div class="tower-metric"><div class="tower-metric-label">Suite status</div><div class="tower-metric-value">failed</div><div class="tower-metric-delta down">judge timeout after 90m</div></div>
+            </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Table — 11 px faint headers, 12.5 px cells, row hover to surface-raised, mono for ids/times/numbers, pills and chips inline</div>
+            <table class="tower-table">
+              <thead><tr><th>time</th><th>trace</th><th>model</th><th>backend</th><th>reason</th><th>latency</th><th>tokens</th><th></th></tr></thead>
+              <tbody>
+                <tr><td class="tower-mono">11:42:07</td><td><a class="tower-link tower-mono" href="#">8f2a1c3d</a></td><td>qwen2.5:7b-instruct-q4_K_M</td><td class="tower-mono">ollama</td><td><span class="tower-chip">long_prompt</span></td><td class="tower-mono">890 ms</td><td class="tower-mono">412</td><td></td></tr>
+                <tr><td class="tower-mono">11:41:58</td><td><a class="tower-link tower-mono" href="#">c07b91ee</a></td><td>qwen2.5:3b-instruct</td><td class="tower-mono">ollama</td><td><span class="tower-chip">default_fast</span></td><td class="tower-mono">208 ms</td><td class="tower-mono">96</td><td><span class="tower-chip">sensitive</span></td></tr>
+                <tr><td class="tower-mono">11:41:31</td><td><a class="tower-link tower-mono" href="#">1d9e44a0</a></td><td>llama-3.1-8b-instant</td><td class="tower-mono">groq</td><td><span class="tower-chip">quality</span></td><td class="tower-mono">1.21 s</td><td class="tower-mono">0</td><td><span class="tower-pill critical">error</span> <span class="tower-chip">fallback</span></td></tr>
+              </tbody>
+            </table></div>
+          <div class="tower-grid-2">
+            <div class="ds-frame"><div class="ds-frame-label">Key-value grid — span attributes, mono, faint keys</div>
+              <div class="tower-kv"><span class="k">model</span><span class="v">qwen2.5:7b-instruct-q4_K_M</span><span class="k">backend</span><span class="v">ollama</span><span class="k">latency_s</span><span class="v">0.89</span><span class="k">tokens</span><span class="v">412</span><span class="k">fallback_from</span><span class="v">["groq/llama-3.1-8b-instant"]</span><span class="k">span_id</span><span class="v">4b1c…e2</span><span class="k">parent_id</span><span class="v">(root)</span></div></div>
+            <div class="ds-frame"><div class="ds-frame-label">Steps — workflow step pills with attempt count, hover for output snippet</div>
+              <div class="tower-steps"><span class="tower-pill healthy" title="4 chunks retrieved">researcher</span><span class="tower-pill healthy" title="3 claims">drafter ×2</span><span class="tower-pill degraded">reviewer</span></div>
+              <div class="tower-panel-sub" style="margin-top:10px">done → healthy · running → degraded · anything else → critical</div></div>
+          </div>
+          <div class="ds-frame"><div class="ds-frame-label">Panel — surface, border-soft, hover to border; head with h3 + sub + optional action slot. panel(title, sub, body, actions)</div>
+            <section class="tower-panel"><div class="tower-panel-head"><div><h3>Score history <span class="tower-mono">v3</span></h3><div class="tower-panel-sub">Every run of golden v3; dashed line = alert threshold</div></div><button class="tower-btn primary">Run eval suite</button></div><div class="tower-empty">No runs yet — start one.</div></section></div>
+        </div>
+      </section>
+
+      <!-- ===================== CHARTS ===================== -->
+      <section class="ds-section" id="charts">
+        <h2>Charts</h2>
+        <p class="ds-lead">Two hand-rolled SVGs, both built with <span class="ds-inline">createElementNS</span>, tooltips via <span class="ds-inline">&lt;title&gt;</span>, colours via tokens. No chart library.</p>
+        <div class="tower-grid-2">
+          <section class="tower-panel"><div class="tower-panel-head"><div><h3>Routing traffic — last 30 requests</h3><div class="tower-panel-sub">Bar height = latency; click a bar to open its trace</div></div>
+            <div class="tower-chart-legend"><span class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-amber)"></span> quality / cloud</span><span class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-ink-faint)"></span> fast</span><span class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-red)"></span> error</span></div></div>
+            <div id="dsTraffic"></div></section>
+          <section class="tower-panel"><div class="tower-panel-head"><div><h3>Score history</h3><div class="tower-panel-sub">Amber line, green/red dots at the 0.7 threshold, dashed amber-dim rule</div></div></div>
+            <div id="dsScore"></div></section>
+        </div>
+        <table class="ds-spec">
+          <tr><th>chart</th><th>encoding</th><th>function</th></tr>
+          <tr><td>traffic bars</td><td>x = order (oldest left), height = latency / max, colour = tier (amber quality/cloud, faint fast), red 12 px stub = error. Hover dims to .8, click → #/traces/id</td><td>trafficChart(reqs)</td></tr>
+          <tr><td>score line</td><td>x = run order, y = 0–1 with gridlines at 0, .5, .7, 1; dot green ≥ threshold else red; title = run · when · judge · score</td><td>scoreChart(runs)</td></tr>
+        </table>
+      </section>
+
+      <!-- ===================== TRACES ===================== -->
+      <section class="ds-section" id="traces">
+        <h2>Trace inspector</h2>
+        <p class="ds-lead">The hero page. A 380 px list of recent chats and workflows on the left with filter chips; on the right the selected trace as a head, a waterfall timeline and an indented span tree with expandable attributes. Latest trace opens automatically.</p>
+        <div class="tower-grid-traces">
+          <section class="tower-panel">
+            <div class="tower-panel-head"><div><h3>Recent traces</h3><div class="tower-panel-sub">Router chats and workflows, newest first</div></div></div>
+            <div class="tower-filters"><button class="tower-chip tower-chip-btn on">All</button><button class="tower-chip tower-chip-btn">Chats</button><button class="tower-chip tower-chip-btn">Workflows</button><button class="tower-chip tower-chip-btn">Errors</button><button class="tower-chip tower-chip-btn">Sensitive</button><button class="tower-chip tower-chip-btn">Fallbacks</button></div>
+            <div class="tower-trace-list" style="max-height:none">
+              <div class="tower-trace-item selected"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8f2a1c3d</span></span><span class="tower-mono tower-muted">3 min ago</span></div><div class="tower-trace-item-sub">qwen2.5:7b-instruct-q4_K_M · long_prompt</div><div class="tower-trace-item-meta"><span class="tower-mono">890 ms</span></div></div>
+              <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">wf_71ab</span></span><span class="tower-mono tower-muted">8 min ago</span></div><div class="tower-trace-item-sub">what does agentops do?</div><div class="tower-trace-item-meta"><span class="tower-pill degraded">running</span></div></div>
+              <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">1d9e44a0</span></span><span class="tower-mono tower-muted">12 min ago</span></div><div class="tower-trace-item-sub">llama-3.1-8b-instant · quality</div><div class="tower-trace-item-meta"><span class="tower-mono">1.21 s</span><span class="tower-pill critical">error</span><span class="tower-chip">fallback</span></div></div>
             </div>
-            <div class="tower-chart-legend">
-              <div class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-amber)"></span> Qwen 7B-Q4</div>
-              <div class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-ink-faint)"></span> Qwen 3B</div>
+          </section>
+          <section class="tower-panel">
+            <div class="tower-trace-head">
+              <div><div class="tower-trace-title"><span class="tower-mono">8f2a1c3d-…</span> <span class="tower-chip">chat</span><span class="tower-pill healthy">ok</span></div><div class="tower-panel-sub">3 spans · 1.02 s end to end · started 15/09/2026 11:42:07 · long_prompt</div></div>
+              <div class="tower-form-row"><button class="tower-btn ghost">Copy id</button><a class="tower-btn ghost" href="#">JSON</a></div>
             </div>
-          </div>
-          <svg id="towerChart" viewBox="0 0 560 120" width="100%" height="120"></svg>
-        </div>
-
-        <div class="tower-panel">
-          <div class="tower-panel-head">
-            <div><h3>Backend health</h3></div>
-          </div>
-          <table class="tower-table">
-            <tr><td>qwen2.5:3b-instruct</td><td><span class="tower-pill healthy">healthy</span></td></tr>
-            <tr><td>qwen2.5:7b-instruct-q4</td><td><span class="tower-pill healthy">healthy</span></td></tr>
-            <tr><td>groq / llama-3.1-8b</td><td><span class="tower-pill degraded">rate-limited</span></td></tr>
-            <tr><td>groq / llama-3.3-70b</td><td><span class="tower-pill critical">quota low</span></td></tr>
-          </table>
-        </div>
-      </div>
-
-      <!-- ===================== TRACE INSPECTOR (hero) ===================== -->
-      <div class="tower-panel">
-        <div class="tower-panel-head">
-          <div>
-            <h3>Trace inspector</h3>
-            <div class="tower-panel-sub">req_8f2a1c · click a step to expand</div>
-          </div>
-          <span class="tower-chip">3 steps · 1.8s total</span>
-        </div>
-        <div class="tower-trace">
-
-          <div class="tower-trace-step done">
-            <div class="tower-trace-dot"></div>
-            <div class="tower-trace-body" onclick="toweToggle(this)">
-              <div class="tower-trace-top">
-                <span class="tower-trace-name">Researcher</span>
-                <span class="tower-trace-meta"><span class="tower-mono">412ms</span> · qwen2.5:3b</span>
-              </div>
-              <div class="tower-trace-detail">
-                <p><span class="k">Query:</span> retrieval issued against corpus, top_k=6</p>
-                <p><span class="k">Retrieved:</span> 4 chunks kept after threshold 0.20, 2 discarded</p>
-              </div>
+            <h4 class="tower-sub-h">Timeline</h4>
+            <div class="tower-waterfall">
+              <div class="tower-wf-row"><div class="tower-wf-name">router.request</div><div class="tower-wf-track"><div class="tower-wf-bar" style="left:0;width:100%;background:var(--tower-ink-faint)"></div></div><div class="tower-wf-dur tower-mono">1.02 s</div></div>
+              <div class="tower-wf-row"><div class="tower-wf-name" style="padding-left:14px">route.decide</div><div class="tower-wf-track"><div class="tower-wf-bar" style="left:0;width:3%;background:var(--tower-ink-faint)"></div></div><div class="tower-wf-dur tower-mono">–</div></div>
+              <div class="tower-wf-row"><div class="tower-wf-name" style="padding-left:14px">model.generate</div><div class="tower-wf-track"><div class="tower-wf-bar" style="left:12%;width:87%;background:var(--tower-amber)"></div></div><div class="tower-wf-dur tower-mono">890 ms</div></div>
             </div>
-          </div>
-
-          <div class="tower-trace-step done">
-            <div class="tower-trace-dot"></div>
-            <div class="tower-trace-body" onclick="toweToggle(this)">
-              <div class="tower-trace-top">
-                <span class="tower-trace-name">Drafter</span>
-                <span class="tower-trace-meta"><span class="tower-mono">890ms</span> · qwen2.5:7b-q4</span>
-              </div>
-              <div class="tower-trace-detail">
-                <p><span class="k">Output:</span> 3 claims generated, all linked to retrieved chunks</p>
-              </div>
+            <h4 class="tower-sub-h">Spans</h4>
+            <div class="tower-trace">
+              <div class="tower-trace-step done"><span class="tower-trace-dot"></span><div class="tower-trace-body" onclick="this.querySelector('.tower-trace-detail').classList.toggle('open')"><div class="tower-trace-top"><span class="tower-trace-name">router.request</span><span class="tower-trace-meta"><span class="tower-mono">1.02 s</span><span>▾</span></span></div><div class="tower-trace-detail"><div class="tower-kv"><span class="k">path</span><span class="v">/v1/chat/completions</span><span class="k">parent_id</span><span class="v">(root)</span></div></div></div></div>
+              <div class="tower-trace-step done" style="margin-left:25px"><span class="tower-trace-dot"></span><div class="tower-trace-body" onclick="this.querySelector('.tower-trace-detail').classList.toggle('open')"><div class="tower-trace-top"><span class="tower-trace-name">route.decide</span><span class="tower-trace-meta"><span class="tower-chip">quality</span><span>▾</span></span></div><div class="tower-trace-detail"><div class="tower-kv"><span class="k">reason</span><span class="v">long_prompt</span><span class="k">sensitive</span><span class="v">false</span></div></div></div></div>
+              <div class="tower-trace-step active" style="margin-left:25px"><span class="tower-trace-dot"></span><div class="tower-trace-body" onclick="this.querySelector('.tower-trace-detail').classList.toggle('open')"><div class="tower-trace-top"><span class="tower-trace-name">model.generate</span><span class="tower-trace-meta"><span class="tower-mono">890 ms</span><span class="tower-mono">qwen2.5:7b-instruct-q4_K_M</span><span class="tower-chip">ollama</span><span class="tower-pill critical">failed</span><span>▾</span></span></div><div class="tower-trace-detail open"><div class="tower-kv"><span class="k">error</span><span class="v">context deadline exceeded</span><span class="k">latency_s</span><span class="v">0.89</span></div></div></div></div>
             </div>
-          </div>
-
-          <div class="tower-trace-step active">
-            <div class="tower-trace-dot"></div>
-            <div class="tower-trace-body" onclick="toweToggle(this)">
-              <div class="tower-trace-top">
-                <span class="tower-trace-name">Reviewer</span>
-                <span class="tower-trace-meta"><span class="tower-pill degraded">scoring</span></span>
-              </div>
-              <div class="tower-trace-detail open">
-                <p><span class="k">Judge:</span> local qwen2.5:7b-q4 (cross-check pending on groq/llama-3.1-8b)</p>
-                <p><span class="k">Faithfulness so far:</span> 0.91</p>
-              </div>
-            </div>
-          </div>
-
+            <div class="tower-note">Fallback: groq/llama-3.1-8b-instant failed → served by qwen2.5:7b-instruct-q4_K_M</div>
+          </section>
         </div>
-      </div>
+        <table class="ds-spec">
+          <tr><th>class</th><th>role</th><th>notes</th></tr>
+          <tr><td>.tower-grid-traces</td><td>380px + 1fr, stacks under 1000 px</td><td>list max-height = 100vh − 330, 40vh when stacked</td></tr>
+          <tr><td>.tower-trace-item(.selected)</td><td>list card: kind chip + short id, relative time, label, meta row</td><td>hover → border + raised; selected → amber border on amber-dim</td></tr>
+          <tr><td>.tower-trace-head / -title</td><td>full id (mono) + kind chip + ok/failed pill, sub line, ghost actions</td><td>the auto-opened trace gets a "Showing the latest trace" sub above</td></tr>
+          <tr><td>.tower-sub-h</td><td>11 px uppercase section header inside a panel</td><td>Timeline · Spans</td></tr>
+          <tr><td>.tower-wf-row / -track / -bar</td><td>180px name (indented 14 px per depth) · track · 72px duration</td><td>amber = model.generate, faint = route*/router*, green = agent steps, red = error</td></tr>
+          <tr><td>.tower-trace-step(.done/.active)</td><td>timeline dot + body; body click toggles .tower-trace-detail.open</td><td>indent = 11 + depth·14 px; .active (amber dot) marks a failed span</td></tr>
+        </table>
+      </section>
 
-      <!-- ===================== COMPONENT REFERENCE ===================== -->
-      <div class="tower-doc-section" style="margin-top:16px;">
-        <h2>TOKENS — COLOR</h2>
-        <div class="tower-doc-row">
-          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-ground)"></div><div class="tower-swatch-label">ground</div><div class="tower-swatch-hex">#17151A</div></div>
-          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-surface)"></div><div class="tower-swatch-label">surface</div><div class="tower-swatch-hex">#201D22</div></div>
-          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-amber)"></div><div class="tower-swatch-label">amber (hero)</div><div class="tower-swatch-hex">#F2A93B</div></div>
-          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-green)"></div><div class="tower-swatch-label">green (status)</div><div class="tower-swatch-hex">#5FBE8C</div></div>
-          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-red)"></div><div class="tower-swatch-label">red (status)</div><div class="tower-swatch-hex">#E2596B</div></div>
-          <div class="tower-swatch"><div class="tower-swatch-block" style="background:var(--tower-ink)"></div><div class="tower-swatch-label">ink</div><div class="tower-swatch-hex">#EDE8E2</div></div>
+      <!-- ===================== RULES ===================== -->
+      <section class="ds-section" id="rules">
+        <h2>How to extend</h2>
+        <div class="tower-grid-2">
+          <div class="ds-frame"><div class="ds-frame-label">Adding a component</div>
+            <ol style="margin:0;padding-left:18px;color:var(--tower-ink-muted);font-size:13px;line-height:1.7">
+              <li>Prefix the class <span class="ds-inline">tower-</span>; put it in the matching <span class="ds-inline">/* ===== */</span> block of <span class="ds-inline">console/static/tower.css</span>.</li>
+              <li>Only tokens. A new hex is a new token with a name and a reason.</li>
+              <li>Build it with <span class="ds-inline">h(tag, attrs, ...children)</span>. Children are text or nodes — there is no <span class="ds-inline">html:</span> attribute and no <span class="ds-inline">innerHTML</span> anywhere.</li>
+              <li>Design loading, empty and error before live. Reuse <span class="ds-inline">skeleton()</span>, <span class="ds-inline">errorBox()</span>, <span class="ds-inline">.tower-empty</span>.</li>
+              <li>Numbers that change are <span class="ds-inline">.tower-mono</span>. Ids link to <span class="ds-inline">#/traces/&lt;id&gt;</span>.</li>
+              <li>State → pill. Fact → chip. Never colour a chip.</li>
+              <li>Add the example to this page and cite where it's used.</li>
+            </ol></div>
+          <div class="ds-frame"><div class="ds-frame-label">The h() helper (console/static/app.js)</div>
+<div class="ds-code">function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') el.className = v;
+    else if (k === 'onclick') el.addEventListener('click', v);
+    else if (v !== null &amp;&amp; v !== undefined) el.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined) continue;
+    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+
+// page contract: every page is
+//   async function pageX(signal, sub)
+// and owns skeleton → fetch → replaceChildren,
+// aborting on navigation, polling only while live.</div></div>
         </div>
-      </div>
+        <div class="tower-panel-sub" style="margin-top:14px">Next: <a class="tower-link" href="tower-enhancements.html">the enhancement study</a> — 20 worked examples of where this system can go.</div>
+      </section>
 
-      <div class="tower-doc-section">
-        <h2>PRIMITIVES — BUTTONS &amp; PILLS &amp; CHIPS</h2>
-        <div class="tower-doc-row">
-          <button class="tower-btn primary">Run eval suite</button>
-          <button class="tower-btn secondary">View config</button>
-          <button class="tower-btn ghost">Cancel</button>
-          <span class="tower-pill healthy">healthy</span>
-          <span class="tower-pill degraded">degraded</span>
-          <span class="tower-pill critical">critical</span>
-          <span class="tower-chip">trace_id: 8f2a1c</span>
-        </div>
-      </div>
-
-    </div>
+    </main>
   </div>
 </div>
 
 <script>
-  function toweToggle(el){
-    const d = el.querySelector('.tower-trace-detail');
-    d.classList.toggle('open');
-  }
+  // Sidebar active state follows scroll position (doc-only).
+  (function () {
+    const links = [...document.querySelectorAll('.tower-side a[href^="#"]')];
+    const secs = links.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+    const io = new IntersectionObserver(es => {
+      es.forEach(e => { if (e.isIntersecting) links.forEach(a => a.dataset.active = String(a.getAttribute('href') === '#' + e.target.id)); });
+    }, { rootMargin: '-64px 0px -70% 0px' });
+    secs.forEach(s => io.observe(s));
+  })();
 
-  // Hand-rolled bar chart, no chart library — 30 fake requests, colored by model
-  (function(){
-    const svg = document.getElementById('towerChart');
-    const n = 30, w = 560, h = 120, barW = w/n - 3;
-    const seed = [3,7,3,3,7,3,3,3,7,3,3,7,7,3,3,3,7,3,3,3,7,7,3,3,3,7,3,3,7,3];
-    let bars = '';
-    seed.forEach((v,i)=>{
-      const height = v === 7 ? 70 + Math.random()*30 : 30 + Math.random()*25;
-      const x = i * (w/n) + 1;
-      const y = h - height;
-      const color = v === 7 ? 'var(--tower-amber)' : 'var(--tower-ink-faint)';
-      bars += `<rect x="${x}" y="${y}" width="${barW}" height="${height}" rx="1.5" fill="${color}" opacity="0.9"/>`;
+  // Charts, built the way app.js builds them: createElementNS, no innerHTML.
+  (function () {
+    const NS = 'http://www.w3.org/2000/svg';
+    const el = (t, a) => { const n = document.createElementNS(NS, t); for (const k in a) n.setAttribute(k, a[k]); return n; };
+    // traffic bars
+    const w = 560, hgt = 120, n = 30, barW = w / n - 3;
+    const svg = el('svg', { viewBox: `0 0 ${w} ${hgt}`, width: '100%' }); svg.style.display = 'block';
+    const seed = [0.2,0.9,0.2,0.25,0.8,0.3,0.2,-1,0.7,0.2,0.3,1,0.85,0.2,0.3,0.25,0.9,0.2,0.2,0.3,0.75,0.8,-1,0.2,0.3,0.95,0.2,0.3,0.7,0.2];
+    seed.forEach((v, i) => {
+      const err = v < 0, hh = err ? 12 : Math.max(8, v * (hgt - 10));
+      const r = el('rect', { x: i * (w / n) + 1, y: hgt - hh, width: barW, height: hh, rx: 2, class: 'tower-bar', fill: err ? 'var(--tower-red)' : v > 0.5 ? 'var(--tower-amber)' : 'var(--tower-ink-faint)' });
+      const t = el('title', {}); t.textContent = err ? 'ERROR · ollama_unavailable' : `${Math.round(v * 1400)} ms · ${v > 0.5 ? 'qwen2.5:7b' : 'qwen2.5:3b'}`; r.append(t); svg.append(r);
     });
-    svg.innerHTML = bars;
+    document.getElementById('dsTraffic').append(svg);
+    // score line
+    const runs = [0.91, 0.94, 0.93, 0.68, 0.96, 0.972];
+    const W = 560, H = 140, pad = 24, s2 = el('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%' }); s2.style.display = 'block';
+    const x = i => pad + i * (W - 2 * pad) / (runs.length - 1), y = v => H - pad - v * (H - 2 * pad);
+    [0, .5, .7, 1].forEach(v => { s2.append(el('line', { x1: pad, x2: W - pad, y1: y(v), y2: y(v), stroke: v === .7 ? 'var(--tower-amber-dim)' : 'var(--tower-border-soft)', 'stroke-dasharray': v === .7 ? '4 3' : '' })); const t = el('text', { x: 2, y: y(v) + 4, fill: 'var(--tower-ink-faint)', 'font-size': 10 }); t.textContent = v.toFixed(1); s2.append(t); });
+    s2.append(el('polyline', { points: runs.map((r, i) => `${x(i)},${y(r)}`).join(' '), fill: 'none', stroke: 'var(--tower-amber)', 'stroke-width': 2 }));
+    runs.forEach((r, i) => { const c = el('circle', { cx: x(i), cy: y(r), r: 4, fill: r >= .7 ? 'var(--tower-green)' : 'var(--tower-red)' }); const t = el('title', {}); t.textContent = `run ${i + 1} · ${r.toFixed(3)}`; c.append(t); s2.append(c); });
+    document.getElementById('dsScore').append(s2);
   })();
 </script>
-
 </body>
 </html>

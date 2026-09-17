@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v18, 2026-09-15 — market study `docs/MARKET.md` (TensorZero archived, Langfuse/Helicone/Promptfoo acquired; beachhead = the LLM-ops layer for Ollama) + the `:cloud` fail-closed fix it found; 69 tests)
+# AgentOps Platform — Project Plan (v19, 2026-09-17 — §10 enhancement roadmap: ML-powered benchmarking (Track G), outage prediction (Track H), drift detection (Track I); 41 repos surveyed, Python sidecar architecture, 14-item build order ~30d; 69 tests)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -877,6 +877,12 @@ during eval" for shared GPUs) and **F** (shadow-test auto-promotion) — in that
 one a §9 track with tickets and exit criteria before code. Two box-level items stay yours:
 the 7B model pull and the MCP recording.
 
+**§10 (v2 enhancement roadmap)** adds three new tracks: **G** (standardized model
+benchmarking), **H** (ML-based outage/degradation prediction), **I** (ML-powered drift
+detection). These require a Python sidecar for the ML libraries; the Go binary stays
+unchanged. See §10 for the full plan, repo survey (41 tools evaluated), build order, and
+architecture.
+
 ### Track C — Tower console (3–4 days) — DONE 2026-09-15
 Brief: the mockup, real. Served by the same binary from `embed.FS` at `/`, hand-written
 HTML/CSS/JS on the Tower tokens (no framework, no build step), reading the JSON API.
@@ -889,4 +895,454 @@ HTML/CSS/JS on the Tower tokens (no framework, no build step), reading the JSON 
 Done: `docs/API.md` console section; README; lessons 31–33 (Part 8 · v1.0). 57 tests.
 Browser check found one real bug before shipping: the workflows page re-rendered every 4 s while a workflow was running, so the Start button was replaced under the click and the input was wiped — fixed (form built once, list refreshes in place). Screenshots: not saved as files (pane cannot export); every page verified live, see the §8 10th pass.
 Not in this track (deliberate): key management in the UI (CLI only), auth on console endpoints (localhost tool; put a proxy in front), light theme.
+
+---
+
+## 10. What's Next — Making AgentOps Smarter with ML (v2 plan, 2026-09-17)
+
+> **Plain-English version.** The technical details (repo tables, SQL schemas, Prometheus
+> metrics, architecture diagrams) are in §10-technical below. Read this section first to
+> understand *what* and *why*; read §10-technical when you're ready to *build*.
+
+### 10.0 Where we are and where we're going
+
+**What v1.0 already does:**
+- Routes AI requests to the right local model (fast vs quality)
+- Tracks multi-step tasks and survives crashes
+- Checks if the AI is telling the truth (faithfulness scoring against 72 known answers)
+- Shows everything on a dashboard
+
+**What v1.0 can NOT do (the three gaps):**
+1. It only checks one thing — faithfulness. It doesn't check for toxicity, hallucination,
+   relevance, bias, or how good the model is at coding, reasoning, etc.
+2. It waits for things to break. The health check is binary: model is up, or model is down.
+   It can't see a crash coming.
+3. The drift detector is dumb. It compares the last two scores and says "it went up" or
+   "it went down." It can't tell you if that's a real trend or just noise. It doesn't
+   watch operational numbers (latency, errors) for drift at all.
+
+**The plan adds three upgrades to fix these gaps:**
+
+### 10.1 Track G — Better Testing: "Which model is actually best?"
+
+**The problem:** Right now you only measure faithfulness (is the AI telling the truth?).
+But a model can be truthful and still be toxic, slow, expensive, or bad at coding. You
+have no way to compare models side-by-side on multiple dimensions.
+
+**What we're building:**
+
+1. **A benchmark runner** — a small Python program that tests your models on many different
+   things: faithfulness (you already have this), plus hallucination (does it make stuff up?),
+   relevance (does it answer the actual question?), toxicity (is it saying harmful things?),
+   and more. It uses two well-known open-source tools:
+   - **DeepEval** (~17k GitHub stars) — like a test suite for AI. You write tests, it scores
+     the AI on 50+ dimensions. Works like pytest (if you know Python testing).
+   - **lm-evaluation-harness** (~14k stars) — the standard tool that powers the Hugging Face
+     leaderboard. Runs 60+ academic benchmarks.
+
+2. **A prompt regression gate** — before you swap to a new model, automatically run a test
+   suite. If the new model is worse on any dimension, block the swap. Uses **promptfoo**
+   (~22k stars), which also tests for security vulnerabilities (prompt injection, jailbreaks).
+
+3. **A leaderboard page** — a new page on your dashboard that shows all your models in a
+   table: model A scores 0.97 on faithfulness, 0.02 on toxicity, 0.85 on relevance; model B
+   scores 0.91, 0.01, 0.92. You can sort by any column and see which model is best for what.
+
+4. **Quality-vs-cost analysis** (later) — once you track how much each model costs per token,
+   you can answer: "Model B is 5% less accurate but 80% cheaper — is it worth it for simple
+   questions?"
+
+**In restaurant terms:** Instead of just checking "did the chef use the right ingredients?",
+you're now also checking "does the food taste good?", "is it safe to eat?", "did the chef
+answer the customer's actual order?", "how long did it take?", and "how much did the
+ingredients cost?"
+
+### 10.2 Track H — Predicting Problems: "Something is about to break"
+
+**The problem:** Right now, the health check pings each model every 15 seconds and reports
+UP or DOWN. That's like checking if a car engine is running — it tells you nothing until the
+engine already died. You want to see the engine overheating *before* it fails.
+
+**What we're building:**
+
+1. **A metrics pipeline** — a Python program that reads all the numbers your gateway already
+   collects (how fast is each model responding? how many errors? how many requests?) and
+   organises them into a timeline. Think of it as a spreadsheet where each row is one minute
+   and each column is a measurement.
+
+2. **Anomaly detection (simple first)** — rules that flag unusual patterns:
+   - "Error rate jumped from 1% to 15% in the last 5 minutes" → warning
+   - "Latency has been getting worse every hour for the last 6 hours" → warning
+   - "Throughput dropped to zero" → critical
+   Uses **adtk** (~1k stars) — a simple, easy-to-understand anomaly detection library.
+   No fancy ML yet, just sensible rules.
+
+3. **Forecasting (then smarter)** — a model that learns what "normal" looks like for each
+   backend over a week, then predicts what the next hour should look like. If reality
+   diverges from the prediction, something is wrong. Uses **Darts** (~9.5k stars) — a
+   time-series forecasting library that includes models from simple (Prophet) to advanced
+   (N-BEATS neural networks). The key idea: if the model predicts latency should be 200ms
+   and it's actually 800ms, that backend is in trouble even though it hasn't crashed yet.
+
+4. **Pre-emptive re-routing** — when the anomaly score for a backend crosses a threshold,
+   don't wait for it to crash. Mark it "degraded" (a new state between healthy and down)
+   and start sending traffic to other backends first. The degraded backend still works — it's
+   just tried last, like moving a struggling chef to backup duty instead of firing them.
+
+5. **Smarter detection** (later) — combine multiple detectors and use post-processing to
+   reduce false alarms (the system crying wolf). Uses **PyOD** (~9k stars, 60+ detectors)
+   and **Merlion** (~4.5k stars, built by Salesforce to reduce false positives).
+
+**In restaurant terms:** Instead of waiting for a chef to collapse, you watch the signs —
+they're sweating more, plating slower, making small mistakes. When enough signs add up, you
+quietly move their orders to another chef before any customer notices.
+
+### 10.3 Track I — Smarter Drift Detection: "Is the AI getting worse, and is it real?"
+
+**The problem:** The current drift detector compares two scores and says the number went up
+or down. That's like looking at the temperature at noon today vs noon yesterday — it tells
+you almost nothing. Is it a trend? Is it random? Which specific questions got worse? Is the
+model drifting or is the data changing?
+
+**What we're building:**
+
+1. **Trend analysis** — instead of comparing 2 runs, look at ALL runs over time. Draw a trend
+   line. Compute a p-value (a statistical way to say "there's a 95% chance this decline is
+   real, not random noise"). Show a confidence band on the chart — a grey zone that says
+   "scores in this range are normal; anything outside is suspicious."
+
+2. **Per-question tracking** — track each of your 72 questions individually across every run.
+   If question #15 scored 1.0, 1.0, 1.0, 0.0, 0.0 over the last 5 runs, that specific
+   question is regressing. Show a table of "problem questions" with mini-charts (sparklines)
+   so you can see exactly where things are getting worse.
+
+3. **Operational drift** — watch the gateway's own metrics (latency, error rate, tokens per
+   request) for drift, not just the eval scores. If Model A's latency is slowly creeping up
+   over days, that's operational drift. Uses **River** (~5.9k stars) — a streaming ML library
+   that processes one data point at a time with no memory buildup. It watches the metric
+   stream and raises a flag the moment the pattern statistically changes.
+
+4. **Semantic drift** — take a sample of the model's actual outputs, convert them to
+   embeddings (number representations of meaning), and compare the distributions over time.
+   If the model starts answering in a fundamentally different way — even if the faithfulness
+   score hasn't moved yet — the embedding distribution will shift. Uses **Evidently** (~7.6k
+   stars) or **Frouros** (~227 stars) for the statistical comparison.
+
+5. **Fix a real bug first** — right now, when the system can't find the right document to
+   answer a question (a retrieval miss), it reports it as "unfaithful" (the model lied). But
+   the model didn't lie — the search just failed. Separate these two cases so you know
+   whether to fix the model or fix the search.
+
+6. **Deterministic tests** — a set of prompts with known exact answers (not judged by another
+   AI, just checked by string matching: "the answer must contain X"). Run daily. If a model
+   silently changes and breaks these, auto-create a GitHub Issue. Inspired by **model-drift**
+   (a project that found 58.8% of AI model+prompt combinations lost accuracy on silent
+   provider updates).
+
+7. **Automatic response** (later) — when drift is confirmed and sustained, automatically
+   alert you (webhook, email) and optionally pause routing to the drifting model.
+
+**In restaurant terms:** Instead of "today's food was worse than yesterday's", you now know:
+"the soup has been getting saltier every day for a week (that's a trend, not a fluke), and
+specifically it's the tomato soup (not the chicken), and the chef is also plating slower
+(operational drift), and the flavour profile has fundamentally changed (semantic drift), and
+by the way last week's low score was because we ran out of tomatoes (retrieval miss), not
+because the chef forgot the recipe (unfaithfulness)."
+
+### 10.4 How It All Fits Together
+
+Your main program (the Go binary) stays exactly the same. Nothing changes in the gateway's
+speed or behaviour. All the new ML stuff runs in a **separate Python program** (called a
+"sidecar") that sits next to the main program:
+
+```
+  Your Go program (fast, handles traffic)
+       │
+       │ sends data to
+       ▼
+  Python sidecar (slow, does the math offline)
+       │
+       │ writes results back to
+       ▼
+  Postgres database + Prometheus metrics + Dashboard
+```
+
+- The sidecar runs **only when asked** (on a schedule or when you click a button). It never
+  slows down the gateway.
+- All its ML models run on **CPU** (not your GPU). Your GPU stays free for the chat models.
+- One command starts it: `docker compose --profile ml up`
+- It reads from the same Prometheus metrics and database your gateway already writes to.
+- It writes results to new database tables and new Prometheus metrics.
+- The dashboard gets three new pages: Benchmarks, Anomalies, and an upgraded Drift view.
+
+### 10.5 Build Order — What to Do First
+
+Do these in order. Each one works on its own — you can stop at any point and still have
+something useful and demoable.
+
+| # | What | Why first | How long |
+|---|---|---|---|
+| 1 | Fix the retrieval-miss vs unfaithful bug | It's a bug, not a feature. 1 day. | 1 day |
+| 2 | Add trend line + p-value to drift report | Makes the existing drift report 10x more useful with no new dependencies. | 2 days |
+| 3 | Track which questions are regressing | Once you have trend data, this is a simple query. | 2 days |
+| 4 | Build the metrics pipeline (Python sidecar) | This is the foundation for all ML work. Every anomaly detector and forecaster needs this data. | 2 days |
+| 5 | Simple anomaly detection | The first "ML" feature. Easy to understand, easy to demo, immediately useful. | 2 days |
+| 6 | Benchmark runner | Start testing models on multiple dimensions. Big demo value. | 3 days |
+| 7 | Streaming operational drift | First real-time ML feature. Watches your metrics and flags changes as they happen. | 3 days |
+| 8 | Prompt regression gate | Block bad model swaps automatically. Great CI/CD story. | 2 days |
+| 9 | Forecasting model | Predict what latency *should* be, flag when reality diverges. | 5 days |
+| 10 | Multi-metric eval (toxicity, hallucination, etc.) | Extend your scorer beyond faithfulness. | 3 days |
+| 11 | Semantic output drift | Detect meaning-level changes in model outputs. | 3 days |
+| 12 | Deterministic regression suite | Catch silent model changes without an AI judge. | 2 days |
+| 13 | Pre-emptive re-routing | Route traffic away from struggling backends. | 3 days |
+| 14 | Model leaderboard page | Show the comparison table on the dashboard. | 2 days |
+
+**Total: about 30 days part-time.** Items 15–18 (ensemble detectors, transformer models,
+cost analysis, automatic responses) are parked for later — only build them after the above
+proves itself over a few weeks of real use.
+
+### 10.6 Key Open-Source Tools We'll Use
+
+**For benchmarking (Track G):**
+| Tool | What it does | Stars |
+|---|---|---|
+| [DeepEval](https://github.com/confident-ai/deepeval) | Test suite for AI — 50+ metrics, works like pytest | ~17k |
+| [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) | The standard LLM benchmark tool (powers HF leaderboard) | ~14k |
+| [promptfoo](https://github.com/promptfoo/promptfoo) | Prompt regression testing + security red-teaming | ~22k |
+| [RAGAS](https://github.com/explodinggradients/ragas) | RAG-specific evaluation (retrieval quality + answer quality) | ~14k |
+
+**For outage prediction (Track H):**
+| Tool | What it does | Stars |
+|---|---|---|
+| [Darts](https://github.com/unit8co/darts) | Time-series forecasting + anomaly detection | ~9.5k |
+| [PyOD](https://github.com/yzhao062/pyod) | 60+ anomaly detection algorithms, auto-selects the best one | ~9k |
+| [adtk](https://github.com/arundo/adtk) | Simple rule-based anomaly detection (good starting point) | ~1k |
+| [Merlion](https://github.com/salesforce/Merlion) | Salesforce's time-series ML — great at reducing false alarms | ~4.5k |
+
+**For drift detection (Track I):**
+| Tool | What it does | Stars |
+|---|---|---|
+| [Evidently](https://github.com/evidentlyai/evidently) | 100+ drift metrics, includes LLM-specific ones | ~7.6k |
+| [River](https://github.com/online-ml/river) | Real-time streaming drift detection, constant memory | ~5.9k |
+| [Frouros](https://github.com/IFCA-Advanced-Computing/frouros) | Clean statistical drift tests (KS, MMD, etc.) | ~227 |
+| [whylogs](https://github.com/whylabs/whylogs) | Lightweight data profiling — compact snapshots of your data | ~2.7k |
+
+**For reference (study these, don't install):**
+| Tool | What it does | Stars |
+|---|---|---|
+| [Langfuse](https://github.com/langfuse/langfuse) | Most complete open-source LLM observability platform | ~30k |
+| [LiteLLM](https://github.com/BerriAI/litellm) | The most popular AI gateway — study its cost tracking | ~53k |
+| [OpenLLMetry](https://github.com/traceloop/openllmetry) | Auto-generates traces for LLM calls (OpenTelemetry) | ~7.4k |
+
+### 10.7 Rules (same as the MVP)
+
+1. **Finish before you add.** Each item above works alone. Don't start #9 before #5 works.
+2. **You write the glue, libraries do the math.** Don't write your own anomaly detector from
+   scratch. Use PyOD/Darts/River. Write the code that connects them to your system.
+3. **The Python sidecar never slows down the gateway.** It runs in the background, on CPU.
+   The gateway stays fast.
+4. **Watch the licenses.** `alibi-detect` (BSL) and `deepchecks` (AGPL) have restrictive
+   licenses. Stick with Apache-2.0 / MIT / BSD libraries.
+5. **Don't train ML models on your GPU.** Your GPU is for the chat models. The sidecar's
+   models (Prophet, N-BEATS, ADWIN) are small and run fine on CPU.
+
+---
+
+### 10-technical: Technical Reference (schemas, metrics, architecture)
+
+The detail below supports §10. Skip it until you're building.
+
+#### Python sidecar architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Go binary (gateway + console + tracker + evals)     │
+│  ┌─────────┐ ┌──────────┐ ┌────────┐ ┌───────────┐  │
+│  │ router/ │ │ tracker/ │ │ evals/ │ │ console/  │  │
+│  └────┬────┘ └────┬─────┘ └───┬────┘ └─────┬─────┘  │
+│       │           │           │             │        │
+│       └───────────┴───────┬───┴─────────────┘        │
+│                    spans table + /metrics             │
+└───────────────────────────┬──────────────────────────┘
+                            │ HTTP / subprocess
+┌───────────────────────────▼──────────────────────────┐
+│  Python sidecar (ml/)                                │
+│  ┌────────────┐ ┌──────────┐ ┌───────────────────┐   │
+│  │ benchmark/ │ │ anomaly/ │ │ drift/            │   │
+│  │ deepeval   │ │ adtk     │ │ river, evidently  │   │
+│  │ lm-eval    │ │ darts    │ │ frouros, whylogs  │   │
+│  │ promptfoo  │ │ pyod     │ │                   │   │
+│  └────────────┘ └──────────┘ └───────────────────┘   │
+│  Flask/FastAPI on localhost:8081 (not exposed)        │
+└──────────────────────────────────────────────────────┘
+```
+
+- **One `docker compose --profile ml` command** adds the sidecar.
+- Go calls the sidecar via HTTP (`POST /benchmark/run`, `POST /anomaly/detect`,
+  `POST /drift/check`) or subprocess (`python ml/benchmark/run.py --suite faithfulness`).
+- Results always land in Postgres tables + Prometheus gauges.
+- The sidecar never touches the gateway's request path — it is offline/batch only.
+- VRAM note: the sidecar's ML models (Prophet, N-BEATS) run on CPU. Only `nomic-embed-text`
+  (already resident, 137M) uses the GPU. No VRAM contention with the chat models.
+
+#### New Postgres tables
+
+```sql
+-- Track G: benchmarking
+CREATE TABLE benchmark_runs (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    model       TEXT NOT NULL,
+    suite       TEXT NOT NULL,
+    scores      JSONB NOT NULL,       -- {faithfulness: 0.97, toxicity: 0.02, ...}
+    params      JSONB,                -- {temperature: 0, max_tokens: 512, ...}
+    duration_s  REAL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Track H: anomaly detection
+CREATE TABLE anomaly_events (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    backend     TEXT NOT NULL,
+    detector    TEXT NOT NULL,         -- 'threshold', 'volatility_shift', 'forecast_residual'
+    metric      TEXT NOT NULL,         -- 'latency_p99', 'error_rate', 'tokens_per_min'
+    score       REAL NOT NULL,
+    severity    TEXT NOT NULL,         -- 'info', 'warning', 'critical'
+    ts          TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE forecasts (
+    backend     TEXT NOT NULL,
+    ts          TIMESTAMPTZ NOT NULL,
+    metric      TEXT NOT NULL,
+    predicted   REAL NOT NULL,
+    actual      REAL,
+    residual    REAL,
+    PRIMARY KEY (backend, metric, ts)
+);
+
+-- Track I: drift detection
+CREATE TABLE drift_events (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    metric      TEXT NOT NULL,         -- 'latency_p99', 'error_rate', 'semantic_similarity'
+    backend     TEXT,
+    detector    TEXT NOT NULL,         -- 'adwin', 'ks_test', 'mmd', 'page_hinkley'
+    p_value     REAL,
+    window_before JSONB,              -- {mean: 0.12, std: 0.03, n: 100}
+    window_after  JSONB,
+    ts          TIMESTAMPTZ NOT NULL
+);
+```
+
+Migration: `migrations/0004_ml_tables.sql`, applied by `--migrate` like the others.
+
+#### New console pages (Tower design system)
+
+All pages follow `docs/tower-design-system.html`. Four states each (skeleton, live, empty,
+error+Retry). Colours are `--tower-*` tokens. No framework.
+
+1. **Benchmarks** (`#/benchmarks`) — model × metric matrix (sortable), run history per model,
+   "Run benchmark" button (single-flight like evals), score-over-time SVG per metric.
+2. **Anomalies** (`#/anomalies`) — timeline of `anomaly_events`, filterable by backend and
+   severity. Forecast overlay chart (predicted vs actual latency). Degraded-backend pills
+   on the Overview page.
+3. **Drift** (extend existing `#/evals`) — trend line + confidence band on the score history
+   chart, per-question regression table with sparklines, operational drift indicators per
+   backend, semantic drift chart.
+
+#### New Prometheus metrics
+
+```
+# Track G
+benchmark_score{model,suite,metric}      gauge   — latest score per dimension
+benchmark_runs_total{model,suite}         counter — completed benchmark runs
+
+# Track H
+router_anomaly_score{backend,metric}      gauge   — current anomaly score (0–1)
+router_backend_degraded{backend}          gauge   — 1 when pre-emptively deprioritised
+router_forecast_residual{backend,metric}  gauge   — |actual - predicted| / predicted
+
+# Track I
+router_drift_detected{backend,metric}     gauge   — 1 when drift confirmed
+eval_drift_p_value{golden_version}        gauge   — p-value of score trend test
+eval_regressing_questions{golden_version}  gauge   — count of consistently-declining questions
+```
+
+#### All repos surveyed (full reference)
+
+**Benchmarking:**
+
+| Repo | Stars | License | Why |
+|---|---|---|---|
+| [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) | ~14k | MIT | Standard few-shot LLM eval; 60+ tasks; HF leaderboard backend |
+| [confident-ai/deepeval](https://github.com/confident-ai/deepeval) | ~17k | Apache-2.0 | pytest-style LLM eval with 50+ metrics |
+| [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) | ~22k | MIT | Prompt regression testing + red-teaming |
+| [explodinggradients/ragas](https://github.com/explodinggradients/ragas) | ~14k | Apache-2.0 | RAG-specific evaluation without ground truth |
+| [stanford-crfm/helm](https://github.com/stanford-crfm/helm) | ~4k | Apache-2.0 | Multi-dimensional scoring (accuracy, fairness, toxicity, efficiency) |
+| [open-compass/opencompass](https://github.com/open-compass/opencompass) | ~5k | Apache-2.0 | 100+ datasets, self-hosted leaderboard |
+| [huggingface/lighteval](https://github.com/huggingface/lighteval) | ~2k | MIT | Lightweight eval, 1000+ tasks |
+| [THUDM/AgentBench](https://github.com/THUDM/AgentBench) | ~3.7k | Apache-2.0 | Agent benchmarking across 8 environments |
+| [princeton-nlp/SWE-bench](https://github.com/princeton-nlp/SWE-bench) | ~4.5k | MIT | Code-generation regression suite |
+| [LiveBench/LiveBench](https://github.com/LiveBench/LiveBench) | ~1k | Apache-2.0 | Monthly-refreshed contamination-resistant benchmark |
+| [openai/evals](https://github.com/openai/evals) | ~19k | MIT | OpenAI's official eval framework and registry |
+
+**Outage prediction:**
+
+| Repo | Stars | License | Why |
+|---|---|---|---|
+| [yzhao062/pyod](https://github.com/yzhao062/pyod) | ~9k | BSD-2 | 60+ anomaly detectors with auto-selection |
+| [unit8co/darts](https://github.com/unit8co/darts) | ~9.5k | Apache-2.0 | Time-series forecasting + anomaly detection |
+| [salesforce/Merlion](https://github.com/salesforce/Merlion) | ~4.5k | BSD-3 | False-positive reduction for alerts |
+| [thuml/Time-Series-Library](https://github.com/thuml/Time-Series-Library) | ~12.8k | MIT | State-of-the-art transformer models for time-series |
+| [sktime/sktime](https://github.com/sktime/sktime) | ~10k | BSD-3 | Composable time-series pipelines |
+| [open-edge-platform/anomalib](https://github.com/open-edge-platform/anomalib) | ~6.1k | Apache-2.0 | Intel's anomaly detection with experiment management |
+| [arundo/adtk](https://github.com/arundo/adtk) | ~1k | MPL-2.0 | Simple rule-based anomaly detection |
+| [linkedin/greykite](https://github.com/linkedin/greykite) | ~1.8k | BSD-2 | Changepoint detection with auto-tuned thresholds |
+| [zillow/luminaire](https://github.com/zillow/luminaire) | ~750 | Apache-2.0 | Minimal-config anomaly detection |
+| [AICoE/prometheus-anomaly-detector](https://github.com/AICoE/prometheus-anomaly-detector) | ~610 | OSS | ML predictions directly against Prometheus metrics |
+
+**Drift detection:**
+
+| Repo | Stars | License | Why |
+|---|---|---|---|
+| [evidentlyai/evidently](https://github.com/evidentlyai/evidently) | ~7.6k | Apache-2.0 | 100+ drift metrics including LLM-specific ones |
+| [SeldonIO/alibi-detect](https://github.com/SeldonIO/alibi-detect) | ~2.5k | BSL (caution) | Text drift via embeddings — powerful but restrictive license |
+| [NannyML/nannyml](https://github.com/NannyML/nannyml) | ~2.1k | Apache-2.0 | Estimates performance without ground truth |
+| [online-ml/river](https://github.com/online-ml/river) | ~5.9k | BSD-3 | Streaming drift detection, constant memory |
+| [whylabs/whylogs](https://github.com/whylabs/whylogs) | ~2.7k | Apache-2.0 | Lightweight data profiling and comparison |
+| [deepchecks/deepchecks](https://github.com/deepchecks/deepchecks) | ~3.9k | AGPL-3.0 (caution) | Pre-built drift checks — powerful but AGPL |
+| [IFCA-Advanced-Computing/frouros](https://github.com/IFCA-Advanced-Computing/frouros) | ~227 | BSD-3 | Clean statistical drift tests |
+| [GenesisClawbot/llm-drift](https://github.com/GenesisClawbot/llm-drift) | <100 | MIT | LLM-specific behavioural drift detection |
+| [egnaro9/model-drift](https://github.com/egnaro9/model-drift) | <50 | — | Deterministic daily regression tracker for 16 models |
+
+**Observability (study, don't install):**
+
+| Repo | Stars | License | Role |
+|---|---|---|---|
+| [langfuse/langfuse](https://github.com/langfuse/langfuse) | ~30k | MIT | Reference architecture for LLM observability |
+| [comet-ml/opik](https://github.com/comet-ml/opik) | ~20k | Apache-2.0 | Automated eval hooks pattern |
+| [Arize-ai/phoenix](https://github.com/Arize-ai/phoenix) | ~10.2k | ELv2 | Embedding drift analysis |
+| [traceloop/openllmetry](https://github.com/traceloop/openllmetry) | ~7.4k | Apache-2.0 | OTel auto-instrumentation for LLM calls |
+| [openlit/openlit](https://github.com/openlit/openlit) | ~6.6k | Apache-2.0 | 50+ provider instrumentation + cost tracking |
+| [Arize-ai/openinference](https://github.com/Arize-ai/openinference) | ~1.1k | Apache-2.0 | OTel semantic conventions for AI |
+| [whylabs/langkit](https://github.com/whylabs/langkit) | ~960 | Apache-2.0 | Quality/toxicity signal extraction |
+| [BerriAI/litellm](https://github.com/BerriAI/litellm) | ~53k | MIT | Reference for routing + cost tracking |
+| [Portkey-AI/gateway](https://github.com/Portkey-AI/gateway) | ~12.8k | MIT | Reference for edge gateway patterns |
+| [AgentOps-AI/agentops](https://github.com/AgentOps-AI/agentops) | ~5.6k | MIT | Agent monitoring SDK (same problem space) |
+
+**Reading lists:**
+
+- [awesome-LLM-AIOps](https://github.com/Jun-jie-Huang/awesome-LLM-AIOps) — 93+ papers on AI + operations
+- [awesome-TS-anomaly-detection](https://github.com/rob-med/awesome-TS-anomaly-detection) (~3.2k stars) — time-series anomaly tools and datasets
+- [ai-agent-benchmark-compendium](https://github.com/philschmid/ai-agent-benchmark-compendium) — 50+ agent benchmarks
+
+#### What NOT to do
+
+- **Don't build a general-purpose ML platform.** The sidecar runs specific jobs, not an
+  experiment tracker or feature store.
+- **Don't replace the Go eval pipeline with Python.** The sidecar adds capabilities; it
+  doesn't replace what works.
+- **Don't train on the GPU.** CPU-only ML models are fine for solo scale.
+- **Don't adopt BSL/AGPL libraries without evaluation.** Stick with Apache-2.0/MIT/BSD.
+- **Don't put ML in the request path.** Every ML job is offline. The gateway stays fast.
+
 

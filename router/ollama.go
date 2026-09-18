@@ -32,10 +32,12 @@ func (c *OllamaClient) Name() string { return "ollama" }
 func (c *OllamaClient) Local() bool { return true }
 
 type ollamaChatRequest struct {
-	Model    string         `json:"model"`
-	Messages []Message      `json:"messages"`
-	Stream   bool           `json:"stream"`
-	Options  map[string]any `json:"options,omitempty"`
+	Model     string         `json:"model"`
+	Messages  []Message      `json:"messages"`
+	Stream    bool           `json:"stream"`
+	Options   map[string]any `json:"options,omitempty"`
+	Format    any            `json:"format,omitempty"`
+	KeepAlive string         `json:"keep_alive,omitempty"`
 }
 
 type ollamaChatResponse struct {
@@ -46,11 +48,8 @@ type ollamaChatResponse struct {
 	Error           string  `json:"error"`
 }
 
-func (c *OllamaClient) post(ctx context.Context, model string, msgs []Message, maxTokens int, stream bool) (*http.Response, error) {
-	req := ollamaChatRequest{Model: model, Messages: msgs, Stream: stream}
-	if maxTokens > 0 {
-		req.Options = map[string]any{"num_predict": maxTokens}
-	}
+func (c *OllamaClient) post(ctx context.Context, model string, msgs []Message, p GenParams, stream bool) (*http.Response, error) {
+	req := ollamaChatRequest{Model: model, Messages: msgs, Stream: stream, Options: p.ollamaOptions(), Format: p.Format, KeepAlive: p.KeepAlive}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -72,7 +71,14 @@ func (c *OllamaClient) post(ctx context.Context, model string, msgs []Message, m
 }
 
 func (c *OllamaClient) Generate(ctx context.Context, model string, msgs []Message, maxTokens int) (string, Usage, error) {
-	resp, err := c.post(ctx, model, msgs, maxTokens, false)
+	return c.GenerateWith(ctx, model, msgs, GenParams{MaxTokens: maxTokens})
+}
+
+// GenerateWith is Generate with the full v1.1 parameter set: temperature, top_p, seed and
+// stop land in Ollama `options` next to the passthrough map; `format` and `keep_alive` are
+// top-level fields of /api/chat.
+func (c *OllamaClient) GenerateWith(ctx context.Context, model string, msgs []Message, p GenParams) (string, Usage, error) {
+	resp, err := c.post(ctx, model, msgs, p, false)
 	if err != nil {
 		return "", Usage{}, err
 	}
@@ -92,7 +98,12 @@ func (c *OllamaClient) Generate(ctx context.Context, model string, msgs []Messag
 // Stream reads Ollama's newline-delimited JSON; the final object carries done:true and
 // the token counts.
 func (c *OllamaClient) Stream(ctx context.Context, model string, msgs []Message, maxTokens int, emit func(string)) (Usage, error) {
-	resp, err := c.post(ctx, model, msgs, maxTokens, true)
+	return c.StreamWith(ctx, model, msgs, GenParams{MaxTokens: maxTokens}, emit)
+}
+
+// StreamWith is Stream with the full parameter set (see GenerateWith).
+func (c *OllamaClient) StreamWith(ctx context.Context, model string, msgs []Message, p GenParams, emit func(string)) (Usage, error) {
+	resp, err := c.post(ctx, model, msgs, p, true)
 	if err != nil {
 		return Usage{}, err
 	}

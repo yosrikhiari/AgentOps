@@ -173,7 +173,7 @@ func TestRecentRequestsGroupsSpansPerTrace(t *testing.T) {
 	q := fakeQueryer{rows: [][]any{
 		{"t2", "s3", "", "route.decide", t0.Add(2 * time.Minute), `{"tier":"quality","reason":"long-or-complex-prompt","sensitive":true}`},
 		{"t2", "s4", "s3", "model.generate", t0.Add(2*time.Minute + time.Second), `{"error":"all down","tried":["ollama/q"]}`},
-		{"t1", "s1", "", "route.decide", t0, `{"tier":"fast","reason":"short-simple-prompt","sensitive":false}`},
+		{"t1", "s1", "", "route.decide", t0, `{"tier":"fast","reason":"short-simple-prompt","sensitive":false,"agent_role":"critic","client_ref":"s1/t3/critic/2"}`},
 		{"t1", "s2", "s1", "model.generate", t0.Add(time.Second), `{"model":"m","backend":"ollama","latency_s":0.42,"prompt_tokens":10,"completion_tokens":5,"fallback_from":["ollama/f"]}`},
 	}}
 	reqs, err := SQLStore{Query: q}.RecentRequests(context.Background(), 30)
@@ -186,5 +186,8 @@ func TestRecentRequestsGroupsSpansPerTrace(t *testing.T) {
 	r1 := reqs[1]
 	if r1.TraceID != "t1" || r1.Model != "m" || r1.Backend != "ollama" || r1.LatencyS != 0.42 || r1.Tokens != 15 || len(r1.Fallback) != 1 || r1.Reason != "short-simple-prompt" {
 		t.Fatalf("t1: %+v", r1)
+	}
+	if r1.AgentRole != "critic" || r1.ClientRef != "s1/t3/critic/2" {
+		t.Fatalf("t1 client ref not surfaced: %+v", r1)
 	}
 }

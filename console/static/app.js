@@ -137,7 +137,8 @@
         h('td', null,
           r.error ? pill('critical', 'error') : null,
           r.sensitive ? chip('sensitive') : null,
-          r.fallback && r.fallback.length ? chip('fallback') : null)))));
+          r.fallback && r.fallback.length ? chip('fallback') : null,
+          r.agent_role ? chip(r.agent_role) : null)))));
   }
 
   // ---------- pages ----------
@@ -274,6 +275,7 @@
             attrs.tier ? chip(attrs.tier) : null,
             attrs.fallback_from ? chip('fallback') : null,
             attrs.sensitive ? chip('sensitive') : null,
+            attrs.agent_role ? chip(attrs.agent_role) : null,
             attrs.error ? pill('critical', 'failed') : null,
             h('span', null, '▾'))),
         detail);
@@ -318,12 +320,13 @@
           it.error ? pill('critical', 'error') : null,
           it.sensitive ? chip('sensitive') : null,
           it.fallback ? chip('fallback') : null,
+          it.role ? chip(it.role) : null,
           it.status ? (it.status === 'done' ? pill('healthy', 'done') : pill('degraded', it.status)) : null))));
     }
     async function loadList() {
       try {
         const [reqs, wfs] = await Promise.all([api('/v1/requests?limit=50', null, signal), api('/v1/workflows?limit=20', null, signal)]);
-        const a = (reqs.requests || []).map(r => ({ id: r.trace_id, kind: 'chat', at: r.at, label: (r.model || '–') + ' · ' + (r.reason || ''), latency: r.latency_s, error: !!r.error, sensitive: r.sensitive, fallback: !!(r.fallback && r.fallback.length) }));
+        const a = (reqs.requests || []).map(r => ({ id: r.trace_id, kind: 'chat', at: r.at, label: (r.model || '–') + ' · ' + (r.reason || ''), latency: r.latency_s, error: !!r.error, sensitive: r.sensitive, fallback: !!(r.fallback && r.fallback.length), role: r.agent_role }));
         const b = (wfs.workflows || []).map(w => ({ id: w.id, kind: 'workflow', at: w.created_at, label: w.input, status: w.status, error: false }));
         items = a.concat(b).sort((x, y) => new Date(y.at) - new Date(x.at));
         renderList();

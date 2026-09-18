@@ -431,6 +431,16 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 		srv.AddModel(router.ModelRef{Tier: "cloud", Model: model, Backend: cloud})
 		backends = append(backends, cloud)
 	}
+	// OLLAMA_MODELS: extra local models a client may name explicitly (`"model": "qwen2.5:3b-instruct"`).
+	// A multi-agent client places different roles on different models; without this the
+	// gateway would answer unknown_model for anything but the two tier models.
+	for _, m := range strings.Split(os.Getenv("OLLAMA_MODELS"), ",") {
+		m = strings.TrimSpace(m)
+		if m == "" || m == cfg.FastModel || m == cfg.QualityModel {
+			continue
+		}
+		srv.AddModel(router.ModelRef{Tier: "local", Model: m, Backend: local})
+	}
 	if kws := os.Getenv("SENSITIVE_KEYWORDS"); kws != "" {
 		srv.SensitiveKeywords = strings.Split(strings.ToLower(kws), ",")
 	}

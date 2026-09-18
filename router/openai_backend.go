@@ -39,11 +39,9 @@ type oaiUsage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-func (b *OpenAIBackend) post(ctx context.Context, model string, msgs []Message, maxTokens int, stream bool) (*http.Response, error) {
+func (b *OpenAIBackend) post(ctx context.Context, model string, msgs []Message, p GenParams, stream bool) (*http.Response, error) {
 	req := map[string]any{"model": model, "messages": msgs, "stream": stream}
-	if maxTokens > 0 {
-		req["max_tokens"] = maxTokens
-	}
+	p.openAIBody(req)
 	if stream {
 		req["stream_options"] = map[string]any{"include_usage": true}
 	}
@@ -71,7 +69,13 @@ func (b *OpenAIBackend) post(ctx context.Context, model string, msgs []Message, 
 }
 
 func (b *OpenAIBackend) Generate(ctx context.Context, model string, msgs []Message, maxTokens int) (string, Usage, error) {
-	resp, err := b.post(ctx, model, msgs, maxTokens, false)
+	return b.GenerateWith(ctx, model, msgs, GenParams{MaxTokens: maxTokens})
+}
+
+// GenerateWith forwards temperature, top_p, seed, stop and response_format. Ollama-only
+// knobs (options, keep_alive) are dropped — see GenParams.openAIBody.
+func (b *OpenAIBackend) GenerateWith(ctx context.Context, model string, msgs []Message, p GenParams) (string, Usage, error) {
+	resp, err := b.post(ctx, model, msgs, p, false)
 	if err != nil {
 		return "", Usage{}, err
 	}
@@ -93,7 +97,12 @@ func (b *OpenAIBackend) Generate(ctx context.Context, model string, msgs []Messa
 
 // Stream parses server-sent events: "data: {...}" lines until "data: [DONE]".
 func (b *OpenAIBackend) Stream(ctx context.Context, model string, msgs []Message, maxTokens int, emit func(string)) (Usage, error) {
-	resp, err := b.post(ctx, model, msgs, maxTokens, true)
+	return b.StreamWith(ctx, model, msgs, GenParams{MaxTokens: maxTokens}, emit)
+}
+
+// StreamWith is Stream with the full parameter set (see GenerateWith).
+func (b *OpenAIBackend) StreamWith(ctx context.Context, model string, msgs []Message, p GenParams, emit func(string)) (Usage, error) {
+	resp, err := b.post(ctx, model, msgs, p, true)
 	if err != nil {
 		return Usage{}, err
 	}

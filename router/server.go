@@ -22,6 +22,22 @@ type ChatRequest struct {
 	MaxTokens int       `json:"max_tokens"`
 	Stream    bool      `json:"stream"`
 	Sensitive bool      `json:"sensitive"`
+
+	// v1.1 generation parameters (ADR-0006). All optional; absent means model default,
+	// exactly as v1.0 behaved. Values only — none of these carries prompt text.
+	Temperature    *float64        `json:"temperature,omitempty"`
+	TopP           *float64        `json:"top_p,omitempty"`
+	Seed           *int            `json:"seed,omitempty"`
+	Stop           json.RawMessage `json:"stop,omitempty"`            // string or []string
+	ResponseFormat map[string]any  `json:"response_format,omitempty"` // OpenAI shape: {type: json_object | json_schema}
+	Format         any             `json:"format,omitempty"`          // Ollama shape: "json" or a JSON schema
+	Options        map[string]any  `json:"options,omitempty"`         // Ollama options passthrough (num_ctx, num_gpu, …)
+	KeepAlive      string          `json:"keep_alive,omitempty"`      // Ollama keep_alive, e.g. "30m"
+
+	// ClientRef and AgentRole join this trace to the client's own record. They arrive as
+	// X-Client-Ref / X-Agent-Role headers (or these fields) and land on every span.
+	ClientRef string `json:"client_ref,omitempty"`
+	AgentRole string `json:"agent_role,omitempty"`
 }
 
 type Choice struct {
@@ -222,6 +238,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(r.Header.Get("X-AgentOps-Sensitive"), "true") {
 		req.Sensitive = true
 	}
+	if v := r.Header.Get("X-Client-Ref"); v != "" {
+		req.ClientRef = v
+	}
+	if v := r.Header.Get("X-Agent-Role"); v != "" {
+		req.AgentRole = v
+	}
+	req.ClientRef = boundRef(req.ClientRef, maxClientRefLen)
+	req.AgentRole = boundRef(req.AgentRole, maxAgentRoleLen)
+	if req.ClientRef != "" {
+		w.Header().Set("X-Client-Ref", req.ClientRef)
+	}
+	if req.AgentRole != "" {
+		w.Header().Set("X-Agent-Role", req.AgentRole)
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.RequestTimeout)
 	defer cancel()
 
@@ -358,9 +388,21 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 	for _, c := range route.Candidates {
 		names = append(names, c.Backend.Name()+"/"+c.Model)
 	}
-	s.emitSpan(traceID, decideSpan, "", "route.decide", spanAttrs(map[string]any{
+	params := paramsOf(req)
+	// The client's reference rides on every span so a trace can be found from the
+	// client's side (Versatile: "<session>/<turn>/<role>/<n>") and grouped by agent role.
+	ref := func(kv map[string]any) map[string]any {
+		if req.ClientRef != "" {
+			kv["client_ref"] = req.ClientRef
+		}
+		if req.AgentRole != "" {
+			kv["agent_role"] = req.AgentRole
+		}
+		return kv
+	}
+	s.emitSpan(traceID, decideSpan, "", "route.decide", spanAttrs(ref(map[string]any{
 		"tier": route.Tier, "reason": route.Reason, "sensitive": sensitive, "candidates": names, "requested": req.Model,
-	}))
+	})))
 
 	var lastErr error
 	var fallback []string
@@ -371,11 +413,7 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		var text string
 		var usage Usage
 		var err error
-		if emit != nil {
-			usage, err = cand.Backend.Stream(ctx, cand.Model, msgs, req.MaxTokens, func(d string) { emit(cand.Model, d) })
-		} else {
-			text, usage, err = cand.Backend.Generate(ctx, cand.Model, msgs, req.MaxTokens)
-		}
+		text, usage, err = generateOn(ctx, cand.Backend, cand.Model, msgs, params, emit)
 		if err != nil {
 			lastErr = err
 			s.Metrics.ObserveError(cand.Model)
@@ -388,13 +426,17 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		}
 		latency := time.Since(start).Seconds()
 		s.Metrics.Observe(cand.Model, latency, usage.TotalTokens)
-		genAttrs := map[string]any{"model": cand.Model, "backend": cand.Backend.Name(), "latency_s": latency,
-			"prompt_tokens": usage.PromptTokens, "completion_tokens": usage.CompletionTokens}
+		genAttrs := ref(map[string]any{"model": cand.Model, "backend": cand.Backend.Name(), "latency_s": latency,
+			"prompt_tokens": usage.PromptTokens, "completion_tokens": usage.CompletionTokens})
 		if len(fallback) > 0 {
 			genAttrs["fallback_from"] = fallback
 		}
+		if pa := params.SpanAttrs(); len(pa) > 0 {
+			genAttrs["params"] = pa
+			genAttrs["params_forwarded"] = forwardsParams(cand.Backend)
+		}
 		s.emitSpan(traceID, genSpan, decideSpan, "model.generate", spanAttrs(genAttrs))
-		s.emitSpan(traceID, respondSpan, genSpan, "router.respond", spanAttrs(map[string]any{"model": cand.Model}))
+		s.emitSpan(traceID, respondSpan, genSpan, "router.respond", spanAttrs(ref(map[string]any{"model": cand.Model})))
 		out := ChatResponse{
 			ID: "chatcmpl-" + traceID, Object: "chat.completion", Created: time.Now().Unix(), Model: cand.Model,
 			Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
@@ -408,6 +450,28 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 	if lastErr == nil {
 		lastErr = errors.New("no candidate available")
 	}
-	s.emitSpan(traceID, genSpan, decideSpan, "model.generate", spanAttrs(map[string]any{"error": lastErr.Error(), "tried": fallback}))
+	s.emitSpan(traceID, genSpan, decideSpan, "model.generate", spanAttrs(ref(map[string]any{"error": lastErr.Error(), "tried": fallback})))
 	return ChatResponse{TraceID: traceID}, lastErr
+}
+
+// generateOn runs one candidate. A ParamBackend gets the full GenParams; a plain Backend
+// gets max_tokens only (v1.0 behaviour), and the span says so via params_forwarded.
+func generateOn(ctx context.Context, b Backend, model string, msgs []Message, p GenParams, emit func(model, delta string)) (string, Usage, error) {
+	if pb, ok := b.(ParamBackend); ok {
+		if emit != nil {
+			u, err := pb.StreamWith(ctx, model, msgs, p, func(d string) { emit(model, d) })
+			return "", u, err
+		}
+		return pb.GenerateWith(ctx, model, msgs, p)
+	}
+	if emit != nil {
+		u, err := b.Stream(ctx, model, msgs, p.MaxTokens, func(d string) { emit(model, d) })
+		return "", u, err
+	}
+	return b.Generate(ctx, model, msgs, p.MaxTokens)
+}
+
+func forwardsParams(b Backend) bool {
+	_, ok := b.(ParamBackend)
+	return ok
 }

@@ -26,6 +26,9 @@ type Request struct {
 	Tokens    int       `json:"tokens"`
 	Fallback  []string  `json:"fallback,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	// v1.1 client reference (ADR-0009): which agent of a multi-agent client made the call.
+	AgentRole string `json:"agent_role,omitempty"`
+	ClientRef string `json:"client_ref,omitempty"`
 }
 
 // Overview is the KPI header plus per-model traffic for the last hour.
@@ -150,6 +153,8 @@ func (s SQLStore) RecentRequests(ctx context.Context, limit int) ([]Request, err
 			req.Tier = str(r.attrs, "tier")
 			req.Reason = str(r.attrs, "reason")
 			req.Sensitive, _ = r.attrs["sensitive"].(bool)
+			req.AgentRole = str(r.attrs, "agent_role")
+			req.ClientRef = str(r.attrs, "client_ref")
 		case "model.generate":
 			req.Model = str(r.attrs, "model")
 			req.Backend = str(r.attrs, "backend")

@@ -61,6 +61,17 @@ curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Cont
 
 Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (every candidate failed), `504 timeout` (`REQUEST_TIMEOUT`, default 300s).
 
+**Generation parameters (v1.1, ADR-0009)** — beyond `max_tokens`, the request may carry `temperature`, `top_p`, `seed`, `stop` (string or list) and `response_format` (`{"type":"json_object"}` or `{"type":"json_schema","json_schema":{"schema":{…}}}`) in the OpenAI shape, plus the Ollama-native `format` (`"json"` or a schema), `options` (passthrough: `num_ctx`, `num_gpu`, `repeat_penalty`, …) and `keep_alive`. All are optional; absent means model default. The Ollama backend merges the named parameters into `options` (named ones win over duplicates in the passthrough map) and sends `format` / `keep_alive` as top-level fields; the OpenAI backend forwards `temperature`/`top_p`/`seed`/`stop`/`response_format` and drops the Ollama-only knobs. The `model.generate` span records the values under `params` (kind of format, never the schema itself) and `params_forwarded: true|false` (false for a backend that only implements the v1.0 interface).
+
+```bash
+curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -H 'X-Client-Ref: s1/t3/critic/2' -H 'X-Agent-Role: critic' -d '{
+  "model": "qwen2.5:3b-instruct", "messages": [{"role":"user","content":"Score this scene 1-10 as JSON."}],
+  "temperature": 0.2, "seed": 7, "format": "json", "options": {"num_gpu": 0, "num_ctx": 8192}, "keep_alive": "30m"
+}'
+```
+
+**Client reference** — a client that keeps its own record of every model call (Versatile's LangGraph writing orchestrator does: one Dexie row per Editor decision) sends `X-Client-Ref` (≤ 64 chars, opaque, e.g. `<session>/<turn>/<role>/<n>`) and `X-Agent-Role` (≤ 32 chars, e.g. `writer`, `critic`, `editor`, `director`). Both may also be body fields (`client_ref`, `agent_role`). They land as `client_ref` / `agent_role` on all three spans of the trace (`route.decide`, `model.generate`, `router.respond` — and on the failed `model.generate` span) and are echoed back as response headers, so the client can store the gateway's `X-Trace-ID` next to its own record and the Tower trace inspector can group a run's traces by agent role. They are truncated, never rejected, so a prompt can never ride along in a span attribute.
+
 ## `GET /v1/models`
 
 ```json
@@ -79,6 +90,7 @@ Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (eve
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | local backend, always present, `local:true` |
 | `FAST_MODEL` / `QUALITY_MODEL` | `qwen2.5:3b-instruct` / `qwen2.5:7b-instruct-q4_K_M` | the auto tiers on Ollama |
+| `OLLAMA_MODELS` | — | comma-separated extra local models (`qwen3:8b,qwen2.5:3b-instruct`) a client may name explicitly; registered with tier `local` on the Ollama backend. A multi-agent client that places roles on different models needs every one of them registered here or the request answers `unknown_model` |
 | `GROQ_API_KEY` | — | when set, registers an OpenAI-compatible cloud backend |
 | `CLOUD_MODEL` / `CLOUD_BASE_URL` / `CLOUD_BACKEND_NAME` | `llama-3.1-8b-instant` / `https://api.groq.com/openai/v1` / `groq` | point the cloud backend at any OpenAI-style API |
 | `REQUIRE_API_KEY` | `false` | reject anonymous requests |

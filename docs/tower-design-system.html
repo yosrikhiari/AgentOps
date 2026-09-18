@@ -188,7 +188,7 @@
             </div></div>
           <div class="ds-frame"><div class="ds-frame-label">Chips — mono facts, no state colour · Chip buttons — filter toggles with .on</div>
             <div class="ds-row">
-              <span class="tower-chip">local</span><span class="tower-chip">cloud</span><span class="tower-chip">quality</span><span class="tower-chip">fast</span><span class="tower-chip">sensitive</span><span class="tower-chip">fallback</span><span class="tower-chip">keyword:iban</span><span class="tower-chip">qwen3:8b</span>
+              <span class="tower-chip">local</span><span class="tower-chip">cloud</span><span class="tower-chip">quality</span><span class="tower-chip">fast</span><span class="tower-chip">sensitive</span><span class="tower-chip">fallback</span><span class="tower-chip">critic</span><span class="tower-chip">keyword:iban</span><span class="tower-chip">qwen3:8b</span>
               <span style="width:16px"></span>
               <span class="tower-filters" style="margin:0"><button class="tower-chip tower-chip-btn on">All</button><button class="tower-chip tower-chip-btn">Chats</button><button class="tower-chip tower-chip-btn">Workflows</button><button class="tower-chip tower-chip-btn">Errors</button></span>
             </div></div>
@@ -205,7 +205,7 @@
           <tr><td>.tower-btn.secondary</td><td>Retry · Resume · Copy a curl</td><td>raised surface + border; safe secondary actions</td></tr>
           <tr><td>.tower-btn.ghost</td><td>Copy id · JSON</td><td>no chrome; for actions next to a title. <span class="tower-mono">a.tower-btn</span> is styled the same</td></tr>
           <tr><td>.tower-pill.*</td><td>backend up/down, run scores, workflow status, span failed</td><td>state only. A pill always has a dot. Use <span class="tower-mono">pill(state, label)</span></td></tr>
-          <tr><td>.tower-chip</td><td>tier, backend, reason, sensitive, fallback, judge model</td><td>a fact, never a state. Use <span class="tower-mono">chip(text)</span></td></tr>
+          <tr><td>.tower-chip</td><td>tier, backend, reason, sensitive, fallback, agent role (v1.1 <span class="tower-mono">agent_role</span>, in <span class="tower-mono">renderList</span> / <span class="tower-mono">traceView</span> / the requests table), judge model</td><td>a fact, never a state. Use <span class="tower-mono">chip(text)</span></td></tr>
           <tr><td>.tower-chip-btn(.on)</td><td>Traces filters</td><td>a chip that toggles; <span class="tower-mono">.on</span> = amber-dim</td></tr>
           <tr><td>.tower-input</td><td>trace id · workflow question</td><td>mono, ground background, min-width 280, amber border on focus</td></tr>
         </table>
@@ -290,7 +290,7 @@
             <div class="tower-trace-list" style="max-height:none">
               <div class="tower-trace-item selected"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8f2a1c3d</span></span><span class="tower-mono tower-muted">3 min ago</span></div><div class="tower-trace-item-sub">qwen2.5:7b-instruct-q4_K_M · long_prompt</div><div class="tower-trace-item-meta"><span class="tower-mono">890 ms</span></div></div>
               <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">wf_71ab</span></span><span class="tower-mono tower-muted">8 min ago</span></div><div class="tower-trace-item-sub">what does agentops do?</div><div class="tower-trace-item-meta"><span class="tower-pill degraded">running</span></div></div>
-              <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">1d9e44a0</span></span><span class="tower-mono tower-muted">12 min ago</span></div><div class="tower-trace-item-sub">llama-3.1-8b-instant · quality</div><div class="tower-trace-item-meta"><span class="tower-mono">1.21 s</span><span class="tower-pill critical">error</span><span class="tower-chip">fallback</span></div></div>
+              <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">1d9e44a0</span></span><span class="tower-mono tower-muted">12 min ago</span></div><div class="tower-trace-item-sub">llama-3.1-8b-instant · quality</div><div class="tower-trace-item-meta"><span class="tower-mono">1.21 s</span><span class="tower-pill critical">error</span><span class="tower-chip">fallback</span><span class="tower-chip">writer</span></div></div>
             </div>
           </section>
           <section class="tower-panel">

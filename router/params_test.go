@@ -88,14 +88,14 @@ func TestParamsOnSpan(t *testing.T) {
 	pf := &paramFake{fakeBackend: fakeBackend{name: "ollama", local: true, text: "ok", tokens: 2}}
 	srv := NewServer("fast-m", "quality-m", pf)
 	srv.SpanSink = spanRecorder(spans)
-	rec := post(srv, `{"prompt":"secret prompt text","temperature":0.2,"seed":7,"options":{"num_gpu":0},"keep_alive":"30m","response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object","properties":{"leak":{}}}}}}`, nil)
+	rec := post(srv, `{"prompt":"secret prompt text","temperature":0.2,"seed":7,"options":{"num_gpu":0},"keep_alive":"30m","think":false,"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object","properties":{"leak":{}}}}}}`, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	gen := spans["model.generate"]
 	params, _ := gen["params"].(map[string]any)
 	if params["temperature"] != 0.2 || params["seed"] != float64(7) || params["num_gpu"] != float64(0) ||
-		params["keep_alive"] != "30m" || params["format"] != "json_schema" || gen["params_forwarded"] != true {
+		params["keep_alive"] != "30m" || params["think"] != false || params["format"] != "json_schema" || gen["params_forwarded"] != true {
 		t.Fatalf("span params: %v", gen)
 	}
 	for name, kv := range spans {
@@ -168,7 +168,8 @@ func TestOllamaForwardsParams(t *testing.T) {
 	c := NewOllamaClient(srv.URL)
 	temp := 0.3
 	seed := 42
-	p := GenParams{MaxTokens: 4, Temperature: &temp, Seed: &seed, Stop: []string{"END"}, Format: "json", KeepAlive: "30m",
+	think := false
+	p := GenParams{MaxTokens: 4, Temperature: &temp, Seed: &seed, Stop: []string{"END"}, Format: "json", KeepAlive: "30m", Think: &think,
 		Options: map[string]any{"num_ctx": 8192, "num_gpu": 0, "temperature": 0.9}}
 	if _, _, err := c.GenerateWith(context.Background(), "m", []Message{{Role: "user", Content: "hi"}}, p); err != nil {
 		t.Fatal(err)
@@ -181,8 +182,8 @@ func TestOllamaForwardsParams(t *testing.T) {
 	if stop, _ := opts["stop"].([]any); len(stop) != 1 || stop[0] != "END" {
 		t.Fatalf("stop: %v", opts["stop"])
 	}
-	if gotReq["format"] != "json" || gotReq["keep_alive"] != "30m" {
-		t.Fatalf("format/keep_alive: %v %v", gotReq["format"], gotReq["keep_alive"])
+	if gotReq["format"] != "json" || gotReq["keep_alive"] != "30m" || gotReq["think"] != false {
+		t.Fatalf("format/keep_alive/think: %v %v %v", gotReq["format"], gotReq["keep_alive"], gotReq["think"])
 	}
 	// A schema object goes through as-is.
 	p.Format = map[string]any{"type": "object"}
@@ -230,6 +231,9 @@ func TestOpenAIForwardsParams(t *testing.T) {
 	}
 	if _, ok := gotReq["keep_alive"]; ok {
 		t.Fatalf("keep_alive leaked to an OpenAI API: %v", gotReq)
+	}
+	if _, ok := gotReq["think"]; ok {
+		t.Fatalf("think leaked to an OpenAI API: %v", gotReq)
 	}
 	p.Format = "json"
 	_, _, _ = b.GenerateWith(context.Background(), "m", []Message{{Role: "user", Content: "hi"}}, p)

@@ -33,6 +33,7 @@ type ChatRequest struct {
 	Format         any             `json:"format,omitempty"`          // Ollama shape: "json" or a JSON schema
 	Options        map[string]any  `json:"options,omitempty"`         // Ollama options passthrough (num_ctx, num_gpu, …)
 	KeepAlive      string          `json:"keep_alive,omitempty"`      // Ollama keep_alive, e.g. "30m"
+	Think          *bool           `json:"think,omitempty"`           // Ollama think: false stops a reasoning model spending the budget on chain-of-thought
 
 	// ClientRef and AgentRole join this trace to the client's own record. They arrive as
 	// X-Client-Ref / X-Agent-Role headers (or these fields) and land on every span.

@@ -27,6 +27,10 @@ type GenParams struct {
 	Options map[string]any
 	// KeepAlive is Ollama's keep_alive duration string, e.g. "30m".
 	KeepAlive string
+	// Think toggles a reasoning model's chain-of-thought (Ollama top-level `think`).
+	// A client that budgets tokens for prose sends false: on qwen3:8b the reasoning
+	// is billed against num_predict and can consume the whole budget.
+	Think *bool
 }
 
 // ParamBackend is implemented by backends that accept GenParams. Backends that only
@@ -48,6 +52,7 @@ func paramsOf(req ChatRequest) GenParams {
 		Options:     req.Options,
 		KeepAlive:   req.KeepAlive,
 		Format:      req.Format,
+		Think:       req.Think,
 	}
 	if len(req.Stop) > 0 {
 		var one string
@@ -106,6 +111,9 @@ func (p GenParams) SpanAttrs() map[string]any {
 	}
 	if p.KeepAlive != "" {
 		out["keep_alive"] = p.KeepAlive
+	}
+	if p.Think != nil {
+		out["think"] = *p.Think
 	}
 	for _, k := range []string{"num_ctx", "num_gpu", "repeat_penalty", "repeat_last_n", "min_p", "num_predict"} {
 		if v, ok := p.Options[k]; ok {

@@ -38,6 +38,7 @@ type ollamaChatRequest struct {
 	Options   map[string]any `json:"options,omitempty"`
 	Format    any            `json:"format,omitempty"`
 	KeepAlive string         `json:"keep_alive,omitempty"`
+	Think     *bool          `json:"think,omitempty"`
 }
 
 type ollamaChatResponse struct {
@@ -49,7 +50,7 @@ type ollamaChatResponse struct {
 }
 
 func (c *OllamaClient) post(ctx context.Context, model string, msgs []Message, p GenParams, stream bool) (*http.Response, error) {
-	req := ollamaChatRequest{Model: model, Messages: msgs, Stream: stream, Options: p.ollamaOptions(), Format: p.Format, KeepAlive: p.KeepAlive}
+	req := ollamaChatRequest{Model: model, Messages: msgs, Stream: stream, Options: p.ollamaOptions(), Format: p.Format, KeepAlive: p.KeepAlive, Think: p.Think}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err

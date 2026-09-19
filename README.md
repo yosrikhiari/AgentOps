@@ -22,6 +22,10 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
                      └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
+![AgentOps Router dashboard in Grafana: requests/s and p99 latency by model, tokens, eval faithfulness 0.972, error rate](docs/img/grafana-router.png)
+
+<sub>The provisioned Grafana board during a 5-minute k6 run on 2026-09-19 (2 VUs of short prompts routed to `qwen2.5:3b-instruct`, 1 VU of long prompts routed to `qwen3:8b`): 3,737 requests, 1 failure — the quality-tier request that hit the 180 s client timeout, which is the 100 % error step on the yellow line. Faithfulness 0.972 is the golden v3 suite (72 pairs) scored minutes earlier with `--score`.</sub>
+
 **Current release: [v1.0.0](https://github.com/yosrikhiari/AgentOps/releases/tag/v1.0.0)** — 68 tests, `go vet` + `-race` + `staticcheck` + `govulncheck` in CI, plus 11 **executable policies** that fail the build when a rule in [`docs/RULES.md`](docs/RULES.md) is broken. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## What it does

@@ -467,6 +467,16 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-21 (20th pass, commit + L endpoint proven live).** Committed c70e724
+(53 files: dashboard removal, J/K/L code, purge fix, docs, ADRs) + merged
+origin README commits, pushed (remote == local). Live on the restarted
+server: `GET /v1/benchmarks?golden=e2e-bench` over two committed model runs
+(ids 7/8, same judge) → comparable, per-model faith/latency/tokens, two
+reason scenarios, verdict + scenario verdicts all `tied — route on cost
+(n<100)`; `#/benchmarks` nav served. Duplicate 3B rows (ids 5–7, from
+relaunched attempts) are harmless — latest-per-model wins. Still queued: full
+v3 A+B runs (hours each, need quiet GPU + reliable foreground launch —
+background `Start-Process` proved flaky on this box).
 **2026-09-21 (19th pass, full local gate).** `gofmt` clean, `go vet` clean,
 `go test ./...` 8 pkgs green, `policy/` green, `staticcheck@v0.8.1` clean,
 `govulncheck` no vulnerabilities. Environment notes: `GOTOOLCHAIN=auto` fails

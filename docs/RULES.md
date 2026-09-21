@@ -107,7 +107,7 @@ STRIDE-lite, each threat with the control and where it is enforced.
 | Spoofing (who is calling) | Virtual API keys, Bearer auth, `REQUIRE_API_KEY` to reject anonymous | `TestAPIKeyRequired` |
 | Tampering with keys at rest | Only SHA-256 of the secret stored; secret printed once | `router/keys.go`, review |
 | Repudiation | `X-Trace-ID` on every response; every request has spans; key name on per-key counters | `TestHandleChatRoutesFast` (header), spans tests |
-| Information disclosure | Prompts never in spans; read paths redact `prompt/input/text/output`; **sensitive requests never reach a cloud backend** | `TestPolicyPromptsNeverReachSpans`, `TestListSpansRedacted`, `TestSensitiveNeverLeavesBox`, `TestPolicySensitiveHasNoCloudCandidate` |
+| Information disclosure | Prompts never in spans; read paths redact `prompt/input/text/output`; **sensitive requests never reach a cloud backend** | `TestPolicyPromptsNeverReachSpans`, `TestPolicyMCPToolSpansRedacted`, `TestListSpansRedacted`, `TestSensitiveNeverLeavesBox`, `TestPolicySensitiveHasNoCloudCandidate` |
 | Denial of service | Per-key RPM + token budget; `REQUEST_TIMEOUT`; `ReadHeaderTimeout`; bounded span queue; eval single-flight; body size implicitly bounded by Ollama context | `TestAPIKeyRateLimit`, `TestAPIKeyBudget`, `TestEvalRunSingleFlight` |
 | Elevation of privilege | Container runs as `nonroot` on distroless; no admin endpoints; key creation is CLI-only on the box | `Dockerfile`, review |
 | Supply chain | One direct dependency; Dependabot weekly; `govulncheck` in CI (found and fixed GO-2026-5970 in `x/text` on first run); `staticcheck` in CI; release binaries with `SHA256SUMS` | `TestPolicySingleDirectDependency`, `ci.yml` policy job |
@@ -121,6 +121,7 @@ Known gap, stated: the console and `/metrics` are unauthenticated. They expose r
 |---|---|---|
 | Fail-closed routing | Sensitive → every non-local candidate removed, primary included; Ollama `:cloud` models are non-local; explicit non-local model → 403 | `TestSensitiveNeverLeavesBox`, `TestCloudSuffixModelIsNotLocal`, `TestPolicySensitiveHasNoCloudCandidate` |
 | Unknown model | 400 `unknown_model`, never a silent fallback to "auto" | `TestExplicitModel` |
+| Not on disk | explicit or tier model missing from Ollama → 503 `model_not_pulled` with the pull hint; `/v1/models` shows `up:false` + `reason:not_pulled`; presence refreshed every probe tick, gaps logged | `TestPresenceSkipsUnpulled`, `TestPolicyModelNotPulledIsOneErrorShape` |
 | Backend health | Known-down fallbacks skipped, not tried | `TestHealthProberGaugeAndModels` |
 | Budgets and rates | 403 `budget_exceeded`, 429 `rate_limited` + `Retry-After` | `TestAPIKeyBudget`, `TestAPIKeyRateLimit` |
 | One eval at a time | 409 `eval_running` | `TestEvalRunSingleFlight` |
@@ -193,8 +194,11 @@ These fail the build when a rule above is broken. Names are the rules.
 |---|---|
 | `TestPolicySingleDirectDependency` | `go.mod` has exactly one direct dependency (`pgx`) — the independence rule |
 | `TestPolicyPromptsNeverReachSpans` | a canary in the prompt and in the model's answer appears in no span attribute; `RedactAttrs` drops the four sensitive keys |
+| `TestPolicyMCPToolSpansRedacted` | an echoing model behind `route_test_request` still leaves no prompt text in any `mcp.tool` span; tool spans carry `tool`/`ok`/`code` only |
+| `TestPolicyConversationsPrivate` | messages die with their thread (ON DELETE CASCADE), idle threads purge at 90 days, and the prompt-storage exception is disclosed in PRIVACY.md |
 | `TestPolicySensitiveHasNoCloudCandidate` | `Plan()` never yields a non-local candidate for a sensitive request; explicit cloud is refused |
 | `TestPolicyOneErrorShape` | 400/401/502 from the gateway all carry `{error:{code,message,trace_id}}` |
+| `TestPolicyModelNotPulledIsOneErrorShape` | 503 `model_not_pulled` carries the one error shape; the missing model is never attempted |
 | `TestPolicySpanSinkIsNonBlocking` | the span sink is a `select` with a `default` branch |
 | `TestPolicyEnvVarsDocumented` | every `os.Getenv("X")` in the code is documented in `docs/API.md` |
 | `TestPolicyFlagsDocumented` | every CLI flag in `main.go` appears in `README.md` |

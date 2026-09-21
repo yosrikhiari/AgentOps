@@ -1,10 +1,14 @@
 # AgentOps MCP server
 
-One binary, two modes. HTTP router by default, MCP stdio server with `--mcp`.
+One binary, three ways in. HTTP router by default, MCP stdio server with `--mcp`,
+and MCP over HTTP at `POST /mcp` when the gateway is running. The protocol is
+plain MCP (`2024-11-05` JSON-RPC) — Claude Desktop, Cursor, Windsurf, VS Code,
+or any generic MCP client can use it; nothing here is Claude-specific.
 
-## Claude Desktop config
+## Client config (any MCP client)
 
-Build once, then point Claude Desktop at the binary:
+Build once, then point your MCP client at the binary (Claude Desktop shown;
+Cursor / VS Code / Windsurf take the same command + args):
 
 ```json
 {
@@ -26,6 +30,15 @@ Build once, then point Claude Desktop at the binary:
 Dev alternative without building: `command: go`, `args: ["run", ".", "--mcp"]`,
 `cwd: /path/to/AgentOps_Project_Plan`.
 
+Remote agents that cannot pipe stdio use the gateway instead:
+
+```bash
+curl localhost:8080/mcp -H 'Content-Type: application/json' -d \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+# one request per POST, answered by the same handler as stdio — the two
+# transports cannot drift. With REQUIRE_API_KEY=true a Bearer key is required.
+```
+
 ## Tools
 
 - `list_models` — every served model with tier, backend and last health probe, plus per-backend status.
@@ -37,6 +50,10 @@ Dev alternative without building: `command: go`, `args: ["run", ".", "--mcp"]`,
   id). Unknown id → JSON-RPC error `-32004`. Needs Postgres.
 - `get_drift_report` — last two golden eval runs: `score_then/score_now/delta/alert/
   judge_changed/worst_cases`. Needs Postgres and at least one `--score` run.
+
+Every `tools/call` also emits one redacted `mcp.tool` span (`tool`/`ok`/`code`
+only — never argument values, so prompts cannot leak through telemetry), visible
+in `GET /v1/traces/{id}` and on the Tower `#/live` rail.
 
 ## Try it
 

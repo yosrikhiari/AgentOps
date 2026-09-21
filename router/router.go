@@ -99,6 +99,19 @@ func (e ErrSensitiveCloud) Error() string {
 	return fmt.Sprintf("model %q is not local; sensitive requests never leave this machine", e.Model)
 }
 
+// ErrModelNotPulled is returned when the client names — or the classified tier
+// needs — a model the gateway serves on paper but Ollama does not have on
+// disk. The pull hint names the fix; path-like entries (never pullable) get no
+// hint.
+type ErrModelNotPulled struct{ Model string }
+
+func (e ErrModelNotPulled) Error() string {
+	if strings.ContainsAny(e.Model, `/\`) {
+		return fmt.Sprintf("model %q is not pulled", e.Model)
+	}
+	return fmt.Sprintf("model %q is not pulled — run: ollama pull %s", e.Model, e.Model)
+}
+
 // Plan decides where a request goes. requested is the client's model field ("" or "auto"
 // = let the router decide). refs are all models the gateway serves; the first with
 // Tier=="fast" and "quality" are the auto tiers; every non-local ref is a fallback for

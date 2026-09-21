@@ -167,3 +167,63 @@ func TestDriftReport(t *testing.T) {
 		t.Fatal("nil drift lookup should error")
 	}
 }
+
+func TestToolCallEmitsRedactedSpan(t *testing.T) {
+	rs := router.NewServer("fast-m", "quality-m", &stubGen{text: "hi"})
+	srv := NewServer(rs)
+	var spans []map[string]string
+	srv.SpanSink = func(traceID, spanID, parentID, name, attrs string) {
+		spans = append(spans, map[string]string{"trace": traceID, "span": spanID, "name": name, "attrs": attrs})
+	}
+	resps := runSession(t, srv,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"route_test_request","arguments":{"prompt":"CANARY-mcp-do-not-store hello"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_models","arguments":{}}}`,
+	)
+	if resps[0]["error"] != nil || resps[1]["error"] != nil {
+		t.Fatalf("tool calls should succeed: %+v", resps)
+	}
+	if len(spans) != 2 {
+		t.Fatalf("want 1 span per tool call, got %d", len(spans))
+	}
+	for _, sp := range spans {
+		if sp["name"] != "mcp.tool" {
+			t.Fatalf("span name = %q, want mcp.tool", sp["name"])
+		}
+		if sp["trace"] == "" || sp["span"] == "" {
+			t.Fatalf("span needs trace and span ids: %+v", sp)
+		}
+		if strings.Contains(sp["attrs"], "CANARY-mcp-do-not-store") {
+			t.Fatalf("prompt text leaked into mcp.tool span: %s", sp["attrs"])
+		}
+	}
+	if !strings.Contains(spans[0]["attrs"], "route_test_request") {
+		t.Fatalf("tool span should name the tool: %s", spans[0]["attrs"])
+	}
+	for _, sp := range spans {
+		var keys map[string]any
+		if err := json.Unmarshal([]byte(sp["attrs"]), &keys); err != nil {
+			t.Fatalf("tool span attrs are not JSON: %s", sp["attrs"])
+		}
+		for k := range keys {
+			if k != "tool" && k != "ok" && k != "code" {
+				t.Fatalf("tool span carries non-allowlisted key %q: %s", k, sp["attrs"])
+			}
+		}
+	}
+}
+
+func TestHandleOneServesHTTPTransport(t *testing.T) {
+	rs := router.NewServer("fast-m", "quality-m", &stubGen{text: "hi"})
+	srv := NewServer(rs)
+	raw, status := srv.HandleOne([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if status != 200 {
+		t.Fatalf("status = %d", status)
+	}
+	if !strings.Contains(string(raw), "list_models") {
+		t.Fatalf("tools/list over HTTP: %s", raw)
+	}
+	raw, _ = srv.HandleOne([]byte(`{bad json`))
+	if !strings.Contains(string(raw), "parse error") {
+		t.Fatalf("malformed body should be a parse error: %s", raw)
+	}
+}

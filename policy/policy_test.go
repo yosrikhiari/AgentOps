@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"agentops/mcp"
 	"agentops/router"
 	"agentops/tracker"
 )
@@ -317,6 +318,79 @@ func (f *fake) Stream(ctx context.Context, model string, msgs []router.Message, 
 }
 func (f *fake) Health(ctx context.Context) error { return nil }
 
+// RULE privacy extends to MCP telemetry: mcp.tool spans carry the tool name and
+// outcome only — a prompt sent via route_test_request appears in no span, even
+// when the model echoes it back into the tool result.
+func TestPolicyMCPToolSpansRedacted(t *testing.T) {
+	canary := "CANARY-mcp-policy-do-not-store"
+	rs := router.NewServer("fast-m", "quality-m", &echoGen{})
+	msrv := mcp.NewServer(rs)
+	var got []string
+	msrv.SpanSink = func(traceID, spanID, parentID, name, attrs string) {
+		if name != "mcp.tool" {
+			t.Fatalf("MCP sink got span %q, want only mcp.tool", name)
+		}
+		got = append(got, attrs)
+	}
+	raw, status := msrv.HandleOne([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"route_test_request","arguments":{"prompt":"remember ` + canary + `"}}}`))
+	if status != 200 {
+		t.Fatalf("status %d: %s", status, raw)
+	}
+	if !strings.Contains(string(raw), canary) {
+		t.Fatalf("fixture is weak: tool result should echo the prompt, got %s", raw)
+	}
+	if len(got) == 0 {
+		t.Fatal("route_test_request emitted no mcp.tool span")
+	}
+	for _, a := range got {
+		if strings.Contains(a, canary) {
+			t.Fatalf("prompt leaked into mcp.tool span: %s", a)
+		}
+		if !strings.Contains(a, "route_test_request") {
+			t.Fatalf("mcp.tool span must name the tool: %s", a)
+		}
+	}
+}
+
+// echoGen is a backend that repeats the prompt, so redaction tests prove the
+// fence even against an echoing model.
+
+type echoGen struct{}
+
+func (g *echoGen) Name() string { return "ollama" }
+func (g *echoGen) Local() bool  { return true }
+func (g *echoGen) Generate(ctx context.Context, model string, msgs []router.Message, maxTokens int) (string, router.Usage, error) {
+	out := "saw:"
+	for _, m := range msgs {
+		out += " " + m.Content
+	}
+	return out, router.Usage{TotalTokens: 9}, nil
+}
+func (g *echoGen) Stream(ctx context.Context, model string, msgs []router.Message, maxTokens int, emit func(string)) (router.Usage, error) {
+	s, u, err := g.Generate(ctx, model, msgs, maxTokens)
+	emit(s)
+	return u, err
+}
+func (g *echoGen) Health(ctx context.Context) error { return nil }
+
+// RULE stored conversations stay private by construction: messages die with
+// their thread (ON DELETE CASCADE), idle threads have a 90-day purge, and the
+// exception to "prompts are never stored" is disclosed in PRIVACY.md.
+func TestPolicyConversationsPrivate(t *testing.T) {
+	mig := read(t, "migrations/0005_conversations.sql")
+	for _, must := range []string{"ON DELETE CASCADE", "90 days", "CREATE TABLE IF NOT EXISTS conversations", "CREATE TABLE IF NOT EXISTS messages"} {
+		if !strings.Contains(mig, must) {
+			t.Errorf("0005_conversations.sql missing %q", must)
+		}
+	}
+	priv := read(t, "PRIVACY.md")
+	for _, must := range []string{"conversations", "90", "DELETE /v1/conversations/{id}"} {
+		if !strings.Contains(priv, must) {
+			t.Errorf("PRIVACY.md must disclose %q", must)
+		}
+	}
+}
+
 // RULE the rules document only cites tests that exist: every `TestX` named in docs/RULES.md
 // must be defined somewhere in the module, so an enforcement column can never go stale.
 func TestPolicyRulesCiteRealTests(t *testing.T) {
@@ -399,6 +473,46 @@ func TestPolicyConsoleClassesExist(t *testing.T) {
 	}
 	if len(seen) < 40 {
 		t.Fatalf("only %d tower-* names found — the scan is broken, not the console", len(seen))
+	}
+}
+
+// ---- presence-reporting fake: healthy backend with a partial pulled set ----
+
+type presenceFake struct {
+	fake
+	pulled map[string]bool
+}
+
+func (f *presenceFake) PulledModels(ctx context.Context) (map[string]bool, error) {
+	return f.pulled, nil
+}
+
+// RULE Track J: a request for a model that is not on disk is a loud 503 in the
+// one error shape — never a 502 surprise at request time, never a silent skip.
+func TestPolicyModelNotPulledIsOneErrorShape(t *testing.T) {
+	pb := &presenceFake{fake: fake{local: true, text: "hi"},
+		pulled: map[string]bool{"fast-m": true}}
+	srv := router.NewServer("fast-m", "quality-m", pb)
+	prober := router.NewHealthProber(srv.Metrics, pb)
+	prober.ProbeOnce(context.Background())
+	srv.Prober = prober
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewReader([]byte(`{"model":"quality-m","messages":[{"role":"user","content":"hi"}]}`)))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != 503 {
+		t.Fatalf("explicit unpulled model: status %d, want 503 (%s)", rec.Code, rec.Body.String())
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &generic); err != nil {
+		t.Fatalf("not JSON: %s", rec.Body.String())
+	}
+	e, _ := generic["error"].(map[string]any)
+	if e == nil || e["code"] != "model_not_pulled" || e["message"] == "" || e["trace_id"] == "" {
+		t.Fatalf("error shape violated: %s", rec.Body.String())
+	}
+	if pb.calls != 0 {
+		t.Fatalf("unpulled model attempted %d times", pb.calls)
 	}
 }
 

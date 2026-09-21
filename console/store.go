@@ -6,10 +6,12 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"time"
 
 	"agentops/evals"
+	"agentops/tracker"
 )
 
 // Request is one router chat as the UI shows it, assembled from its route.decide and
@@ -46,6 +48,7 @@ type EvalRun struct {
 	ID        int       `json:"id"`
 	Golden    string    `json:"golden_version"`
 	Judge     string    `json:"judge_model"`
+	Model     string    `json:"model"`
 	Score     float64   `json:"score"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -72,12 +75,50 @@ type Store interface {
 	RecentRequests(ctx context.Context, limit int) ([]Request, error)
 	Overview(ctx context.Context) (Overview, error)
 	EvalRuns(ctx context.Context, golden string, limit int) ([]EvalRun, error)
+	// BenchmarkData feeds Track L's comparison: the latest scored run per
+	// model for a golden version plus recent model-run history.
+	BenchmarkData(ctx context.Context, golden string) (BenchmarkInput, error)
 	Workflows(ctx context.Context, limit int) ([]Workflow, error)
+	// Conversations is the cockpit shelf. Prompts ARE stored here (unlike span
+	// attrs) — purpose-limited to thread continuity, 90-day retention, user
+	// erasable. See PRIVACY.md.
+	Conversations(ctx context.Context, limit int) ([]Conversation, error)
+	CreateConversation(ctx context.Context, title, model string) (string, error)
+	ConversationMessages(ctx context.Context, id string, limit int) ([]Message, error)
+	AppendMessage(ctx context.Context, convID string, m Message) error
+	DeleteConversation(ctx context.Context, id string) error
+	PurgeConversations(ctx context.Context, olderThanDays int) (int64, error)
+}
+
+// Conversation is one stored thread on the cockpit shelf.
+type Conversation struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Model     string    `json:"model"`
+	Messages  int       `json:"messages"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Message is one stored turn. Content holds the prompt or answer verbatim.
+type Message struct {
+	ID               int64     `json:"id"`
+	Role             string    `json:"role"`
+	Content          string    `json:"content"`
+	Model            string    `json:"model"`
+	TraceID          string    `json:"trace_id"`
+	PromptTokens     int       `json:"prompt_tokens"`
+	CompletionTokens int       `json:"completion_tokens"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type SQLStore struct {
 	Query evals.Queryer
+	Exec  evals.Execer
+	Row   evals.Querier
 }
+
+// ErrConvNotFound answers 404: no thread with that id.
+var ErrConvNotFound = errors.New("conversation not found")
 
 type spanRow struct {
 	traceID, spanID, parentID, name string
@@ -219,7 +260,7 @@ func (s SQLStore) Overview(ctx context.Context) (Overview, error) {
 
 func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]EvalRun, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT id, golden_version, judge_model, score, created_at FROM eval_runs WHERE golden_version = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,
+		`SELECT id, golden_version, judge_model, model, score, created_at FROM eval_runs WHERE golden_version = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,
 		golden, limit)
 	if err != nil {
 		return nil, err
@@ -228,12 +269,90 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 	var out []EvalRun
 	for rows.Next() {
 		var r EvalRun
-		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.Score, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.Model, &r.Score, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// BenchmarkData returns the latest scored run per model for a golden version
+// (untagged golden-answer runs never compare) plus the recent model-run
+// history for the page.
+func (s SQLStore) BenchmarkData(ctx context.Context, golden string) (BenchmarkInput, error) {
+	in := BenchmarkInput{Golden: golden}
+	rows, err := s.Query.Query(ctx,
+		`SELECT DISTINCT ON (model) id, model, judge_model FROM eval_runs WHERE golden_version = $1 AND model != '' ORDER BY model, created_at DESC, id DESC`,
+		golden)
+	if err != nil {
+		return in, err
+	}
+	type runHead struct {
+		id    int
+		model string
+		judge string
+	}
+	var heads []runHead
+	for rows.Next() {
+		var h runHead
+		if err := rows.Scan(&h.id, &h.model, &h.judge); err != nil {
+			rows.Close()
+			return in, err
+		}
+		heads = append(heads, h)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return in, err
+	}
+	for _, h := range heads {
+		rd := ModelRunData{Model: h.model, Judge: h.judge}
+		prows, err := s.Query.Query(ctx,
+			`SELECT question, faithfulness, latency_s, tokens, retrieval_miss FROM eval_pair_scores WHERE run_id = $1`,
+			h.id)
+		if err != nil {
+			return in, err
+		}
+		for prows.Next() {
+			var q string
+			var f *float64
+			var lat float64
+			var tok int
+			var miss bool
+			if err := prows.Scan(&q, &f, &lat, &tok, &miss); err != nil {
+				prows.Close()
+				return in, err
+			}
+			if miss || f == nil {
+				rd.Misses++
+				continue
+			}
+			rd.Pairs = append(rd.Pairs, ScoredPair{Question: q, Faithfulness: *f, LatencyS: lat, Tokens: tok})
+		}
+		prows.Close()
+		if err := prows.Err(); err != nil {
+			return in, err
+		}
+		in.Runs = append(in.Runs, rd)
+	}
+	hrows, err := s.Query.Query(ctx,
+		`SELECT id, model, judge_model, score, created_at FROM eval_runs WHERE golden_version = $1 AND model != '' ORDER BY created_at DESC, id DESC LIMIT 10`,
+		golden)
+	if err != nil {
+		return in, err
+	}
+	defer hrows.Close()
+	for hrows.Next() {
+		var h RunHistory
+		var created time.Time
+		if err := hrows.Scan(&h.ID, &h.Model, &h.Judge, &h.Score, &created); err != nil {
+			return in, err
+		}
+		h.Created = created.Format(time.RFC3339)
+		in.History = append(in.History, h)
+	}
+	return in, hrows.Err()
 }
 
 func (s SQLStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) {
@@ -282,4 +401,130 @@ func (s SQLStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) 
 		}
 	}
 	return out, srows.Err()
+}
+
+// Conversations lists threads newest-first with their message counts.
+func (s SQLStore) Conversations(ctx context.Context, limit int) ([]Conversation, error) {
+	rows, err := s.Query.Query(ctx,
+		`SELECT c.id, c.title, c.model, COUNT(m.id), c.updated_at FROM conversations c
+		 LEFT JOIN messages m ON m.conv_id = c.id
+		 GROUP BY c.id ORDER BY c.updated_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Conversation
+	for rows.Next() {
+		var c Conversation
+		if err := rows.Scan(&c.ID, &c.Title, &c.Model, &c.Messages, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	if out == nil {
+		out = []Conversation{}
+	}
+	return out, rows.Err()
+}
+
+// CreateConversation opens a thread. An empty title is filled from the first
+// user message on append.
+func (s SQLStore) CreateConversation(ctx context.Context, title, model string) (string, error) {
+	if s.Exec == nil {
+		return "", errors.New("conversation store not configured")
+	}
+	id := tracker.NewWorkflowID()
+	if _, err := s.Exec.Exec(ctx,
+		`INSERT INTO conversations (id, title, model) VALUES ($1, $2, $3)`, id, title, model); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (s SQLStore) ConversationMessages(ctx context.Context, id string, limit int) ([]Message, error) {
+	rows, err := s.Query.Query(ctx,
+		`SELECT id, role, content, model, trace_id, prompt_tokens, completion_tokens, created_at
+		 FROM messages WHERE conv_id = $1 ORDER BY id ASC LIMIT $2`, id, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &m.Model, &m.TraceID, &m.PromptTokens, &m.CompletionTokens, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if out == nil {
+		// Distinguish empty thread from unknown id.
+		var one int
+		if err := s.Row.QueryRow(ctx, `SELECT 1 FROM conversations WHERE id = $1`, id).Scan(&one); err != nil {
+			return nil, ErrConvNotFound
+		}
+		out = []Message{}
+	}
+	return out, rows.Err()
+}
+
+// AppendMessage stores one turn and refreshes the thread clock. The first user
+// message names an untitled thread (first 60 chars).
+func (s SQLStore) AppendMessage(ctx context.Context, convID string, m Message) error {
+	if s.Exec == nil {
+		return errors.New("conversation store not configured")
+	}
+	if m.PromptTokens < 0 {
+		m.PromptTokens = 0
+	}
+	if m.CompletionTokens < 0 {
+		m.CompletionTokens = 0
+	}
+	tag, err := s.Exec.Exec(ctx,
+		`UPDATE conversations SET updated_at = now() WHERE id = $1`, convID)
+	if err != nil {
+		return err
+	}
+	if tag == 0 {
+		return ErrConvNotFound
+	}
+	if _, err := s.Exec.Exec(ctx,
+		`INSERT INTO messages (conv_id, role, content, model, trace_id, prompt_tokens, completion_tokens)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		convID, m.Role, m.Content, m.Model, m.TraceID, m.PromptTokens, m.CompletionTokens); err != nil {
+		return err
+	}
+	if m.Role == "user" {
+		title := m.Content
+		if r := []rune(title); len(r) > 60 {
+			title = string(r[:60]) + "…"
+		}
+		_, _ = s.Exec.Exec(ctx,
+			`UPDATE conversations SET title = $2 WHERE id = $1 AND (title IS NULL OR title = '')`, convID, title)
+	}
+	return nil
+}
+
+// DeleteConversation erases a thread; messages follow by ON DELETE CASCADE.
+func (s SQLStore) DeleteConversation(ctx context.Context, id string) error {
+	if s.Exec == nil {
+		return errors.New("conversation store not configured")
+	}
+	tag, err := s.Exec.Exec(ctx, `DELETE FROM conversations WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag == 0 {
+		return ErrConvNotFound
+	}
+	return nil
+}
+
+// PurgeConversations deletes threads idle longer than days. Returns rows dropped.
+func (s SQLStore) PurgeConversations(ctx context.Context, days int) (int64, error) {
+	if s.Exec == nil {
+		return 0, errors.New("conversation store not configured")
+	}
+	return s.Exec.Exec(ctx,
+		`DELETE FROM conversations WHERE updated_at < now() - make_interval(days => $1)`, days)
 }

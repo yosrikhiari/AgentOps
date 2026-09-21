@@ -18,7 +18,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
   Claude Desktop ──► │ mcp (--mcp): list_models · get_stats · route_test_request · inspect_trace ·    │
                      │             get_drift_report  (JSON-RPC 2.0 over stdio)                       │
   browser  /  ─────► │ Tower console: overview · traffic · backend health · trace inspector ·         │
-                     │                evals & drift · workflows   (embedded, no build step)          │
+                     │                evals & drift · workflows · cockpit   (embedded, no build step)   │
                      └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -31,7 +31,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 | Route chat requests between a fast and a quality local model on a rule you can read, with a cloud fallback that is *never* used for sensitive data | `router/` | `reason` on every response; `TestSensitiveNeverLeavesBox` |
 | Speak the OpenAI chat shape, streaming included, to any client library | `router/server.go` | `TestOpenAIShape`, `TestStreamSSE`; [`docs/API.md`](docs/API.md) |
 | Virtual API keys with per-minute limits and token budgets | `router/keys.go`, `--create-key` | live 200/429/429/429 on a 2-rpm key |
-| Hand-written Prometheus metrics + a provisioned Grafana dashboard | `router/metrics.go`, `dashboard/` | k6: 0/2725 failed at 50 RPS, p99 70 ms |
+| Hand-written Prometheus exposition + Tower-native dashboard panels (per-model counts, p50/p99, tokens, error rate) | `router/metrics.go`, `console/` `#/overview` | k6: 0/2725 failed at 50 RPS, p99 70 ms |
 | Keep a multi-step agent alive through `kill -9` and resume without repeating work | `tracker/` | `TestKillResume` + a recorded live kill |
 | Score answers claim-by-claim against retrieved sources, store every run, alert on drift | `evals/` | golden v3 (72 pairs) **0.972** — 70/70 faithful where retrieval hit, 2 retrieval misses; v2 (48) 1.000 |
 | One trace per request: `trace_id / span_id / parent_id`, prompts never stored | `GET /v1/traces/{id}`, `--trace`, MCP | 3 chained spans per chat |
@@ -44,7 +44,6 @@ Requirements: Go 1.22+, Docker, [Ollama](https://ollama.com) with `nomic-embed-t
 
 ```bash
 docker compose up -d                      # Postgres 16 + pgvector on :5432
-docker compose --profile monitoring up -d # optional: Prometheus :9090 + Grafana :3000 (dashboard provisioned)
 go run . --migrate                        # migrations/*.sql, tracked in schema_migrations
 python scripts/clean_docs.py              # corpus/*.md → evals/corpus/clean/*.jsonl
 go run . --ingest                         # embed chunks with nomic-embed-text → pgvector
@@ -84,8 +83,10 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--create-key NAME --key-rpm N --key-budget T` | mint a virtual API key (secret printed once, SHA-256 stored) |
 | `--run-tracker [--tracker-input "q"]` / `--resume-tracker <id>` | run / resume the 3-step toy agent; kill it mid-step and resume |
 | `--trace <id>` | print redacted spans for a chat or workflow |
+| `--advise` | print the static model advisor report (Track K: per-model size/VRAM fit, presence, co-residency verdict) and exit |
 | `--draft-golden` → review → `--freeze-golden` | build a golden set (`--golden-version vN`): LLM drafts, human reviews, validator rejects unscorable answers, hash frozen |
 | `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show) |
+| `--score-model NAME` | with `--score`: generate each answer with MODEL (temperature 0, 256 tokens) instead of scoring frozen answers; tags the run for Track L model comparison |
 | `--version` | print the version stamped at release |
 
 Environment variables are listed in [`docs/API.md`](docs/API.md#backends-environment).
@@ -102,7 +103,6 @@ mcp/         JSON-RPC 2.0 over stdio, 5 tools
 console/     Tower web UI (embedded static/) + its JSON endpoints
 migrations/  0001_init.sql, 0002_drift.sql, 0003_api_keys.sql   (applied once each, recorded in schema_migrations)
 corpus/      15 short docs describing this system — the RAG target; golden sets in evals/golden/
-dashboard/   grafana/router.json + provisioning, prometheus/prometheus.yml
 load-tests/  router.js (k6: 50 RPS on /health, p99 gate)
 lessons/     33 plain-language HTML lessons on this repo — open lessons/index.html
 docs/        MARKET.md (market study + roadmap) · RULES.md (engineering rules) · API.md · VRAM.md · adr/ (8 decision records) · tower-design-system.html (the console design system, live against console/static/tower.css) · tower-enhancements.html (20 worked UI/UX enhancements with demos)

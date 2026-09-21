@@ -59,7 +59,7 @@ curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Cont
 
 **Sensitive data (fail-closed)** — mark a request with header `X-AgentOps-Sensitive: true` or body `"sensitive": true`; a small keyword list (`password`, `iban`, `passport`, `confidentiel`, …; override with `SENSITIVE_KEYWORDS=a,b,c`) also flags it. A sensitive request never reaches a non-local model: every non-local candidate is removed from the chain — the classified tier included — and naming a non-local model explicitly returns `403 sensitive_cloud_blocked`. **Locality is per model, not per backend:** Ollama's hosted models (`name:cloud`) are served through the local API but count as non-local (`GET /v1/models` shows `local:false`). If no local model remains, the request is refused with the same 403 rather than sent anywhere.
 
-Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (every candidate failed), `504 timeout` (`REQUEST_TIMEOUT`, default 300s).
+Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (every candidate failed), `503 model_not_pulled` (the named or tier model is served on paper but not on disk — `run: ollama pull <model>` in the message; 403 still wins for sensitive-to-cloud), `504 timeout` (`REQUEST_TIMEOUT`, default 300s).
 
 **Generation parameters (v1.1, ADR-0009)** — beyond `max_tokens`, the request may carry `temperature`, `top_p`, `seed`, `stop` (string or list) and `response_format` (`{"type":"json_object"}` or `{"type":"json_schema","json_schema":{"schema":{…}}}`) in the OpenAI shape, plus the Ollama-native `format` (`"json"` or a schema), `options` (passthrough: `num_ctx`, `num_gpu`, `repeat_penalty`, …), `keep_alive` and `think` (`false` stops a reasoning model such as qwen3 from spending `num_predict` on chain-of-thought). All are optional; absent means model default. The Ollama backend merges the named parameters into `options` (named ones win over duplicates in the passthrough map) and sends `format` / `keep_alive` as top-level fields; the OpenAI backend forwards `temperature`/`top_p`/`seed`/`stop`/`response_format` and drops the Ollama-only knobs. The `model.generate` span records the values under `params` (kind of format, never the schema itself) and `params_forwarded: true|false` (false for a backend that only implements the v1.0 interface).
 
@@ -82,7 +82,13 @@ curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -H '
 ]}
 ```
 
-`up` is the last health probe (every 15 s; also `router_backend_up{backend}` on `/metrics`).
+`up` is the last health probe (every 15 s; also `router_backend_up{backend}` on `/metrics`)
+**and** presence: a served model Ollama does not have on disk reads `up:false`
+with `reason:"not_pulled"` instead of failing at request time (Track J — the
+prober refreshes the pulled set from `GET /api/tags` every tick; boot and every
+gap log `model "X" not pulled — run: ollama pull X`). Path-like
+`OLLAMA_MODELS` entries are never registered (Ollama itself uses that variable
+for its models directory).
 
 ## Backends (environment)
 
@@ -110,11 +116,33 @@ Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval
 | `EMBED_MODEL` | `nomic-embed-text` | embeddings for ingest and retrieval (768 dims) |
 | `DRAFT_MODEL` | `qwen3:8b` | model that drafts golden pairs |
 
+## Conversations (cockpit shelf)
+
+Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`
+(purpose: thread continuity; 90-day idle retention with boot purge; per-thread delete).
+
+- `GET /v1/conversations?limit=20` — newest first: `{id, title, model, messages, updated_at}`. Title auto-fills from the first user message.
+- `POST /v1/conversations` (`{title?, model?}`) — open a thread → `{id}`.
+- `GET /v1/conversations/{id}/messages?limit=500` — `{messages:[{id, role, content, model, trace_id, prompt_tokens, completion_tokens, created_at}]}`; unknown id → `404 conversation_not_found`.
+- `POST /v1/conversations/{id}/messages` (`{role: user|assistant, content, model?, trace_id?, prompt_tokens?, completion_tokens?}`) — record one turn → `{status:"stored"}`; bad role or empty content → `400 bad_request`.
+- `DELETE /v1/conversations/{id}` — erase thread and messages → `204`; unknown id → `404`.
+
 ## Observability endpoints
 
 - `GET /metrics` — Prometheus exposition (`router_requests_total`, `router_errors_total`, `router_tokens_total`, `router_latency_seconds`, `router_backend_up`, `router_key_*`, `eval_faithfulness`).
 - `GET /v1/traces/{trace_id}` — every span of one request or workflow (`trace_id, span_id, parent_id, name, started_at, attrs`), prompts redacted; `404 trace_not_found`. Spans are written when their work completes, so `started_at` is the end time; `attrs.latency_s` (router `model.generate`, every tracker step) gives the duration.
-- `GET /v1/drift/report` — last two eval runs for the default golden version.
+- `GET /v1/drift/report` — last two eval runs for the default golden version: `{score_then, score_now, delta, alert, runs, misses_now, misses_then, worst_cases[{question, faithfulness|null, precision, recall, retrieval_miss}]}`. `score` averages retrieved pairs only; a pair with `recall=0` is a `retrieval_miss` (stored as `faithfulness NULL`, judge never called) and is excluded from the average. History starts clean — runs before `0004_retrieval_miss.sql` keep their old scores.
+- `POST /mcp` — MCP over HTTP for remote agents: one JSON-RPC request per POST
+  (`tools/list`, `tools/call` with the same five tools as `--mcp` stdio, answered
+  by the same handler). With `REQUIRE_API_KEY=true` a valid Bearer key is required
+  (`401 missing_api_key` / `invalid_api_key`, `403 api_key_disabled`, one error shape);
+  RPM/budget accounting stays on the chat path. Every call emits a redacted
+  `mcp.tool` span. Bodies over 1 MB are refused with `400 bad_request`.
+- `GET /v1/events` — redacted spans as server-sent events (`data: {trace_id,
+  span_id, parent_id, name, attrs}` + `: ping` heartbeats) for the Tower `#/live`
+  rail. In-memory fan-out, 64-deep per subscriber, slow readers drop and count —
+  telemetry loss, never backpressure. Same redaction and localhost posture as the
+  trace endpoint.
 - `GET /health` — liveness.
 
 ## Shutdown
@@ -130,6 +158,7 @@ The web UI is served by the same binary from embedded files — no build step, n
 | `GET /v1/overview` | KPI header: last-hour traffic (`requests_last_hour/minute`, `p50/p99_latency_s`, `tokens_last_hour`, `errors_last_hour`, `by_model`) from spans, `models` + `backends` with health, `since_start` counters, latest `drift` for the default golden, `judge_cost_usd` (0 — local + Groq free tier), `version` |
 | `GET /v1/requests?limit=30` | newest router chats first, one row per trace assembled from its `route.decide` + `model.generate` spans: model, backend, tier, reason, sensitive, latency, tokens, fallback, error |
 | `GET /v1/evals/runs?golden=v2&limit=50` | every `eval_runs` row for a golden version + its drift report (worst cases included) |
+| `GET /v1/benchmarks?golden=v3` | Track L comparison: latest scored run per model (same golden version), per-scenario faithfulness split by routing reason, verdict (`winner` only at n≥100 / p<0.05, else `tied — route on cost`), plus recent model-run history; differing judges invalidate |
 | `GET /v1/evals/status` | `{running, started_at, finished_at, error, golden_version}` of the console-triggered run |
 | `POST /v1/evals/run` `{"golden_version":"v2"}` | starts one suite run in the background → `202`; a second while one runs → `409 eval_running` |
 | `GET /v1/workflows?limit=20` | workflows newest first with their steps (`seq, name, status, attempts, output_snippet`) |

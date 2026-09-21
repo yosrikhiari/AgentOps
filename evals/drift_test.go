@@ -3,6 +3,7 @@ package evals
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -18,10 +19,21 @@ func (d *driftMemDB) Exec(ctx context.Context, sql string, args ...any) (int64, 
 	if len(args) >= 5 {
 		if id, ok := args[0].(int); ok {
 			q, _ := args[1].(string)
-			f, _ := args[2].(float64)
+			var f *float64
+			switch v := args[2].(type) {
+			case float64:
+				fv := v
+				f = &fv
+			case nil:
+				f = nil // retrieval miss → NULL
+			}
 			p, _ := args[3].(float64)
 			r, _ := args[4].(float64)
-			d.pairs[id] = append(d.pairs[id], WorstCase{Question: q, Faithfulness: f, Precision: p, Recall: r})
+			miss := false
+			if len(args) >= 6 {
+				miss, _ = args[5].(bool)
+			}
+			d.pairs[id] = append(d.pairs[id], WorstCase{Question: q, Faithfulness: f, Precision: p, Recall: r, RetrievalMiss: miss})
 			return 1, nil
 		}
 	}
@@ -46,8 +58,9 @@ func (d *driftMemDB) QueryRow(ctx context.Context, sql string, args ...any) Row 
 	d.nextID++
 	golden, _ := args[0].(string)
 	judge, _ := args[1].(string)
-	score, _ := args[2].(float64)
-	d.runs = append([]runRow{{id: d.nextID, golden: golden, judge: judge, score: score}}, d.runs...)
+	model, _ := args[2].(string)
+	score, _ := args[3].(float64)
+	d.runs = append([]runRow{{id: d.nextID, golden: golden, judge: judge, model: model, score: score}}, d.runs...)
 	return driftRow{id: d.nextID}
 }
 
@@ -76,6 +89,15 @@ func (r *driftRows) Scan(dest ...any) error {
 			*p = row[i].(string)
 		case *float64:
 			*p = row[i].(float64)
+		case **float64:
+			if row[i] == nil {
+				*p = nil
+			} else {
+				fv := row[i].(float64)
+				*p = &fv
+			}
+		case *bool:
+			*p = row[i].(bool)
 		default:
 			return fmt.Errorf("type")
 		}
@@ -96,9 +118,22 @@ func (d *driftMemDB) Query(ctx context.Context, sql string, args ...any) (Rows, 
 			return &driftRows{rows: rows}, nil
 		}
 		if id, ok := args[0].(int); ok {
+			if strings.Contains(sql, "COUNT(*)") {
+				n := 0
+				for _, w := range d.pairs[id] {
+					if w.RetrievalMiss {
+						n++
+					}
+				}
+				return &driftRows{rows: [][]any{{n}}}, nil
+			}
 			var rows [][]any
 			for _, w := range d.pairs[id] {
-				rows = append(rows, []any{w.Question, w.Faithfulness, w.Precision, w.Recall})
+				var f any
+				if w.Faithfulness != nil {
+					f = *w.Faithfulness
+				}
+				rows = append(rows, []any{w.Question, f, w.Precision, w.Recall, w.RetrievalMiss})
 			}
 			return &driftRows{rows: rows}, nil
 		}
@@ -112,13 +147,17 @@ func TestRecordAndDriftReport(t *testing.T) {
 	pairs := []PairResult{
 		{Question: "q1", Faithfulness: 0.2, Precision: 0.5, Recall: 1},
 		{Question: "q2", Faithfulness: 0.9, Precision: 1, Recall: 1},
+		{Question: "q-miss", Precision: 0, Recall: 0, RetrievalMiss: true},
 	}
-	id, err := RecordRun(ctx, db, db, "v1", "test-judge", 0.55, pairs)
+	id, err := RecordRun(ctx, db, db, "v1", "test-judge", "test-model", 0.55, pairs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id == 0 {
 		t.Fatal("want run id")
+	}
+	if db.runs[0].model != "test-model" {
+		t.Fatalf("model under test not recorded: %+v", db.runs[0])
 	}
 	db.runs = append(db.runs, runRow{id: 99, golden: "v1", judge: "old", score: 0.95})
 	rep, err := DriftReportFor(ctx, db, "v1", 0.7)
@@ -140,8 +179,17 @@ func TestRecordAndDriftReport(t *testing.T) {
 	if rep.JudgeNow != "test-judge" || rep.JudgeThen != "old" || !rep.JudgeChanged {
 		t.Fatalf("judge provenance missing: %+v", rep)
 	}
-	if len(rep.WorstCases) != 2 || rep.WorstCases[0].Question != "q1" {
+	if len(rep.WorstCases) != 3 {
+		t.Fatalf("want 3 worst cases, got %+v", rep.WorstCases)
+	}
+	if !rep.WorstCases[0].RetrievalMiss || rep.WorstCases[0].Faithfulness != nil {
+		t.Fatalf("miss must sort first with NULL faithfulness: %+v", rep.WorstCases[0])
+	}
+	if rep.WorstCases[1].Question != "q1" {
 		t.Fatalf("worst cases not sorted: %+v", rep.WorstCases)
+	}
+	if rep.MissesNow != 1 {
+		t.Fatalf("want 1 miss now, got %+v", rep)
 	}
 	calm, err := DriftReportFor(ctx, &driftMemDB{pairs: map[int][]WorstCase{}}, "v1", 0.7)
 	if err != nil {

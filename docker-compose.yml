@@ -16,35 +16,10 @@ services:
       timeout: 3s
       retries: 10
 
-  # docker compose --profile monitoring up -d   → Prometheus :9090 scrapes the router on the
-  # host, Grafana :3000 (admin/admin, anonymous viewer) comes up with the datasource and the
-  # router dashboard already provisioned — nothing to import by hand.
-  prometheus:
-    image: prom/prometheus:v2.53.0
-    profiles: ["monitoring"]
-    container_name: agentops-prometheus
-    volumes:
-      - ./dashboard/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  grafana:
-    image: grafana/grafana:11.1.0
-    profiles: ["monitoring"]
-    container_name: agentops-grafana
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-    volumes:
-      - ./dashboard/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./dashboard/grafana/router.json:/var/lib/grafana/dashboards/router.json:ro
-    ports:
-      - "3000:3000"
-    depends_on:
-      - prometheus
+  # Tower #/overview is the dashboard (per-model counts, p50/p99, tokens,
+  # error rate, faithfulness — drawn from spans, no scrape step). /metrics stays
+  # as a plain-text exposition for debugging; there is no Grafana/Prometheus
+  # stack to run.
 
   # docker compose --profile app up -d   → the router in a container, talking to Ollama on the
   # host and to the postgres service. Run `--migrate` once: docker compose run --rm agentops --migrate

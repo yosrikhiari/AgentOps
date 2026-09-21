@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tower — Live rail playbook (20 full-page examples)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Single source of truth: the CSS the console ships. This file adds study chrome + candidates. -->
+<link rel="stylesheet" href="../console/static/tower.css">
+<style>
+  .x-intro{ color:var(--tower-ink-muted); font-size:13.5px; max-width:860px; line-height:1.6; }
+  .x-ex{ scroll-margin-top:72px; margin-bottom:34px; }
+  .x-head{ display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:6px; }
+  .x-num{ font-family:var(--tower-font-mono); font-size:12px; color:var(--tower-amber); }
+  .x-head h2{ font-size:17px; margin:0; }
+  .x-tags{ display:flex; gap:6px; margin-left:auto; }
+  .x-tag{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; padding:2px 7px; border-radius:100px; border:1px solid var(--tower-border); color:var(--tower-ink-muted); }
+  .x-tag.ship{ border-color:var(--tower-green-dim); color:var(--tower-green); background:var(--tower-green-dim); }
+  .x-tag.rec{ border-color:var(--tower-amber-dim); color:var(--tower-amber); background:var(--tower-amber-dim); }
+  .x-cols{ display:grid; grid-template-columns:minmax(0,280px) minmax(0,1.4fr); gap:16px; align-items:start; }
+  @media (max-width:1000px){ .x-cols{ grid-template-columns:1fr; } }
+  .x-kicker{ font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--tower-ink-faint); margin:10px 0 4px; }
+  .x-kicker:first-child{ margin-top:0; }
+  .x-p{ color:var(--tower-ink-muted); font-size:13px; line-height:1.55; margin:0; }
+  .x-p b{ color:var(--tower-ink); font-weight:500; }
+  .x-cite{ font-family:var(--tower-font-mono); font-size:11px; color:var(--tower-amber); }
+  .x-demo{ border:1px dashed var(--tower-border); border-radius:var(--tower-radius-md); padding:14px; position:relative; background:var(--tower-surface); }
+  .x-demo-label{ position:absolute; top:-8px; left:12px; background:var(--tower-ground); padding:0 6px; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--tower-ink-faint); }
+  .x-toc{ columns:2; font-size:12.5px; color:var(--tower-ink-muted); max-width:860px; }
+  .x-toc a{ color:var(--tower-ink-muted); text-decoration:none; } .x-toc a:hover{ color:var(--tower-amber); }
+  .x-pick{ border:1px solid var(--tower-amber-dim); background:var(--tower-amber-dim); border-radius:var(--tower-radius-md); padding:14px 16px; max-width:860px; color:var(--tower-amber); font-size:13.5px; line-height:1.6; }
+  .x-pagehead{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .x-pagehead h3{ margin:0; font-size:14px; }
+  .x-grid2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  @media (max-width:700px){ .x-grid2{ grid-template-columns:1fr; } }
+
+  /* ===== Candidate additions (as they would ship in tower.css) ===== */
+  @keyframes tower-live-shimmer{ 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .tower-live-running{ background:linear-gradient(90deg,var(--tower-amber-dim),var(--tower-amber),var(--tower-amber-dim)); background-size:200% 100%; animation:tower-live-shimmer 1.1s linear infinite; color:var(--tower-ground); }
+  @keyframes tower-live-pop{ 0%{transform:scale(.6)} 60%{transform:scale(1.15)} 100%{transform:scale(1)} }
+  .tower-live-pop{ animation:tower-live-pop .35s ease-out; display:inline-flex; }
+  @keyframes tower-live-ripple{ 0%{box-shadow:0 0 0 0 var(--tower-amber-dim)} 100%{box-shadow:0 0 0 12px transparent} }
+  .tower-live-ripple{ animation:tower-live-ripple .8s ease-out; border-radius:var(--tower-radius-sm); }
+  @keyframes tower-live-blink{ 0%,100%{opacity:1} 50%{opacity:.25} }
+  .tower-live-dot{ width:8px; height:8px; border-radius:50%; background:var(--tower-green); animation:tower-live-blink 2s ease-in-out infinite; display:inline-block; }
+  @keyframes tower-live-rise{ from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none} }
+  .tower-live-rise{ animation:tower-live-rise .3s ease-out; }
+  @keyframes tower-live-shake{ 0%,100%{transform:none} 25%{transform:translateX(-3px)} 75%{transform:translateX(3px)} }
+  .tower-live-shake{ animation:tower-live-shake .3s ease-out; }
+  .tower-live-bar{ height:10px; border-radius:3px; background:var(--tower-ink-faint); transition:width .5s ease, background .3s ease; min-width:3px; }
+  .tower-live-bar.run{ background:linear-gradient(90deg,var(--tower-amber-dim),var(--tower-amber)); background-size:200% 100%; animation:tower-live-shimmer 1.1s linear infinite; }
+  .tower-live-bar.done{ background:var(--tower-green); }
+  .tower-live-bar.bad{ background:var(--tower-red); }
+  .tower-live-track{ background:var(--tower-ground); border:1px solid var(--tower-border-soft); border-radius:3px; padding:2px; margin-top:4px; }
+  .tower-live-row{ display:grid; grid-template-columns:130px 1fr 52px; gap:8px; align-items:center; font-size:11.5px; color:var(--tower-ink-muted); margin-top:6px; }
+  .tower-live-spark{ display:flex; align-items:flex-end; gap:2px; height:44px; }
+  .tower-live-spark i{ flex:1; background:var(--tower-ink-faint); border-radius:1px; min-height:2px; }
+  .tower-live-spark i.hot{ background:var(--tower-amber); }
+  .tower-live-odo{ font-family:var(--tower-font-mono); font-size:26px; color:var(--tower-ink); }
+  .tower-live-odo small{ font-size:11px; color:var(--tower-ink-faint); }
+  @media (prefers-reduced-motion: reduce){ .tower-live-running,.tower-live-pop,.tower-live-ripple,.tower-live-dot,.tower-live-rise,.tower-live-shake,.tower-live-bar.run{ animation:none !important; } }
+</style>
+</head>
+<body>
+<div class="tower-shell">
+  <div class="tower-main" style="grid-column:1/-1">
+    <header class="tower-statusstrip"><h1>Live rail playbook — 20 full pages</h1></header>
+    <main class="tower-content">
+      <p class="x-intro">Twenty complete <b>#/live</b> page compositions — same rail, twenty game feels. Each demo
+      below is a whole page: head chrome plus a rail of tickets in various states. What ships today is the
+      ticket + flash base (<b>02</b>). Everything is Tower-token-only, motion-safe, simulated with honest shapes.
+      Aesthetic: <b>industrial-utilitarian</b> with a playful whisper; pills for states, chips for facts.
+      Chain, traced: <span class="x-cite">main.go spanWriter+Hub</span> → <span class="x-cite">GET /v1/events (events.go)</span>
+      → <span class="x-cite">pageLive() (console/static/app.js)</span> → <span class="x-cite">tower-ticket* (tower.css)</span>.</p>
+      <div class="x-pick"><b>My recommendation: example 01 — the full regrouped waterfall rail.</b> It folds in
+      flash, stages, shimmer, error flags, pop, presence, heartbeat and odometer — everything from our regroup
+      that shares one surface — while parking race, streak, sparkline, constellation and recap for Overview.
+      Tell me to proceed and I build 01.</div>
+      <h3 class="x-kicker">Contents</h3>
+      <div class="x-toc">
+        <div><a href="#ex01">01 waterfall rail ★</a> · <a href="#ex02">02 calm pills rail</a> · <a href="#ex03">03 race rail</a> · <a href="#ex04">04 streak rail</a> · <a href="#ex05">05 saga rail</a></div>
+        <div><a href="#ex06">06 spell feed</a> · <a href="#ex07">07 presence rail</a> · <a href="#ex08">08 heartbeat chrome</a> · <a href="#ex09">09 error hunt</a> · <a href="#ex10">10 compact ops</a></div>
+        <div><a href="#ex11">11 hero + list</a> · <a href="#ex12">12 card grid</a> · <a href="#ex13">13 timeline strip</a> · <a href="#ex14">14 sparkline chrome</a> · <a href="#ex15">15 first-run journey</a></div>
+        <div><a href="#ex16">16 idle recap</a> · <a href="#ex17">17 calm reduced-motion</a> · <a href="#ex18">18 big number</a> · <a href="#ex19">19 model duel</a> · <a href="#ex20">20 night watch</a></div>
+      </div>
+
+      <section class="x-ex" id="ex01"><div class="x-head"><span class="x-num">01</span><h2>Waterfall rail ★ recommended</h2><div class="x-tags"><span class="x-tag rec">recommended</span><span class="x-tag">flow state</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">The full regroup: every ticket grows measured waterfall bars while stage pills track state. A race you watch finish.</p><div class="x-kicker">Combines</div><p class="x-p">Flash · stages · shimmer · error flag · pop · presence · heartbeat · odometer.</p><div class="x-kicker">Fit</div><p class="x-p">One surface, honest latencies, ~120 lines. The page anchor.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page — simulated feed</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-live-dot"></span><span class="tower-mono tower-muted" style="font-size:11.5px">3 traces · 9 spans</span></div>
+        <div class="tower-ticket tower-live-ripple" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span> <span class="tower-chip">qwen2.5:3b</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill degraded tower-live-running">model.generate …</span><span class="tower-chip">router.respond</span></div><div class="tower-live-row"><span>route.decide</span><div class="tower-live-track"><div class="tower-live-bar done" style="width:6%"></div></div><span class="tower-mono">4 ms</span></div><div class="tower-live-row"><span>model.generate</span><div class="tower-live-track"><div class="tower-live-bar run" style="width:45%"></div></div><span class="tower-mono">…</span></div></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">615181b4</span></span><span class="tower-mono tower-muted">2 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">researcher</span><span class="tower-pill healthy">drafter ×2</span><span class="tower-pill healthy tower-live-pop">reviewer</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">mcp</span> <span class="tower-mono">e376e153</span></span><span class="tower-mono tower-muted">3 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">mcp.tool</span><span class="tower-chip">route_test_request</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex02"><div class="x-head"><span class="x-num">02</span><h2>Calm pills rail</h2><div class="x-tags"><span class="x-tag ship">shipped base</span><span class="x-tag">progression</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">What ships today: tickets + stage pills + one flash, nothing else. The control group every other example is measured against.</p><div class="x-kicker">Combines</div><p class="x-p">Flash · stages. Nothing more.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">2 traces · 6 spans</span></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill healthy">router.respond</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">ce58d9eb</span></span><span class="tower-mono tower-muted">1 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill degraded">model.generate …</span><span class="tower-chip">router.respond</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex03"><div class="x-head"><span class="x-num">03</span><h2>Race rail</h2><div class="x-tags"><span class="x-tag">self-competition</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Each finished ticket bars itself against the session p50 ghost. Beat yourself, no leaderboard.</p><div class="x-kicker">Combines</div><p class="x-p">Waterfall + ghost bars. Honest only with ≥10 samples.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">you vs session p50</span></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span> <span class="tower-pill healthy">0.53 s beats p50</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-live-row"><span>this ticket</span><div class="tower-live-track"><div class="tower-live-bar done" style="width:42%"></div></div><span class="tower-mono">0.53 s</span></div><div class="tower-live-row"><span>session p50</span><div class="tower-live-track"><div class="tower-live-bar" style="width:64%"></div></div><span class="tower-mono">0.81 s</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">ce58d9eb</span> <span class="tower-pill degraded">running</span></span><span class="tower-mono tower-muted">1 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill degraded tower-live-running">model.generate …</span><span class="tower-chip">router.respond</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex04"><div class="x-head"><span class="x-num">04</span><h2>Streak rail</h2><div class="x-tags"><span class="x-tag">fixed schedule</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">N error-free traces light pips; a failure resets with the culprit linked. Streaks are data, not shame.</p><div class="x-kicker">Combines</div><p class="x-p">Pills rail + one streak line. One DOM line.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono" style="font-size:12px;color:var(--tower-amber)">●●●●●●○○ 6 clean</span></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill healthy">router.respond</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">ce58d9eb</span></span><span class="tower-mono tower-muted">1 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill degraded">router.respond …</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex05"><div class="x-head"><span class="x-num">05</span><h2>Saga rail</h2><div class="x-tags"><span class="x-tag">progression</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Workflow-first: attempts badges make durability the achievement; a turn ticker narrates the latest handoff.</p><div class="x-kicker">Combines</div><p class="x-p">Saga badges + turn ticker + quest pills.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">drafter → reviewer…</span></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">615181b4</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">researcher</span><span class="tower-pill healthy">drafter ×2</span><span class="tower-pill degraded tower-live-running">reviewer …</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">f7850f82</span></span><span class="tower-mono tower-muted">9 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">researcher</span><span class="tower-pill healthy">drafter</span><span class="tower-pill healthy">reviewer</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex06"><div class="x-head"><span class="x-num">06</span><h2>Spell feed</h2><div class="x-tags"><span class="x-tag">feedback juice</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">MCP-first: every tool cast ripples. The agent visibly does things while chats stay quiet below.</p><div class="x-kicker">Combines</div><p class="x-p">Ripple + tool chips. Kind filter implied.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">tool casts</span></div>
+        <div class="tower-ticket tower-live-ripple" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">mcp</span> <span class="tower-mono">e376e153</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">mcp.tool</span><span class="tower-chip">route_test_request</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">mcp</span> <span class="tower-mono">a91c04dd</span></span><span class="tower-mono tower-muted">4 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">mcp.tool</span><span class="tower-chip">get_stats</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex07"><div class="x-head"><span class="x-num">07</span><h2>Presence rail</h2><div class="x-tags"><span class="x-tag">transparency</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">The room feels inhabited: live backend + agent-role chips up top, tickets below. Who acts, at a glance.</p><div class="x-kicker">Combines</div><p class="x-p">Presence header + pills rail. Roles ride spans already.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-live-dot"></span><span class="tower-chip">ollama</span><span class="tower-chip">writer</span><span class="tower-mono tower-muted" style="font-size:11.5px">generating…</span></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span> <span class="tower-chip">writer</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill degraded tower-live-running">model.generate …</span><span class="tower-chip">router.respond</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">ce58d9eb</span> <span class="tower-chip">critic</span></span><span class="tower-mono tower-muted">2 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill healthy">router.respond</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex08"><div class="x-head"><span class="x-num">08</span><h2>Heartbeat chrome</h2><div class="x-tags"><span class="x-tag">alive proof</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Silence becomes visible: breathing dot + odometer prove the feed is alive even with zero traffic. A dead feed looks dead.</p><div class="x-kicker">Combines</div><p class="x-p">Heartbeat + odometer + pills rail.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-live-dot"></span><span class="tower-live-odo" style="font-size:18px">2 <small>traces</small> · 6 <small>spans</small></span></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill healthy">router.respond</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">mcp</span> <span class="tower-mono">e376e153</span></span><span class="tower-mono tower-muted">1 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">mcp.tool</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex09"><div class="x-head"><span class="x-num">09</span><h2>Error hunt</h2><div class="x-tags"><span class="x-tag">readable loss</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Failures float to the top, shake once, pin red, link the trace. The hunt, not the punishment.</p><div class="x-kicker">Combines</div><p class="x-p">Error flag + failed-first sort. Sort key only.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-pill critical">1 error on rail</span></div>
+        <div class="tower-ticket tower-live-shake" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">bad0cafe</span> <span class="tower-pill critical">error</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill critical">model.generate</span><span class="tower-chip">router.respond</span></div></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">2 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill healthy">router.respond</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex10"><div class="x-head"><span class="x-num">10</span><h2>Compact ops</h2><div class="x-tags"><span class="x-tag">density</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Density as a feature: 8 tickets, one line each, mono everything. For the operator watching all day.</p><div class="x-kicker">Combines</div><p class="x-p">Pills rail, zero bars, smaller caps. A density toggle, not a default.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">8 traces · compact</span></div>
+        <div class="tower-mono" style="font-size:11.5px;color:var(--tower-ink-muted);line-height:2">8ab907ff chat decide→generate→respond 0.53s<br>ce58d9eb chat decide→generate→respond 0.61s<br>615181b4 workflow researcher→drafter→reviewer 91s<br>e376e153 mcp tool ok<br>1f84a6fa chat decide→generate→respond 0.49s</div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex11"><div class="x-head"><span class="x-num">11</span><h2>Hero + list</h2><div class="x-tags"><span class="x-tag">focus</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">One trace is the hero — big stages, big link — the rest queue as mini rows. Focus plus context.</p><div class="x-kicker">Combines</div><p class="x-p">Waterfall hero + compact list. Two densities, one page.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">now: 8ab907ff</span></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span> <span class="tower-chip">qwen2.5:3b</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill degraded tower-live-running">model.generate …</span><span class="tower-chip">router.respond</span></div><div class="tower-live-row"><span>model.generate</span><div class="tower-live-track"><div class="tower-live-bar run" style="width:55%"></div></div><span class="tower-mono">…</span></div></div>
+        <div class="tower-mono" style="font-size:11.5px;color:var(--tower-ink-muted);line-height:2">ce58d9eb chat ✓ 0.61s<br>615181b4 workflow ✓ 91s<br>e376e153 mcp ✓</div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex12"><div class="x-head"><span class="x-num">12</span><h2>Card grid</h2><div class="x-tags"><span class="x-tag">overview</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Two-column card wall: more traces visible without scrolling. Breadth over depth.</p><div class="x-kicker">Combines</div><p class="x-p">Pills tickets in grid. Cheap, but noisier — a toggle at most.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">grid</span></div>
+        <div class="x-grid2"><div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span></div><div class="tower-steps"><span class="tower-pill healthy">decide</span><span class="tower-pill degraded">gen…</span></div></div><div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">mcp</span> <span class="tower-mono">e376e153</span></span></div><div class="tower-steps"><span class="tower-pill healthy">mcp.tool</span></div></div><div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">ce58d9eb</span></span></div><div class="tower-steps"><span class="tower-pill healthy">decide</span><span class="tower-pill healthy">gen</span><span class="tower-pill healthy">respond</span></div></div><div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">flow</span> <span class="tower-mono">f7850f82</span></span></div><div class="tower-steps"><span class="tower-pill healthy">researcher</span><span class="tower-pill degraded">drafter…</span></div></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex13"><div class="x-head"><span class="x-num">13</span><h2>Timeline strip</h2><div class="x-tags"><span class="x-tag">discovery</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Time as a ruler: one strip, ticks for spans, amber for errors. Incidents become shapes you can point at.</p><div class="x-kicker">Combines</div><p class="x-p">Strip + ticket detail below. Hand SVG like the traffic chart.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">last 10 min</span></div>
+        <svg viewBox="0 0 520 46" width="100%" style="display:block"><line x1="0" y1="34" x2="520" y2="34" stroke="var(--tower-border)" stroke-width="1"/><circle cx="60" cy="34" r="4" fill="var(--tower-green)"/><circle cx="150" cy="34" r="6" fill="var(--tower-green)"/><circle cx="260" cy="34" r="4" fill="var(--tower-green)"/><circle cx="370" cy="34" r="8" fill="var(--tower-amber)"/><circle cx="470" cy="34" r="5" fill="var(--tower-red)"/></svg>
+        <div class="tower-ticket" style="margin:8px 0 0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">bad0cafe</span> <span class="tower-pill critical">error</span></span><span class="tower-mono tower-muted">selected</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill critical">model.generate</span><span class="tower-chip">router.respond</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex14"><div class="x-head"><span class="x-num">14</span><h2>Sparkline chrome</h2><div class="x-tags"><span class="x-tag">discovery</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Pattern-spotting header: spans-per-minute bars, hot minutes amber. Rest beats read as rest.</p><div class="x-kicker">Combines</div><p class="x-p">Sparkline + pills rail. Bucketed client-side, no lib.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3></div>
+        <div class="tower-live-spark" id="d14" style="margin-bottom:10px"></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill degraded">router.respond …</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex15"><div class="x-head"><span class="x-num">15</span><h2>First-run journey</h2><div class="x-tags"><span class="x-tag">early win</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Onboarding quest: empty → sending → first flash, three beats, first reward inside 30 seconds.</p><div class="x-kicker">Combines</div><p class="x-p">Quest giver + flash. Empty state with a working button.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page — empty state</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">step 1 of 3</span></div>
+        <div class="tower-empty">No spans yet — fire the first shot.<br><br><button class="tower-btn primary" onclick="this.textContent='Sent — watch the rail!'">Send a chat</button></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex16"><div class="x-head"><span class="x-num">16</span><h2>Idle recap</h2><div class="x-tags"><span class="x-tag">closure</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Story closure: 60 s of silence summarizes the session. Achievements need an ending screen.</p><div class="x-kicker">Combines</div><p class="x-p">Recap note over faded rail. Client-side only.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page — idle</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">idle 2 min</span></div>
+        <div class="tower-note" style="background:var(--tower-green-dim);color:var(--tower-green);margin:0 0 8px">Session: 14 traces · 41 spans · fastest qwen2.5:3b · 1 error — nice run.</div>
+        <div class="tower-ticket" style="margin:0;opacity:.55"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">12 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill healthy">router.respond</span></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex17"><div class="x-head"><span class="x-num">17</span><h2>Calm reduced-motion</h2><div class="x-tags"><span class="x-tag">required · accessibility</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Access as a feature: identical information, zero animation. Nobody locked out of the game.</p><div class="x-kicker">Combines</div><p class="x-p">One media query over everything. Ships with whichever page wins.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page — no motion</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">reduced motion on</span></div>
+        <div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-chip">router.respond</span></div></div>
+        <div class="x-code">@media (prefers-reduced-motion: reduce){
+  .tower-live-*{ animation:none !important; } }</div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex18"><div class="x-head"><span class="x-num">18</span><h2>Big number</h2><div class="x-tags"><span class="x-tag">accumulation</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">One giant ticking odometer plus three tickets. Scale you feel in your chest, detail one glance down.</p><div class="x-kicker">Combines</div><p class="x-p">Odometer + short rail. Ticking is the only motion.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="tower-live-odo" style="margin-bottom:10px"><span id="d18">128</span> <small>spans tonight</small></div>
+        <div class="tower-ticket" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill degraded tower-live-running">model.generate …</span><span class="tower-chip">router.respond</span></div></div>
+        <div class="tower-mono" style="font-size:11.5px;color:var(--tower-ink-muted);line-height:2">ce58d9eb chat ✓ 0.61s<br>e376e153 mcp ✓</div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex19"><div class="x-head"><span class="x-num">19</span><h2>Model duel</h2><div class="x-tags"><span class="x-tag">self-competition</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Two mini-rails, fast tier vs quality tier, same stages. The routing decision made visible — <i>this</i> is why the 3B exists.</p><div class="x-kicker">Combines</div><p class="x-p">Pills rail ×2, split by tier from span attrs. No rivalry, just evidence.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-mono tower-muted" style="font-size:11.5px">by tier</span></div>
+        <div class="x-grid2"><div><div class="x-kicker">fast · qwen2.5:3b</div><div class="tower-ticket" style="margin:0 0 8px"><div class="tower-ticket-top"><span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">0.53s</span></div><div class="tower-steps"><span class="tower-pill healthy">decide</span><span class="tower-pill healthy">gen</span><span class="tower-pill healthy">respond</span></div></div></div><div><div class="x-kicker">quality · qwen2.5:7b</div><div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span class="tower-mono">99490a4f</span></span><span class="tower-mono tower-muted">8.1s</span></div><div class="tower-steps"><span class="tower-pill healthy">decide</span><span class="tower-pill degraded tower-live-running">gen …</span><span class="tower-chip">respond</span></div></div></div></div>
+      </div></div></section>
+
+      <section class="x-ex" id="ex20"><div class="x-head"><span class="x-num">20</span><h2>Night watch</h2><div class="x-tags"><span class="x-tag">restful vigilance</span></div></div>
+      <div class="x-cols"><div><div class="x-kicker">Mechanic</div><p class="x-p">Restful vigilance: everything dims except errors and the heartbeat. The page you leave open overnight — it only speaks when it matters.</p><div class="x-kicker">Combines</div><p class="x-p">Error hunt + heartbeat, all else at 45% opacity. A display mode.</p></div>
+      <div class="x-demo"><span class="x-demo-label">full page</span>
+        <div class="x-pagehead"><h3>Live</h3><span class="tower-live-dot"></span><span class="tower-mono tower-muted" style="font-size:11.5px">watching</span></div>
+        <div class="tower-ticket tower-live-shake" style="margin-bottom:8px"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">bad0cafe</span> <span class="tower-pill critical">error</span></span><span class="tower-mono tower-muted">now</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill critical">model.generate</span><span class="tower-chip">router.respond</span></div></div>
+        <div style="opacity:.45"><div class="tower-ticket" style="margin:0"><div class="tower-ticket-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8ab907ff</span></span><span class="tower-mono tower-muted">12 min ago</span></div><div class="tower-steps"><span class="tower-pill healthy">route.decide</span><span class="tower-pill healthy">model.generate</span><span class="tower-pill healthy">router.respond</span></div></div></div>
+      </div></div></section>
+
+    </main>
+  </div>
+</div>
+<script>
+(function(){
+  // 14 sparkline bars
+  var sp=document.getElementById('d14'), vals=[2,3,2,5,9,14,8,4,3,6,11,7,4,2,3,5,8,6,3,2,4,7,5,3];
+  vals.forEach(function(v){ var bar=document.createElement('i'); bar.style.height=Math.max(8,v/14*100)+'%'; if(v>=9)bar.className='hot'; sp.appendChild(bar); });
+  // 18 odometer tick
+  var o=128, oe=document.getElementById('d18');
+  setInterval(function(){ o+=3; oe.textContent=o; }, 1500);
+})();
+</script>
+</body>
+</html>

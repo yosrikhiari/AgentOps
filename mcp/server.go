@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 
 	"agentops/router"
@@ -18,6 +21,9 @@ type Server struct {
 	Router      *router.Server
 	TraceLookup func(traceID string) (any, error)
 	DriftLookup func() (any, error)
+	// SpanSink, when set, receives one redacted mcp.tool span per tools/call.
+	// Nil (tests, bare stdio) means silent — same optional-sink shape as router.
+	SpanSink router.SpanSink
 }
 
 func NewServer(r *router.Server) *Server {
@@ -164,6 +170,27 @@ func (s *Server) callTool(name string, args map[string]any) (any, *rpcError) {
 	}
 }
 
+// emitToolSpan records one span per tool call so the live view is never empty.
+// Attributes carry the tool name and outcome only — never argument values, so a
+// prompt passed to route_test_request cannot leak through telemetry.
+func (s *Server) emitToolSpan(tool string, rpcErr *rpcError) {
+	if s.SpanSink == nil {
+		return
+	}
+	attrs := map[string]any{"tool": tool, "ok": rpcErr == nil}
+	if rpcErr != nil {
+		attrs["code"] = rpcErr.Code
+	}
+	raw, _ := json.Marshal(attrs)
+	s.SpanSink(newToolTraceID(), newToolTraceID(), "", "mcp.tool", string(raw))
+}
+
+func newToolTraceID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
 func (s *Server) handle(req rpcRequest) *rpcResponse {
 	switch req.Method {
 	case "initialize":
@@ -187,6 +214,7 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "bad params"}}
 		}
 		result, rpcErr := s.callTool(params.Name, params.Arguments)
+		s.emitToolSpan(params.Name, rpcErr)
 		if rpcErr != nil {
 			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
 		}
@@ -197,6 +225,23 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 		}
 		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32601, Message: fmt.Sprintf("unknown method %q", req.Method)}}
 	}
+}
+
+// HandleOne serves a single JSON-RPC request body — the Streamable-HTTP
+// transport. It reuses handle() so stdio and HTTP can never drift apart.
+// Notifications (nil response) answer 202 with an empty result.
+func (s *Server) HandleOne(body []byte) ([]byte, int) {
+	var req rpcRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		raw, _ := json.Marshal(&rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return raw, http.StatusOK
+	}
+	resp := s.handle(req)
+	if resp == nil {
+		return []byte(`{"jsonrpc":"2.0","result":{}}`), http.StatusAccepted
+	}
+	raw, _ := json.Marshal(resp)
+	return raw, http.StatusOK
 }
 
 func (s *Server) Run(in io.Reader, out io.Writer) error {

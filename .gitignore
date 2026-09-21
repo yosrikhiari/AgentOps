@@ -1,0 +1,10 @@
+# local runtime — never commit
+/logs/
+*.log
+
+# locally built binary (releases come from CI tags)
+/agentops
+/agentops.exe
+
+# local env overrides
+.env

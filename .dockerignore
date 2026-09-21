@@ -3,7 +3,6 @@
 .ruff_cache
 lessons
 docs
-dashboard
 load-tests
 corpus
 scripts

@@ -240,6 +240,22 @@
               <div class="tower-metric"><div class="tower-metric-label">Faithfulness (v3)</div><div class="tower-metric-value">0.972</div><div class="tower-metric-delta up">↑ 0.014 vs previous run</div></div>
               <div class="tower-metric"><div class="tower-metric-label">Suite status</div><div class="tower-metric-value">failed</div><div class="tower-metric-delta down">judge timeout after 90m</div></div>
             </div></div>
+          <div class="ds-frame"><div class="ds-frame-label">Per-model totals — last hour from spans, exact cumulative errors/tokens from since_start, p50/p99 from the last-30 sample. Replaces the five Grafana panels. Used in pageOverview → modelsTable()</div>
+            <table class="tower-table">
+              <thead><tr><th>model</th><th>last hour</th><th>since start</th><th>p50 · last 30</th><th>p99 · last 30</th><th>tokens</th><th>errors</th></tr></thead>
+              <tbody>
+                <tr><td>qwen2.5:3b-instruct</td><td class="tower-mono">142</td><td class="tower-mono">1024</td><td class="tower-mono">208 ms</td><td class="tower-mono">410 ms</td><td class="tower-mono">96412</td><td><span class="tower-pill healthy">clean</span></td></tr>
+                <tr><td>qwen2.5:7b-instruct-q4_K_M</td><td class="tower-mono">38</td><td class="tower-mono">211</td><td class="tower-mono">890 ms</td><td class="tower-mono">1.84 s</td><td class="tower-mono">87190</td><td><span class="tower-pill degraded">0.9%</span></td></tr>
+              </tbody>
+            </table></div>
+          <div class="ds-frame"><div class="ds-frame-label">Benchmark matrix — latest scored run per model, misses excluded, winner chip only at n≥100/p&lt;0.05 else tied. Used in pageBenchmarks()</div>
+            <table class="tower-table">
+              <thead><tr><th>model</th><th>faith</th><th>scored</th><th>misses</th><th>p50 latency</th><th>tokens/answer</th></tr></thead>
+              <tbody>
+                <tr><td>qwen2.5:3b-instruct</td><td class="tower-mono">0.986</td><td class="tower-mono">70</td><td class="tower-mono">2</td><td class="tower-mono">1.21 s</td><td class="tower-mono">48</td></tr>
+                <tr><td>qwen2.5:7b-instruct-q4_K_M</td><td class="tower-mono">0.991</td><td class="tower-mono">70</td><td class="tower-mono">2</td><td class="tower-mono">3.44 s</td><td class="tower-mono">61</td></tr>
+              </tbody>
+            </table></div>
           <div class="ds-frame"><div class="ds-frame-label">Table — 11 px faint headers, 12.5 px cells, row hover to surface-raised, mono for ids/times/numbers, pills and chips inline</div>
             <table class="tower-table">
               <thead><tr><th>time</th><th>trace</th><th>model</th><th>backend</th><th>reason</th><th>latency</th><th>tokens</th><th></th></tr></thead>
@@ -321,6 +337,15 @@
           <tr><td>.tower-sub-h</td><td>11 px uppercase section header inside a panel</td><td>Timeline · Spans</td></tr>
           <tr><td>.tower-wf-row / -track / -bar</td><td>180px name (indented 14 px per depth) · track · 72px duration</td><td>amber = model.generate, faint = route*/router*, green = agent steps, red = error</td></tr>
           <tr><td>.tower-trace-step(.done/.active)</td><td>timeline dot + body; body click toggles .tower-trace-detail.open</td><td>indent = 11 + depth·14 px; .active (amber dot) marks a failed span</td></tr>
+        </table>
+      </section>
+
+      <section class="ds-section" id="cockpit">
+        <h2>Cockpit</h2>
+        <p class="ds-lead">One Track N page merging send and sight — no new component classes. The rail appends redacted spans from GET /v1/events as they land; sends pin amber. (#/try and #/live retired into it.)</p>
+        <table class="ds-spec">
+          <tr><th>page</th><th>built from</th><th>used in</th></tr>
+          <tr><td>#/cockpit</td><td>panel + tower-form-row tower-live-sendcol (stacked full-width input) + transcript + tower-grid-cockpit 3-column shell with tower-conv sidebar + shared rail (tower-ticket pinned tower-live-yours)</td><td>pageCockpit() in console/static/app.js; client-held messages[] capped at 4000 est. tokens with truncated chip; threads via GET/POST /v1/conversations (+messages, DELETE) with auto-title from first user message; own trace pinned via mountRail pin hook; Run-as-workflow posts to POST /v1/workflows</td></tr>
         </table>
       </section>
 

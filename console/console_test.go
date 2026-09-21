@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,10 +17,23 @@ import (
 )
 
 type memStore struct {
-	reqs []Request
-	runs []EvalRun
-	wfs  []Workflow
-	err  error
+	reqs  []Request
+	runs  []EvalRun
+	wfs   []Workflow
+	err   error
+	convs map[string]*memConv
+	bench BenchmarkInput
+}
+
+type memConv struct {
+	Conversation
+	msgs []Message
+}
+
+func (m *memStore) convsInit() {
+	if m.convs == nil {
+		m.convs = map[string]*memConv{}
+	}
 }
 
 func (m *memStore) RecentRequests(ctx context.Context, limit int) ([]Request, error) {
@@ -32,11 +47,210 @@ func (m *memStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Ev
 }
 func (m *memStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) { return m.wfs, m.err }
 
+func (m *memStore) BenchmarkData(ctx context.Context, golden string) (BenchmarkInput, error) {
+	if m.err != nil {
+		return BenchmarkInput{}, m.err
+	}
+	out := m.bench
+	out.Golden = golden
+	return out, nil
+}
+
+func (m *memStore) Conversations(ctx context.Context, limit int) ([]Conversation, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	m.convsInit()
+	var out []Conversation
+	for _, c := range m.convs {
+		out = append(out, c.Conversation)
+	}
+	if out == nil {
+		out = []Conversation{}
+	}
+	return out, nil
+}
+
+func (m *memStore) CreateConversation(ctx context.Context, title, model string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	m.convsInit()
+	id := "mconv-" + strconv.Itoa(len(m.convs))
+	m.convs[id] = &memConv{Conversation: Conversation{ID: id, Title: title, Model: model}}
+	return id, nil
+}
+
+func (m *memStore) ConversationMessages(ctx context.Context, id string, limit int) ([]Message, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	m.convsInit()
+	c, ok := m.convs[id]
+	if !ok {
+		return nil, ErrConvNotFound
+	}
+	out := c.msgs
+	if out == nil {
+		out = []Message{}
+	}
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
+func (m *memStore) AppendMessage(ctx context.Context, convID string, msg Message) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.convsInit()
+	c, ok := m.convs[convID]
+	if !ok {
+		return ErrConvNotFound
+	}
+	c.msgs = append(c.msgs, msg)
+	if c.Title == "" && msg.Role == "user" {
+		c.Title = msg.Content
+	}
+	return nil
+}
+
+func (m *memStore) DeleteConversation(ctx context.Context, id string) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.convsInit()
+	if _, ok := m.convs[id]; !ok {
+		return ErrConvNotFound
+	}
+	delete(m.convs, id)
+	return nil
+}
+
+func (m *memStore) PurgeConversations(ctx context.Context, days int) (int64, error) {
+	return 0, m.err
+}
+
 func do(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// The 90-day purge died live with "unable to encode 90 into text format for
+// text": ($1 || ' days') types the param as text while pgx hands it an int, so
+// retention never ran. The interval must be built from a typed int parameter.
+type captureExec struct {
+	sql  string
+	args []any
+}
+
+func (c *captureExec) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	c.sql, c.args = sql, args
+	return 0, nil
+}
+
+func TestPurgeConversationsBuildsTypedInterval(t *testing.T) {
+	ex := &captureExec{}
+	s := SQLStore{Exec: ex}
+	if _, err := s.PurgeConversations(context.Background(), 90); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if strings.Contains(ex.sql, "||") {
+		t.Fatalf("param text-concatenated into interval (pgx int/text mismatch): %q", ex.sql)
+	}
+	if !strings.Contains(ex.sql, "make_interval") {
+		t.Fatalf("expected a typed make_interval purge: %q", ex.sql)
+	}
+	if len(ex.args) != 1 || ex.args[0] != 90 {
+		t.Fatalf("days not passed as one int param: %v", ex.args)
+	}
+}
+
+// A value encoding/json cannot represent (NaN from a 0/0 metric) must never
+// leave the console emitting headers with an empty body: the page would show
+// nothing with no error to retry on. Loud 502 instead.
+func TestWriteJSONNaNIs502(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeJSON(rec, http.StatusOK, map[string]any{"score": math.NaN()})
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body %q)", rec.Code, rec.Body.String())
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &generic); err != nil || generic["error"] == nil {
+		t.Fatalf("not a one-error-shape body: %q", rec.Body.String())
+	}
+}
+
+func TestBenchmarksEndpoint(t *testing.T) {
+	mk := func() *memStore {
+		return &memStore{bench: BenchmarkInput{Golden: "v3", Judge: "qwen3:8b", Runs: []ModelRunData{
+			{Model: "fast-m", Judge: "qwen3:8b", Pairs: []ScoredPair{{Question: "hi?", Faithfulness: 1, LatencyS: 0.5, Tokens: 10}}},
+			{Model: "quality-m", Judge: "qwen3:8b", Pairs: []ScoredPair{{Question: "hi?", Faithfulness: 1, LatencyS: 0.9, Tokens: 20}}},
+		}}}
+	}
+	h := New(Deps{Store: mk(), GoldenVersion: "v3"})
+	rec := do(h, "GET", "/v1/benchmarks?golden=v3", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"comparable":true`) {
+		t.Fatalf("benchmarks: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "tied") {
+		t.Fatalf("2 scored pairs must read tied: %s", rec.Body.String())
+	}
+	hbad := New(Deps{Store: &memStore{err: errors.New("down")}, GoldenVersion: "v3"})
+	if rec := do(hbad, "GET", "/v1/benchmarks", ""); rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), `"code":"store_unavailable"`) {
+		t.Fatalf("store down: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConversationCRUD(t *testing.T) {
+	h := New(Deps{Store: &memStore{}})
+	rec := do(h, "POST", "/v1/conversations", `{"title":"","model":"fast-m"}`)
+	var created map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	id, _ := created["id"].(string)
+	if rec.Code != 200 || id == "" {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, tc := range []struct{ body string }{
+		{`{"role":"user","content":"my favourite colour is teal"}`},
+		{`{"role":"assistant","content":"noted","model":"fast-m","prompt_tokens":10,"completion_tokens":2}`},
+	} {
+		if rec := do(h, "POST", "/v1/conversations/"+id+"/messages", tc.body); rec.Code != 200 {
+			t.Fatalf("append %s: %d %s", tc.body, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := do(h, "POST", "/v1/conversations/"+id+"/messages", `{"role":"system","content":"x"}`); rec.Code != 400 {
+		t.Fatalf("bad role: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(h, "POST", "/v1/conversations/nope/messages", `{"role":"user","content":"x"}`); rec.Code != 404 {
+		t.Fatalf("unknown thread append: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(h, "GET", "/v1/conversations/"+id+"/messages", "")
+	var got map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	msgs, _ := got["messages"].([]any)
+	if rec.Code != 200 || len(msgs) != 2 {
+		t.Fatalf("messages: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(h, "GET", "/v1/conversations", "")
+	var list map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	convs, _ := list["conversations"].([]any)
+	if rec.Code != 200 || len(convs) != 1 || convs[0].(map[string]any)["title"] != "my favourite colour is teal" {
+		t.Fatalf("list titles from first user message: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(h, "DELETE", "/v1/conversations/"+id, ""); rec.Code != 204 {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(h, "GET", "/v1/conversations/"+id+"/messages", ""); rec.Code != 404 {
+		t.Fatalf("messages after delete: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(h, "DELETE", "/v1/conversations/"+id, ""); rec.Code != 404 {
+		t.Fatalf("second delete: %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestStaticAndOverview(t *testing.T) {

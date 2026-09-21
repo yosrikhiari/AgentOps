@@ -7,6 +7,7 @@
   const toastEl = document.getElementById('toast');
   let pageCtl = null;       // AbortController of the current page
   let pollTimer = null;
+  let railCleanup = null;   // live rail feed hookup; one rail mounted at a time
 
   // ---------- tiny DOM helper ----------
   function h(tag, attrs, ...children) {
@@ -41,6 +42,10 @@
       if (!res.ok) {
         const err = new Error((body && body.error && body.error.message) || ('HTTP ' + res.status));
         err.code = body && body.error && body.error.code; err.status = res.status; throw err;
+      }
+      if (body == null) {
+        const err = new Error('empty response body');
+        err.status = res.status; throw err;
       }
       return body;
     }
@@ -94,7 +99,7 @@
     const sr = document.getElementById('side-router'); if (sr) sr.textContent = allUp ? 'router live' : 'backend down';
     const sv = document.getElementById('side-version'); if (sv) sv.textContent = ov.version ? 'agentops ' + ov.version : '';
   }
-  const pageTitles = { overview: 'Overview', traces: 'Traces', evals: 'Evals & drift', workflows: 'Workflows' };
+  const pageTitles = { overview: 'Overview', traces: 'Traces', evals: 'Evals & drift', benchmarks: 'Benchmarks', workflows: 'Workflows', cockpit: 'Cockpit' };
 
   // ---------- traffic chart (hand-rolled SVG bars) ----------
   function trafficChart(reqs) {
@@ -141,6 +146,48 @@
           r.agent_role ? chip(r.agent_role) : null)))));
   }
 
+  // ---------- per-model totals (the five Grafana panels, Tower-native) ----------
+  // Grafana drew these from Prometheus (rate() over counters + histogram_quantile);
+  // Tower draws the same information from spans: last-hour counts from
+  // /v1/overview traffic.by_model, exact cumulative errors/tokens from the
+  // since_start process counters, and p50/p99 from the last-30 request sample
+  // (labelled as such — a sample percentile, not a histogram quantile).
+  function pct50(sorted) { return sorted.length ? sorted[Math.round(0.5 * (sorted.length - 1))] : null; }
+  function pct99(sorted) { return sorted.length ? sorted[Math.round(0.99 * (sorted.length - 1))] : null; }
+
+  function modelsTable(ov, reqs) {
+    const t = ov.traffic || {};
+    const byHour = t.by_model || {};
+    const since = ov.since_start || {};
+    const names = Array.from(new Set([...Object.keys(byHour), ...Object.keys(since)])).sort();
+    if (!names.length) return h('div', { class: 'tower-empty' }, 'No model traffic yet. Send one: curl localhost:8080/v1/chat/completions -d \'{"prompt":"hi"}\'');
+    const latByModel = {};
+    (reqs || []).forEach(r => {
+      if (r.error || !(r.latency_s > 0)) return;
+      (latByModel[r.model || '?'] = latByModel[r.model || '?'] || []).push(r.latency_s);
+    });
+    Object.values(latByModel).forEach(l => l.sort((a, b) => a - b));
+    return h('table', { class: 'tower-table' },
+      h('thead', null, h('tr', null, ...['model', 'last hour', 'since start', 'p50 · last 30', 'p99 · last 30', 'tokens', 'errors'].map(x => h('th', null, x)))),
+      h('tbody', null, names.map(name => {
+        const s = since[name] || { requests: 0, errors: 0, tokens: 0 };
+        const denom = (s.requests || 0) + (s.errors || 0);
+        const rate = denom ? (s.errors || 0) / denom : null;
+        const lat = latByModel[name] || [];
+        return h('tr', null,
+          h('td', null, name),
+          h('td', { class: 'tower-mono' }, byHour[name] || 0),
+          h('td', { class: 'tower-mono' }, s.requests || 0),
+          h('td', { class: 'tower-mono' }, lat.length ? fmt.ms(pct50(lat)) : '–'),
+          h('td', { class: 'tower-mono' }, lat.length ? fmt.ms(pct99(lat)) : '–'),
+          h('td', { class: 'tower-mono' }, s.tokens || 0),
+          h('td', null,
+            (s.errors || 0) === 0 ? pill('healthy', 'clean') :
+              rate !== null && rate < 0.05 ? pill('degraded', (rate * 100).toFixed(1) + '%') :
+                pill('critical', rate !== null ? (rate * 100).toFixed(1) + '%' : String(s.errors))));
+      })));
+  }
+
   // ---------- pages ----------
   async function pageOverview(signal, _sub, polling) {
     if (!polling) { content.replaceChildren(skeleton(6)); }
@@ -180,6 +227,7 @@
     const typing = document.activeElement && content.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
     if (!typing) {
       content.replaceChildren(metrics, h('div', { class: 'tower-grid-2' }, traffic, health),
+        panel('Models — requests, errors and tokens', 'Last hour from spans · since start from the process counters · p50/p99 from the last 30 requests', modelsTable(ov, reqs.requests || [])),
         panel('Recent requests', 'Newest first, from the span store', requestsTable(reqs.requests)));
     }
     pollTimer = setTimeout(() => { if (location.hash.startsWith('#/overview') || location.hash === '' || location.hash === '#/') pageOverview(signal, '', true); }, 5000);
@@ -406,15 +454,67 @@
     const history = panel('Score history', 'Every run of golden ' + data.golden_version + '; dashed line = alert threshold',
       runs.length ? scoreChart(runs) : h('div', { class: 'tower-empty' }, 'No runs yet — start one.'), runBtn);
     const worst = drift.worst_cases || [];
-    const worstPanel = panel('Worst cases', 'Lowest faithfulness in the latest run',
+    const misses = drift.misses_now || 0;
+    const worstPanel = panel('Worst cases', 'Lowest faithfulness in the latest run' + (misses ? ' · ' + misses + ' retrieval miss(es) excluded from the average' : ''),
       worst.length ? h('table', { class: 'tower-table' }, h('thead', null, h('tr', null, h('th', null, 'question'), h('th', null, 'faith'), h('th', null, 'P@5'), h('th', null, 'R@5'))),
-        h('tbody', null, worst.map(wc => h('tr', null, h('td', null, wc.question), h('td', { class: 'tower-mono' }, fmt.score(wc.faithfulness)), h('td', { class: 'tower-mono' }, fmt.score(wc.precision)), h('td', { class: 'tower-mono' }, fmt.score(wc.recall))))))
+        h('tbody', null, worst.map(wc => h('tr', null,
+          h('td', null, wc.question, wc.retrieval_miss ? ' ' : null, wc.retrieval_miss ? chip('retrieval miss') : null),
+          h('td', { class: 'tower-mono' }, wc.retrieval_miss || wc.faithfulness == null ? '–' : fmt.score(wc.faithfulness)),
+          h('td', { class: 'tower-mono' }, fmt.score(wc.precision)),
+          h('td', { class: 'tower-mono' }, fmt.score(wc.recall))))))
         : h('div', { class: 'tower-empty' }, 'Nothing scored yet'));
     const table = panel('Runs', null, h('table', { class: 'tower-table' },
       h('thead', null, h('tr', null, ...['run', 'when', 'judge', 'score'].map(t => h('th', null, t)))),
       h('tbody', null, runs.map(r => h('tr', null, h('td', { class: 'tower-mono' }, r.id), h('td', { class: 'tower-mono' }, fmt.date(r.created_at)), h('td', null, chip(r.judge_model)), h('td', null, r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score))))))));
     content.replaceChildren(metrics, h('div', { class: 'tower-grid-2' }, history, worstPanel), table);
     if (status.running) pollTimer = setTimeout(() => { if (location.hash.startsWith('#/evals')) pageEvals(signal); }, 5000);
+  }
+
+  async function pageBenchmarks(signal) {
+    content.replaceChildren(skeleton(6));
+    let data;
+    try { data = await api('/v1/benchmarks', null, signal); }
+    catch (e) { if (e.name === 'AbortError') return; content.replaceChildren(errorBox('Could not load benchmarks: ' + e.message, () => route())); return; }
+    const c = data.comparison || {};
+    const verdict = c.verdict || {};
+    const models = c.models || [], scenarios = c.scenarios || [], history = data.history || [];
+    const metrics = h('div', { class: 'tower-metric-row' },
+      metric('Verdict (' + (data.golden_version || '–') + ')', verdict.winner || 'tied', verdict.reason || c.note || ''),
+      metric('Judge', c.judge || '–', c.comparable ? 'same judge across compared runs' : 'not comparable'),
+      metric('Models compared', models.length, models.length ? models.map(m => m.model).join(' · ') : ''),
+      metric('Scenarios', scenarios.length, 'split by routing reason'));
+    const matrix = panel('Models — faithfulness, latency, tokens', 'Latest scored run per model; misses excluded from every average',
+      models.length ? h('table', { class: 'tower-table' },
+        h('thead', null, h('tr', null, ...['model', 'faith', 'scored', 'misses', 'p50 latency', 'tokens/answer'].map(t => h('th', null, t)))),
+        h('tbody', null, models.map(m => h('tr', null,
+          h('td', null, m.model === verdict.winner ? chip(m.model) : m.model),
+          h('td', { class: 'tower-mono' }, fmt.score(m.faithfulness)),
+          h('td', { class: 'tower-mono' }, m.scored),
+          h('td', { class: 'tower-mono' }, m.misses),
+          h('td', { class: 'tower-mono' }, fmt.ms(m.p50_latency_s)),
+          h('td', { class: 'tower-mono' }, Math.round(m.tokens_per_answer))))))
+        : h('div', { class: 'tower-empty' }, 'No scored model runs yet. Run one per model: go run . --score --score-model <name> (same golden version, same judge).'));
+    const scenPanels = scenarios.map(sc => {
+      const rows = sc.models.map(m => h('tr', null,
+        h('td', null, m.model === sc.winner ? chip(m.model) : m.model),
+        h('td', { class: 'tower-mono' }, fmt.score(m.faithfulness)),
+        h('td', { class: 'tower-mono' }, m.n)));
+      const tbl = h('table', { class: 'tower-table' },
+        h('thead', null, h('tr', null, ...['model', 'faith', 'n'].map(t => h('th', null, t)))),
+        h('tbody', null, rows));
+      return panel('Scenario: ' + sc.scenario, sc.winner ? 'winner ' + sc.winner + ' — ' + sc.reason : sc.reason, tbl);
+    });
+    const hist = panel('Model runs', 'Latest first; full history with golden-answer runs on the Evals page',
+      history.length ? h('table', { class: 'tower-table' },
+        h('thead', null, h('tr', null, ...['run', 'model', 'judge', 'score', 'when'].map(t => h('th', null, t)))),
+        h('tbody', null, history.map(r => h('tr', null,
+          h('td', { class: 'tower-mono' }, r.id),
+          h('td', null, chip(r.model)),
+          h('td', null, chip(r.judge)),
+          h('td', { class: 'tower-mono' }, fmt.score(r.score)),
+          h('td', { class: 'tower-mono' }, fmt.date(r.created_at))))))
+        : h('div', { class: 'tower-empty' }, 'No model runs recorded yet'));
+    content.replaceChildren(metrics, matrix, ...scenPanels, hist);
   }
 
   function stepPill(st) {
@@ -467,9 +567,281 @@
     refresh();
   }
 
+  // ---------- cockpit (try+live merged; single surface) ----------
+
+  // Tickets group a trace's spans into quest stages: healthy = stage landed,
+  // degraded = next stage running, chip = stage still ahead. Error spans flag
+  // the ticket critical. Newest ticket flashes once (amber, motion-safe).
+  const liveStages = {
+    chat: ['route.decide', 'model.generate', 'router.respond'],
+    workflow: ['researcher', 'drafter', 'reviewer'],
+    mcp: ['mcp.tool'],
+  };
+  function liveKind(names) {
+    if (names.includes('model.generate')) return 'chat';
+    if (names.includes('researcher') || names.includes('drafter') || names.includes('reviewer')) return 'workflow';
+    return 'mcp';
+  }
+  // Shared live rail: subscribes to /v1/events, groups spans into tickets.
+  // getPin() returns the trace_id to highlight as yours (cockpit) or null.
+  // onFatal renders the error UI. Returns a cleanup that closes the feed.
+  // Rail nodes only — the input subtree is never touched (focus-safe rule).
+  function mountRail(listBody, setCounts, getPin, onFatal) {
+    const seen = new Map(); // trace_id -> {order:[], info:{stage:{lat,err}}, model, at, pop}
+    let lastTrace = null;
+    function ticketEl(id, t) {
+      const kind = liveKind(t.order);
+      const stages = liveStages[kind] || [];
+      const next = stages.find(s => !t.info[s]);
+      const steps = stages.map(s => {
+        const st = t.info[s];
+        if (st) {
+          const el = pill(st.err ? 'critical' : 'healthy', s);
+          if (t.pop && s === stages[stages.length - 1]) el.classList.add('tower-live-pop');
+          return el;
+        }
+        return s === next ? pill('degraded', s + ' …') : chip(s);
+      });
+      for (const n of t.order) if (!stages.includes(n)) steps.push(chip(n));
+      t.pop = false; // pop plays once, on the render that completes the trace
+      const maxLat = Math.max(0.01, ...stages.map(s => (t.info[s] && t.info[s].lat) || 0));
+      const rows = stages.map(s => {
+        const st = t.info[s];
+        const bar = h('div', { class: 'tower-live-bar' + (st ? (st.err ? ' bad' : ' done') : (s === next ? ' run' : '')) });
+        if (st) bar.style.width = Math.max(3, ((st.lat || 0.005) / maxLat) * 100) + '%';
+        else if (s === next) bar.style.width = '30%';
+        return h('div', { class: 'tower-live-row' }, h('span', null, s),
+          h('div', { class: 'tower-live-track' }, bar),
+          h('span', { class: 'tower-mono' }, st ? (st.lat != null ? fmt.ms(st.lat) : '–') : '…'));
+      });
+      const failed = Object.values(t.info).some(s => s.err);
+      const pinned = getPin && getPin() === id;
+      const head = [chip(kind), ' ',
+        h('a', { class: 'tower-link tower-mono', href: '#/traces/' + id }, fmt.short(id))];
+      if (t.model) head.push(' ', chip(t.model));
+      if (pinned) head.push(' ', chip('yours'));
+      if (failed) head.push(' ', pill('critical', 'error'));
+      return h('div', { class: 'tower-ticket' + (id === lastTrace ? ' flash' : '') + (pinned ? ' tower-live-yours' : '') },
+        h('div', { class: 'tower-ticket-top' }, h('span', null, ...head),
+          h('span', { class: 'tower-mono tower-muted' }, fmt.time(t.at))),
+        h('div', { class: 'tower-steps' }, ...steps),
+        ...rows);
+    }
+    function render(emptyMsg) {
+      const ids = [...seen.keys()].reverse().slice(0, 8);
+      let spans = 0; seen.forEach(t => { spans += t.order.length; });
+      setCounts(seen.size, spans);
+      listBody.replaceChildren(...(ids.length ? ids.map(id => ticketEl(id, seen.get(id)))
+        : [h('div', { class: 'tower-empty' }, emptyMsg || 'No spans yet — send a chat, run a workflow, or call an MCP tool.')]));
+    }
+    render();
+    let src;
+    try {
+      src = new EventSource('/v1/events');
+    } catch (e) { onFatal('Live feed unavailable: ' + e.message); return () => {}; }
+    src.onmessage = ev => {
+      try {
+        const d = JSON.parse(ev.data);
+        const a = (d.attrs && typeof d.attrs === 'object') ? d.attrs : {};
+        let t = seen.get(d.trace_id);
+        if (!t) { t = { order: [], info: {}, at: new Date().toISOString() }; seen.set(d.trace_id, t); }
+        if (!t.info[d.name]) { t.info[d.name] = {}; t.order.push(d.name); }
+        const st = t.info[d.name];
+        if (typeof a.latency_s === 'number') st.lat = a.latency_s;
+        if (a.error) st.err = true;
+        if (typeof a.model === 'string' && a.model) t.model = a.model;
+        t.at = new Date().toISOString();
+        const stages = liveStages[liveKind(t.order)] || [];
+        if (stages.length && stages.every(s => t.info[s])) t.pop = true;
+        lastTrace = d.trace_id;
+        render();
+      } catch (e) { /* one bad frame never kills the rail */ }
+    };
+    src.onerror = () => { try { src.close(); } catch (e2) {} onFatal('Live feed dropped.'); };
+    return () => { try { src.close(); } catch (e) {} };
+  }
+  // Cockpit: send + sight on one surface. History is client-held messages[]
+  // capped by tokens (ADR-0010); the gateway stays stateless. Own sends pin
+  // amber via their trace_id. "Run as workflow" posts the last input to the
+  // existing toy runner — no backend change.
+  const coHistBudget = 4000;
+  function coEstTokens(s) { return Math.ceil(String(s).length / 4); }
+  function coHistTokens(ms) { return ms.reduce((n, m) => n + coEstTokens(m.content), 0); }
+  let coHist = [];        // [{role, content}] oldest-first
+  let coDropped = 0;      // messages trimmed for the token budget
+  let coPromise = null;
+  let coPin = null;       // trace_id of the latest own send
+  let coConvId = null;    // active stored thread, or null for a fresh one
+  let coLastInput = '';
+  let coLastAnswer = null;
+  let coLastErr = '';
+  async function pageCockpit(signal) {
+    const input = h('input', { class: 'tower-input', placeholder: 'message the router — history resends each turn' });
+    const sendBtn = h('button', { class: 'tower-btn primary' }, 'Send');
+    const wfBtn = h('button', { class: 'tower-btn secondary' }, 'Run as workflow');
+    const histNote = h('div', { class: 'tower-mono tower-muted', style: 'font-size:11px' }, '');
+    const transcript = h('div', null);
+    const answer = h('div', null, h('div', { class: 'tower-empty' }, 'Send a message to start a conversation.'));
+    const dot = h('span', { class: 'tower-live-dot' });
+    const label = h('span', null, '');
+    const counts = h('div', { class: 'tower-mono tower-muted', style: 'margin-bottom:10px;display:flex;gap:8px;align-items:center' }, dot, label);
+    const listBody = h('div', null, skeleton(5));
+    const newBtn = h('button', { class: 'tower-btn secondary' }, '+ New thread');
+    const convList = h('div', { class: 'tower-conv' }, skeleton(2));
+    const side = h('div', { style: 'position:sticky;top:0;align-self:start' },
+      panel('Threads', 'Stored server-side · 90-day retention.',
+        h('div', null, newBtn, h('div', { style: 'margin-top:8px' }, convList))));
+    const left = h('div', { style: 'position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:16px' },
+      panel('Send', 'Client-held history resends every turn; the gateway stays stateless.',
+        h('div', null,
+          h('div', { class: 'tower-form-row tower-live-sendcol' }, input,
+            h('div', { class: 'tower-form-row' }, sendBtn, wfBtn)),
+          histNote)),
+      panel('Answer', null, h('div', null, transcript, answer)));
+    content.replaceChildren(h('div', { class: 'tower-grid-cockpit' }, side, left,
+      panel('Rail', 'Your ticket pins amber; everything lands live.',
+        h('div', null, counts, listBody))));
+    function renderTranscript() {
+      transcript.replaceChildren(...coHist.slice(-6).map(m =>
+        h('div', { class: 'tower-mono tower-muted', style: 'font-size:11.5px;margin-bottom:4px' },
+          (m.role === 'user' ? 'you: ' : 'ai: ') + (m.content.length > 140 ? m.content.slice(0, 140) + '…' : m.content))));
+      const n = coHistTokens(coHist);
+      histNote.textContent = coHist.length ? ('history ' + coHist.length + ' msgs · ~' + n + ' tokens' + (coDropped ? ' · ' + coDropped + ' dropped' : '')) : '';
+    }
+    function renderAnswer(r) {
+      answer.replaceChildren(
+        h('div', null, r.text),
+        h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap' },
+          chip(r.model), chip(r.reason), chip(r.backend),
+          h('a', { class: 'tower-link tower-mono', href: '#/traces/' + r.trace_id }, r.trace_id)));
+    }
+    async function send() {
+      const text = input.value.trim();
+      if (!text || coPromise) return;
+      let msgs = coHist.concat([{ role: 'user', content: text }]);
+      while (msgs.length > 1 && coHistTokens(msgs) > coHistBudget) { msgs.shift(); coDropped++; }
+      coErr(); sendBtn.disabled = true; wfBtn.disabled = true;
+      answer.replaceChildren(skeleton(2));
+      input.value = '';
+      const ctl = new AbortController();
+      let convId = coConvId;
+      if (!convId) {
+        // Storage is best-effort: a thread that cannot be stored still chats.
+        try {
+          convId = (await api('/v1/conversations', { method: 'POST', body: JSON.stringify({ model: '' }) }, ctl.signal)).id;
+        } catch (e) { convId = null; }
+      }
+      const p = coPromise = (async () => {
+        try {
+          const r = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: msgs }) }, ctl.signal);
+          coHist = msgs.concat([{ role: 'assistant', content: r.text }]);
+          coPin = r.trace_id;
+          coLastInput = text;
+          coLastAnswer = r; coLastErr = '';
+          if (convId) {
+            coConvId = convId;
+            recordTurn(convId, { role: 'user', content: text, trace_id: r.trace_id }).then(() =>
+              recordTurn(convId, {
+                role: 'assistant', content: r.text, model: r.model, trace_id: r.trace_id,
+                prompt_tokens: r.usage ? r.usage.prompt_tokens : 0,
+                completion_tokens: r.usage ? r.usage.completion_tokens : 0,
+              }).then(() => { if (convList.isConnected) loadConvs(); }));
+          }
+        } catch (e) { if (e.name !== 'AbortError') { coLastAnswer = null; coLastErr = e.message; } }
+        finally { if (coPromise === p) coPromise = null; }
+      })();
+      await p;
+      // The page may be gone (user navigated away): history waits on revisit.
+      if (!answer.isConnected) return;
+      if (coLastAnswer) renderAnswer(coLastAnswer);
+      else answer.replaceChildren(errorBox('Send failed: ' + coLastErr, send));
+      renderTranscript();
+      sendBtn.disabled = false; wfBtn.disabled = false;
+    }
+    function coErr() { coLastAnswer = null; coLastErr = ''; }
+    async function runWorkflow() {
+      if (!coLastInput || coPromise) return;
+      wfBtn.disabled = true;
+      try {
+        const r = await api('/v1/workflows', { method: 'POST', body: JSON.stringify({ input: coLastInput }) });
+        toast('Workflow ' + r.id + ' started');
+        answer.append(h('div', { style: 'margin-top:8px' }, chip('workflow'), ' ',
+          h('a', { class: 'tower-link tower-mono', href: '#/traces/' + r.id }, r.id)));
+      } catch (e) { toast(e.message, true); }
+      if (wfBtn.isConnected) wfBtn.disabled = false;
+    }
+    async function recordTurn(convId, m) {
+      // No page signal: storing must survive navigation, like the send itself.
+      try { await api('/v1/conversations/' + convId + '/messages', { method: 'POST', body: JSON.stringify(m) }); }
+      catch (e) { toast('Thread not stored: ' + e.message, true); }
+    }
+    async function loadConvs() {
+      let data;
+      try { data = await api('/v1/conversations?limit=50'); }
+      catch (e) { convList.replaceChildren(errorBox('Threads unavailable: ' + e.message, loadConvs)); return; }
+      const convs = data.conversations || [];
+      convList.replaceChildren(...(convs.length ? convs.map(c => {
+        const del = h('span', { class: 'tower-conv-del', title: 'delete thread' }, '×');
+        del.addEventListener('click', ev => { ev.stopPropagation(); deleteConv(c.id); });
+        const el = h('div', { class: 'tower-conv-item' + (c.id === coConvId ? ' active' : '') },
+          h('div', { class: 'tower-conv-title' }, c.title || '(untitled)'),
+          h('div', { class: 'tower-conv-meta' }, chip(c.messages + ' msgs'), h('span', null, fmt.date(c.updated_at)), del));
+        el.addEventListener('click', () => openConv(c.id));
+        return el;
+      }) : [h('div', { class: 'tower-empty' }, 'No threads yet — send one.')]));
+    }
+    async function openConv(id) {
+      if (coPromise) return;
+      let data;
+      try { data = await api('/v1/conversations/' + id + '/messages?limit=500'); }
+      catch (e) { toast(e.message, true); return; }
+      coConvId = id;
+      coHist = (data.messages || []).map(m => ({ role: m.role, content: m.content }));
+      coDropped = 0;
+      const users = coHist.filter(m => m.role === 'user');
+      coLastInput = users.length ? users[users.length - 1].content : '';
+      const traces = (data.messages || []).map(m => m.trace_id).filter(t => t);
+      coPin = traces.length ? traces[traces.length - 1] : null;
+      coLastAnswer = null;
+      answer.replaceChildren(h('div', { class: 'tower-empty' }, 'Thread loaded — continue below.'));
+      renderTranscript();
+      loadConvs();
+      input.focus();
+    }
+    function newThread() {
+      if (coPromise) return;
+      coConvId = null; coHist = []; coDropped = 0; coPin = null;
+      coLastInput = ''; coLastAnswer = null;
+      answer.replaceChildren(h('div', { class: 'tower-empty' }, 'Send a message to start a conversation.'));
+      renderTranscript();
+      loadConvs();
+      input.focus();
+    }
+    async function deleteConv(id) {
+      try { await api('/v1/conversations/' + id, { method: 'DELETE' }); }
+      catch (e) { toast(e.message, true); return; }
+      toast('Thread deleted');
+      if (id === coConvId) newThread();
+      else loadConvs();
+    }
+    const feed = () => { railCleanup = mountRail(listBody,
+      (nt, ns) => { label.textContent = nt + ' traces · ' + ns + ' spans on rail'; },
+      () => coPin,
+      msg => listBody.replaceChildren(errorBox(msg, feed))); };
+    feed();
+    loadConvs();
+    renderTranscript();
+    newBtn.addEventListener('click', newThread);
+    if (coLastAnswer && answer.isConnected) renderAnswer(coLastAnswer);
+    sendBtn.addEventListener('click', send);
+    wfBtn.addEventListener('click', runWorkflow);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+  }
+
   // ---------- router ----------
-  const pages = { overview: pageOverview, traces: pageTraces, evals: pageEvals, workflows: pageWorkflows };
+  const pages = { overview: pageOverview, traces: pageTraces, evals: pageEvals, benchmarks: pageBenchmarks, workflows: pageWorkflows, cockpit: pageCockpit };
   function route() {
+    if (railCleanup) { railCleanup(); railCleanup = null; }
     if (pageCtl) pageCtl.abort();
     clearTimeout(pollTimer);
     pageCtl = new AbortController();

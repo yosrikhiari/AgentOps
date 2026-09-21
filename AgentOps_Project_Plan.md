@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v19, 2026-09-17 — §10 enhancement roadmap: ML-powered benchmarking (Track G), outage prediction (Track H), drift detection (Track I); 41 repos surveyed, Python sidecar architecture, 14-item build order ~30d; 69 tests)
+# AgentOps Platform — Project Plan (v25, 2026-09-21 — Track J done live: presence check ships, 503 model_not_pulled, path-skip for OLLAMA_MODELS, purge interval fix; Track K done live: static advisor 104 tests)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -61,6 +61,40 @@ worth touching yet) so that doesn't get lost again.
 > `mcp/README.md`, `lessons/` (33), and `corpus/` (v3, the RAG target, matches the code).
 > Sections 1–8 below are the MVP record and are kept as history; §7 marks what has since
 > shipped; §9 is the product track list; Tracks D/E/F are the next work.
+>
+> **Current state (v22, 2026-09-21).** Shipped since v16, all in the working tree
+> (committed: v1.1 gateway ADR-0009 — generation params, client refs, `OLLAMA_MODELS`;
+> uncommitted: Track N + cockpit + retrieval-miss + conversations shelf):
+> **v1.1 gateway** (`d9040fe`, `13238e7`, ADR-0009) — `POST /v1/chat/completions`
+> forwards `temperature/top_p/seed/stop/response_format/format/options/keep_alive/think`
+> via `ParamBackend`, `X-Client-Ref`/`X-Agent-Role` on all three spans, extra local
+> models via `OLLAMA_MODELS`. **Track N done** — `POST /mcp` (same `handle()` as
+> stdio, Bearer enforced when `REQUIRE_API_KEY=true`), redacted `mcp.tool` spans
+> (`tool/ok/code` only), `GET /v1/events` SSE fan-out (`events.go`, 64-deep lossy,
+> DB-down still 200), Tower `#/try` + `#/live` built then retired into **`#/cockpit`**
+> (send + sight on one surface, shared `mountRail`, old hashes fall back to
+> Overview). **Retrieval-miss fix done** (§10.5 item 1) — `ScorePair` returns
+> `retrieval_miss=true` with zero judge calls on `recall=0`, `eval_pair_scores`
+> `faithfulness NULL` + `retrieval_miss` (`0004_retrieval_miss.sql`), suite average
+> and drift report exclude misses (`misses_now/misses_then`), console `retrieval miss`
+> chip. **Conversations shelf** (`0005_conversations.sql`, ADR-0010 proposed) —
+> opt-in stored threads (`GET/POST /v1/conversations`, messages, `DELETE`), 90-day
+> idle boot purge, per-thread delete; gateway chat path stays stateless
+> (client-held `messages[]` resend, ~4000-token cap + truncated chip). `go test
+> ./...` green, **85 test funcs** (was 69). Docs in step: `docs/API.md`
+> (`POST /mcp`, `GET /v1/events`, conversations, drift `misses_*`),
+> `mcp/README.md` (any client), `PRIVACY.md` (conversation exception + 90-day
+> rule), `docs/adr/0010` (proposed), `CHANGELOG.md Unreleased` (4 bullets).
+> Next: commit this batch, then Track J (presence check) before any other new track.
+>
+> **Current state (v23, 2026-09-21 — Tower dashboard).** `#/overview` is now the
+> single dashboard: new *Models* panel (`modelsTable()`) ports all five Grafana
+> panels from spans (approach A — last-hour counts, exact cumulative
+> errors/tokens, sample p50/p99 labelled as such, error-rate pills); the
+> `monitoring` compose profile and `dashboard/` are deleted; `/metrics` text and
+> the k6 gate stay. `corpus/04-metrics.md` + frozen golden pairs still describe
+> Grafana — deliberately untouched (frozen files never edited); follow-up is
+> corpus v4 + golden v4 + a scored run.
 
 ---
 
@@ -251,11 +285,15 @@ proven — this is your Section 7 stretch goal, not MVP).
   tiny 15-20-doc corpus (GED's 2000/500 was for huge French PDFs — too coarse here). Minimal
   cleaner: strip HTML/nav → normalize → chunk → dedup by hash. Add one mapping test so a
   `status=Indexed`-style filter can never silently match nothing (your GED bug lesson).
-- **Postgres tables (as shipped):** `docs`, `chunks(embedding vector(768), HNSW)`,
+- **Postgres tables (as shipped, v22):** `docs`, `chunks(embedding vector(768), HNSW)`,
   `workflows`, `steps`, `spans(trace_id, span_id, parent_id, attrs JSONB)`, `eval_runs`,
-  `eval_pair_scores` (0002), `api_keys` (0003, v1.0), `schema_migrations` (v1.0, tracks
-  applied files). Migrations in `migrations/*.sql`, applied once each by `--migrate`. Spans
-  retention 30d (policy), evals forever.
+  `eval_pair_scores` (0002 + 0004: `faithfulness` nullable, `retrieval_miss bool`,
+  misses excluded from suite average and drift), `api_keys` (0003, v1.0),
+  `conversations` + `messages` (0005, cockpit shelf — prompts stored verbatim,
+  purpose-limited, 90-day idle boot purge, per-thread delete),
+  `schema_migrations` (v1.0, tracks applied files). Migrations in
+  `migrations/*.sql`, applied once each by `--migrate`. Spans retention 30d
+  (policy), evals forever, conversations 90d idle.
 - **Golden set:** generate a draft with an LLM from your own source documents (DeepEval/RAGAS
   Synthesizer pattern), manually review and correct every pair before use. `evals/golden/v1/`
   + hash; bump version on any doc change.
@@ -429,6 +467,83 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-21 (19th pass, full local gate).** `gofmt` clean, `go vet` clean,
+`go test ./...` 8 pkgs green, `policy/` green, `staticcheck@v0.8.1` clean,
+`govulncheck` no vulnerabilities. Environment notes: `GOTOOLCHAIN=auto` fails
+re-execing into a newer toolchain on this box (pin `GOTOOLCHAIN=go1.26.8` for
+the two `go run` scanners); `-race` needs cgo (CI covers it); k6 + browser
+driver absent (curl + `node --check` stand in).
+**2026-09-21 (18th pass, Track J done + purge fix, all live).** TDD
+(red-green: router build-fail, policy 200-vs-503, main path-registered).
+Shipped: `OllamaClient.PulledModels` (`:latest`-strip), `PresenceReporter` +
+per-backend pulled sets refreshed every probe tick, `presentRefs` (unknown
+never filters), `ErrModelNotPulled` → 503 + pull hint, `/v1/models`
+`up:false` + `reason:not_pulled`, gap log once-per-model at boot + ticks,
+`OLLAMA_MODELS` path-skip, ADR-0011, API + RULES + policy row. Live on this
+box: boot logs the skip + gap lines; fake fast tier → auto AND explicit both
+503 in the one error shape; pulled 7B serves 200; junk path entry gone from
+`/v1/models`. E2E also exposed a dead retention path: the 90-day purge never
+ran (`($1 || ' days')` types the param text vs Go int) — fixed to
+`make_interval(days => $1)` (RED test `TestPurgeConversationsBuildsTypedInterval`),
+live proof: backdated thread purged at boot (`dropped 1`). 98 test funcs,
+then Track K the same day (advisor package, `--advise`, ADR-0012 — 104).
+`gofmt/vet/test/policy` green. Next: Track K.
+**2026-09-21 (17th pass, full E2E sweep on this box).** Postgres `agentops-e2e-pg`
+(:15432) already up; both chat models pulled (3B + 7B-Q4 — the v16 7B hold is
+over here) + `nomic-embed-text`. `go build/vet`, `go test ./...` (7 pkgs),
+`policy/` all green; `gofmt` clean. Live, one by one: `--migrate` → applied 0
+(0001–0005 already recorded, 11 tables); `--ingest` → 36 chunks; short chat →
+3B `short-simple-prompt`, long chat → **7B `long-or-complex-prompt`** (first
+two-model proof — MVP #1's remaining hold closes wherever both blobs are on
+disk); both traces 3 chained spans; `/metrics` quoted `le` + per-model
+counters (3B 59 tok / 7B 1139 tok); `/v1/overview` `by_model` + `since_start`
+(the Tower Models panel's exact inputs) + drift shape with `misses_*`;
+`/v1/requests`, `/` 200; `POST /mcp` 5 tools + real `get_stats`; `mcp.tool`
+span redacted over `/v1/events` SSE; `--run-tracker` done + CLI `--trace` 3
+step spans + workflows API; scorer subset 3 good → 1.000, 3 corrupted → 0.000
++ `alert=true` (judge `qwen3:8b`); `--drift v3` shape OK, empty history honest.
+Defects found (recorded, not hidden): (a) `--trace` without `POSTGRES_PORT`
+fails on :5432 defaults — operator error, not code; (b) `/v1/models` advertises
+`C:\Users\yosri\.ollama` as a tier-`local` model — root cause: Ollama's own
+`OLLAMA_MODELS` (models *directory*) collides with our extra-models env var;
+Track J's presence check will surface it as `not_pulled`, root fix (skip
+path-like entries) rides with J. k6 + browser checks not run on this box
+(no k6, no browser driver); `-race` needs cgo (CI covers it).
+**2026-09-21 (16th pass, Tower dashboard replaces Grafana).** Decision A from
+the dashboard brainstorm (keep `/metrics`, delete the stack, Tower is the
+dashboard; corpus/golden/lesson history untouched by golden discipline).
+`console/static/app.js`: `modelsTable(ov, reqs)` + one panel line in
+`pageOverview` — per-model last-hour (`by_model`), since-start requests/errors/
+tokens, sample p50/p99 (labelled "last 30"), error-rate pills; `tower-empty`
+with curl next-action when no traffic; existing page-level skeleton/error kept.
+No new Tower classes, no hex, `h()` only; example added to
+`docs/tower-design-system.html` (Data display, cites `modelsTable()`).
+Deleted: `dashboard/` (router.json, provisioning, prometheus.yml) + compose
+`monitoring` profile + `.dockerignore` line. Updated: `README.md` (3 spots),
+`CHANGELOG.md Unreleased`. `go test ./...` + policy gate re-run (see below).
+Follow-up recorded: corpus v4 (`04-metrics.md`, `14-monorepo`) + golden v4
+(Grafana-questions) + scored run — needs a quiet-GPU window, not this change.
+**2026-09-21 (15th pass, v1.1 + Track N + cockpit + retrieval-miss — this update).**
+v1.1 gateway (committed `d9040fe`/`13238e7`, ADR-0009): generation params end to
+end (`temperature/top_p/seed/stop/response_format/format/options/keep_alive/think`),
+`ParamBackend` on both backends, `X-Client-Ref`/`X-Agent-Role` (64/32 chars) on all
+three spans + echo, `OLLAMA_MODELS` extra locals, `params`/`params_forwarded` on
+`model.generate` (schema kind only), `agent_role` chips in console.
+Track N (working tree): `POST /mcp` via `HandleOne` (same `handle()`, 1 MB cap,
+Bearer when `REQUIRE_API_KEY=true`), `mcp.tool` spans redacted
+(`TestPolicyMCPToolSpansRedacted`), `spanWriter.Hub` fan-out + `GET /v1/events`
+SSE (`events.go`, 64-deep per subscriber, drop+count, DB-down still 200,
+`TestEventsDropNotBlock`), `#/try` + `#/live` built then retired into `#/cockpit`
+(shared `mountRail`, own ticket pinned amber, old hashes → Overview).
+Cockpit "Run as workflow" posts last input to `POST /v1/workflows` (no backend
+change); conversation client-held per ADR-0010 (resend `messages[]`, ~4000-token
+cap + truncated chip) with opt-in shelf (`0005`, 5 endpoints, boot purge 90d,
+`TestPolicyConversationsPrivate`). Retrieval-miss fix (§10.5 item 1 done):
+`ScorePair` short-circuits on `recall=0` (zero judge calls), `faithfulness NULL`
+(`0004`), averages/drift exclude misses, worst-cases sort misses first, console
+`retrieval miss` chip + `–`. NaN-guard: `writeJSON` marshals first, unencodable →
+loud 502 (console + `/v1/drift/report`). `go test ./...` green, 85 test funcs;
+`gofmt/vet/policy` gate run before commit. Still yours: 7B pull, MCP recording.
 **2026-09-15 (14th pass, console shell).** User feedback on a 1900 px screen: the 64 px icon rail
 looked bare, the empty detail panel was a void, the OS scrollbar glared, the strip scrolled away.
 New shell: labelled sidebar with sections and a status footer, sticky header with page title,
@@ -709,10 +824,15 @@ Verified 2026-09-14 (4th pass) from disk: `router/`, `mcp/` (5 tools), `evals/`
       until v1 is frozen. `docs/VRAM.md` written (swap rule from Locked Decisions).
 
 **Your remaining tasks (nothing else is blocking):**
-1. ~~Golden review~~ — done (v1 0.969, v2 1.000).
+1. ~~Golden review~~ — done (v1 0.969, v2 1.000, v3 0.972 with misses separated).
 2. ~~k6 + Grafana~~ — done live; grab the PNG from `localhost:3000/d/agentops-router` if you want it in the README.
-3. Record the 2-minute Claude Desktop MCP call (`mcp/README.md`).
+3. Record the 2-minute MCP call with any client (`mcp/README.md` — no longer Claude-only; `POST /mcp` works for remote agents).
 4. If the 7B pull is still failing: `ollama pull qwen2.5:7b-instruct-q4_K_M` on a better connection, then the short/long curl pair lands on two models.
+5. (v22) Commit this batch: `0004_retrieval_miss.sql` + `0005_conversations.sql` + `events.go` + cockpit + ADR-0010 (proposed) + this plan update; then start Track J.
+6. (v23) Corpus v4 + golden v4: rewrite `corpus/04-metrics.md` (Tower dashboard, no Grafana) + `corpus/14-monorepo.md` (no `/dashboard` package), re-clean, re-ingest, draft → review → freeze v4, score a full run on a quiet GPU. Frozen v1–v3 and `lessons/11-*` stay as history.
+7. ~~(v24) Track J~~ — done live (see 18th pass). ~~Track K~~ — done live the
+same day (`advisor/`, `--advise`, veto list, ADR-0012). Next: Track L (local
+benchmarking — needs two quiet-GPU scoring runs over frozen v3).
 Original list kept for reference:
 1. `ollama pull qwen2.5:3b-instruct` and `ollama pull qwen2.5:7b-instruct-q4_K_M` (~2 GB +
    ~4.7 GB), then `go run .` with defaults and re-run the short/long curl pair — the two
@@ -876,12 +996,26 @@ Tracks **D** (tracker v2: generic workflows via API, resume lease, `failed` stat
 during eval" for shared GPUs) and **F** (shadow-test auto-promotion) — in that order, each
 one a §9 track with tickets and exit criteria before code. Two box-level items stay yours:
 the 7B model pull and the MCP recording.
+**Shipped since (v22, 2026-09-21):** v1.1 gateway (ADR-0009, committed) — generation
+params, client refs, `OLLAMA_MODELS`; Track N (universal MCP + live rail, `#/try`/`#/live`
+→ `#/cockpit`) + retrieval-miss reporting (P0 item 1 of 2 — misses now reported
+separately via `misses_now/misses_then` + chip; hybrid retrieval itself still open) +
+opt-in conversation capture (P1 "opt-in capture" partially — thread shelf only, no
+prompt capture on the chat path). Remaining P0: hybrid retrieval, OTLP export,
+Anthropic API.
 
 **§10 (v2 enhancement roadmap)** adds three new tracks: **G** (standardized model
 benchmarking), **H** (ML-based outage/degradation prediction), **I** (ML-powered drift
 detection). These require a Python sidecar for the ML libraries; the Go binary stays
 unchanged. See §10 for the full plan, repo survey (41 tools evaluated), build order, and
 architecture.
+
+**§11 (model-intelligence pipeline)** adds four Go-only tracks: **J** (startup presence
+check — the correctness floor: never advertise an unpulled model), **K** (static advisor),
+**L** (local benchmarking), **M** (adaptive routing) plus **M1** (remote judgment
+pool: Groq + one second provider for non-sensitive review). Build J before any other
+new track; K→L→M in order after. Track L shares its comparison view with G; Track M
+is the local, explainable execution of F's promotion rule.
 
 ### Track C — Tower console (3–4 days) — DONE 2026-09-15
 Brief: the mockup, real. Served by the same binary from `embed.FS` at `/`, hand-written
@@ -1082,7 +1216,7 @@ something useful and demoable.
 
 | # | What | Why first | How long |
 |---|---|---|---|
-| 1 | Fix the retrieval-miss vs unfaithful bug | It's a bug, not a feature. 1 day. | 1 day |
+| 1 | ~~Fix the retrieval-miss vs unfaithful bug~~ — DONE 2026-09-21 (`0004`, `ScorePair` miss short-circuit, NULL faith, misses excluded, chip) | It's a bug, not a feature. 1 day. | 1 day |
 | 2 | Add trend line + p-value to drift report | Makes the existing drift report 10x more useful with no new dependencies. | 2 days |
 | 3 | Track which questions are regressing | Once you have trend data, this is a simple query. | 2 days |
 | 4 | Build the metrics pipeline (Python sidecar) | This is the foundation for all ML work. Every anomaly detector and forecaster needs this data. | 2 days |
@@ -1344,5 +1478,206 @@ eval_regressing_questions{golden_version}  gauge   — count of consistently-dec
 - **Don't train on the GPU.** CPU-only ML models are fine for solo scale.
 - **Don't adopt BSL/AGPL libraries without evaluation.** Stick with Apache-2.0/MIT/BSD.
 - **Don't put ML in the request path.** Every ML job is offline. The gateway stays fast.
+
+---
+
+## 11. Model-intelligence pipeline (v2 plan addition, 2026-09-20)
+
+> **Plain-English version.** §10 teaches the gateway to spot sick models. This section
+> teaches it to *know its own models*: first that they exist (J), then what they cost
+> and claim (K), then which one actually answers best (L), and finally to route by
+> that evidence (M). Availability before selection — a correctness fix (J) ahead of
+> three optimization tracks (K→L→M), per RULES.md §2.
+
+**Why this order.** An advisor that recommends an unpulled model prescribes a 404.
+`J` is the correctness floor for everything below and for §10 alike; `K` stops you
+benchmarking models that can never fit 8 GB; `L` produces the evidence `M` acts on.
+Each track is independently demoable — stop after any of them with something finished.
+
+**Scenario labels (shared).** Routing scenarios are the existing `reason` values
+(`short-simple-prompt`, `long-or-complex-prompt`, `explicit-model`) plus a
+`code-vs-prose` tag on golden pairs when present. No new taxonomy until the data
+demands one. Significance gate everywhere: n≥100, p<0.05 (Track F's rule, reused).
+
+### Track J — startup presence check (½ day) — DONE 2026-09-21 (code + live)
+
+Brief: the gateway stops advertising models it cannot serve. Serves day-two
+question 1 (which model answers this request) by answering the prior question:
+is the model even on disk?
+- [x] `OllamaClient` decodes `GET /api/tags` into a pulled-set (normalize `name` vs
+  `name:tag`) → Verified: `TestOllamaPulledModelsDecodesTags` (fake `/api/tags`
+  without the model reads as missing; `:latest`-stripped names match)
+- [x] Boot + every probe tick refresh the set; each gap logs
+  `model "X" not pulled — run: ollama pull X` → Verified live: fake fast tier
+  logs the gap at boot; `TestRefreshPulledLogsGapOnce` (once-per-model),
+  `TestAfterProbeRunsEachTick`
+- [x] `GET /v1/models`: per-model `up = backendUp && pulled` + `reason:"not_pulled"`;
+  `Plan()` filters unpulled refs; explicit request for one → `503 model_not_pulled`
+  naming the model (one error shape; 403 sensitive-cloud refusal still wins on
+  explicit cloud) → Verified: `TestPresenceSkipsUnpulled` + `TestModelsShowsNotPulledReason`
+  + policy `TestPolicyModelNotPulledIsOneErrorShape`; live: auto + explicit both
+  503, pulled 7B serves 200, junk path entry gone
+- [x] `docs/API.md` documents the code + reason; README flags section unchanged
+  (no new flags) → Verified: policy tests green
+Done: one chat to a pulled tier + one explicit request for an unpulled name shows
+`503 model_not_pulled`; `/v1/models` shows the gap; no `502` surprise at request time.
+Plus, found live: `OLLAMA_MODELS` collides with Ollama's own models-directory
+variable (path advertised as a model) — path-like entries now skipped with a log
+line (`TestExtraModelsSkipsPaths`, ADR-0011). E2E also exposed the dead 90-day
+purge (`($1 || ' days')` int/text mismatch — retention never ran) — fixed to
+`make_interval(days => $1)` (`TestPurgeConversationsBuildsTypedInterval`), proven
+live (`dropped 1`).
+
+### Track K — static advisor (½–1 day) — DONE 2026-09-21 (code + live)
+
+Brief: a startup report from metadata + cached public data. Informs the operator;
+changes nothing at runtime. Needs J (only present models are advised on).
+- [x] Per configured model: size, quant, context window, license, VRAM estimate vs
+  the 8 GB budget (`docs/VRAM.md` numbers) → Verified: `go run . --advise` lists
+  both tiers fits-alone + swap co-residency (`TestAdviseKnownTiersFit`,
+  `TestReportPrintsTable`)
+- [x] Cached public scores (LMArena category ranks, Artificial Analysis quality +
+  $/speed) marked *rumor, not measurement* with source + date → Verified: table
+  shipped empty (same-day search found nothing citable — honest, printed aloud)
+  + `TestCachedRumorsCarryProvenance` binds future adds
+- [x] "Cannot-fit" veto: any model that cannot fit the box is flagged before it can
+  enter Track L → Verified: `TestAdviseVetoesCannotFit` (40 GB → VETO);
+  unknown names get "no static data" (`TestAdviseUnknownModel`), unpulled get
+  "pull first" (`TestAdviseSkipsUnpulled`)
+Done: `go run . --advise` (or startup block) prints the table; zero behaviour change.
+New package `advisor/` (stdlib only — single-dep rule safe); one flag + README
+row (policy); ADR-0012; live: pulled lineup + unknown-presence path with Ollama down.
+
+### Track L — local benchmarking (2–3 days) — CODE DONE 2026-09-21, runs in flight
+
+Brief: score your pulled models against your golden set on your GPU; the
+classification table from §11's premise. Needs J + K. Extends `evals/`, never
+replaces it.
+- [x] Run the suite per model over the same frozen golden version (interleaved, same
+  judge, `judge_changed` invalidates the comparison) → Verify: two `eval_runs`
+  rows, same golden hash, different `judge_model`/`model` under test
+  (`--score-model`, `0006_benchmark.sql`; run A on 3B started 20:13, run B on 7B queued)
+- [x] Per-scenario split by `reason` (+ `code-vs-prose` where tagged): faithfulness,
+  p50 latency, tokens per answer → Verify: `BuildComparison` scenarios from
+  `router.Classify` (`TestBuildComparison*`); no golden pair carries a
+  code-vs-prose tag, so that split is noted-absent, not built
+- [x] Verdicts only at significance (n≥100, p<0.05); smaller gaps reported as
+  "tied — route on cost" → Verify: `evals.WelchPValue` (A-S 7.1.26) + `decideWinner`
+  (`TestWelchPValue*`, winner test at n=120; v3's 72 pairs land tied by design)
+- [x] Console `#/benchmarks` (read-only matrix + run history), Tower rules per §12 →
+  Verify: `pageBenchmarks()` (four states, catalogue-only, chip-not-pill for the
+  winner), `TestBenchmarksEndpoint`, design-system example, `node --check` clean
+Done: the table names a winner per scenario with evidence, or "tied" with honesty.
+Faithfulness path shared with golden scoring (`judgeAnswer` extract,
+`TestScorePair` green); generation failures fail loudly (atomic run writes
+nothing); tokens = completion tokens from the generator (honest, not estimated).
+
+### Track M — adaptive routing (3–5 days)
+
+Brief: the gateway acts on L's evidence. Touches the request path, so it carries
+the heaviest guardrails in this plan. Needs L at significance.
+- [ ] Promotion rule: per-tier winner promoted only at n≥100, p<0.05; every moved
+  request spans its `reason` + evidence run id → Verify: promotion + span audit
+- [ ] Guardrails: never route sensitive traffic to an unproven model; no flapping
+  (minimum hold + hysteresis); instant rollback flag → Verify: dedicated tests per
+  guardrail, bind-checked
+- [ ] Sampling tax bounded (N% shadow traffic, documented) → Verify: overhead
+  unchanged on the k6 gate
+Done: traffic moves per evidence with an audit trail; rollback demonstrated live.
+
+### Track M1 — remote judgment pool (2–3 days, after M's guardrails)
+
+Brief: non-sensitive *judgment* bursts to free-tier remotes; generation, routing and
+all sensitive work stay local, always. Story becomes "sovereign local with burst
+judgment", fail-closed intact. Needs M's guardrail shape + Groq path exercised first.
+- [ ] Reviewer role on Groq 70B for non-sensitive workflows via existing
+  `OpenAIBackend` (config only: base URL + key env, documented in `docs/API.md`) →
+  Verify: remote-reviewed workflow completes; disagreement vs local reviewer recorded
+- [ ] Second vote from exactly one second provider (Cloudflare `@cf/` via
+  `.../accounts/{ID}/ai/v1`, or Gemini via `.../v1beta/openai/`), chosen by ADR on
+  measured pain (outages hurt → Cloudflare; third-lineage vote/big-context review →
+  Gemini) → Verify: disagreement metric across three lineages, no 1–1 deadlocks
+- [ ] Per-provider coded caps (Groq req/day, Cloudflare Neurons/day, Gemini RPM/RPD);
+  70% alert, 100% → local fallback, never user-visible failure → Verify: cap hit in
+  a test reads as fallback spans, not errors
+- [ ] Provider error dialects → one table: `429` retries with `Retry-After`;
+  Cloudflare `403`/`5035`/`3040` and any outage mean unavailable → next provider →
+  local, never retried → Verify: new retry-table cases, bind-checked
+- [ ] Fence with three rows: sensitive-span filter before every remote call (policy
+  test, RULES.md §14), PRIVACY.md documents per-provider scope → Verify: policy
+  green; sensitive canary appears in no remote payload
+- [ ] Counters `remote_calls_total{provider,role}` +
+  `remote_fallback_total{provider,reason}`; monthly calibration review reads three
+  judges' rows → Verify: dashboards populate; review log entry written same day
+Done: reviewer bursts remote with local fallback proven by killing the primary
+mid-workflow; disagreement data flowing; $0/Neuron/RPD pools unbreached.
+Never: drafter/generator remote (burns scarcest quotas to save owned GPU); router
+classification remote (sees every prompt including sensitive ones — architectural,
+not budgetary); cost-routing arbitrage between pools (pools are headroom, not income).
+
+### Track N -- universal MCP + Try playground + live mission view (2-3 days, Go-only, after M1) — DONE 2026-09-21 (working tree; evolved into `#/cockpit`)
+
+Brief: the gateway stops looking Claude-exclusive and the console gains the one
+missing mirror. Serves day-two question 4 (what happened to request X) for both
+humans and any LLM agent: HTTP stays the source of truth, MCP stays a thin typed
+wrapper, Tower gains `#/try` + `#/live`. Needs C (console) + #3 mcp-min only.
+Verified baseline 2026-09-21: `rg "mcp\.tool|/v1/events|#/live|EventSource"`
+matched nothing; `go test -count=1 ./policy/` green -- the track started from zero.
+- [x] Universal MCP docs: `mcp/README.md` retitled "any MCP client" (Cursor,
+  Windsurf, VSCode, generic python `mcp`) + `POST /mcp` Streamable-HTTP reusing
+  `handle()` behind `REQUIRE_API_KEY=true`; stdio stays for local, HTTP for
+  remote LLMs; `route_test_request` stays on the same `Router.Chat()` path -->
+  Verified: stdio `tools/list` still 5 tools; HTTP MCP call returns same shape;
+  policy tests green
+- [x] Redacted `mcp.tool` span per MCP tool call (tool/trace_id/latency only,
+  never prompt) so the live view is never empty --> Verified:
+  `TestPolicyMCPToolSpansRedacted` green (bind-checked)
+- [x] `spanWriter` fan-out (DB + SSE hub, 64-deep per subscriber, drop+count) +
+  `GET /v1/events` SSE --> Verified: Postgres stopped, chat still 200;
+  `curl -N /v1/events` receives `mcp.tool`; `TestEventsDropNotBlock` green.
+  (Plan said 128 buffer / 10s ctx; shipped 64-deep per subscriber — same
+  lossy-by-design shape, see `events.go`.)
+- [x] Console `#/try` playground (single prompt --> model/reason/trace_id/text +
+  link to `#/traces/<id>`, no history/streaming v1) + `#/live` mission view
+  (ticket rail `route.decide --> model.generate --> router.respond` and
+  `researcher --> drafter --> reviewer`, `EventSource` append, single amber
+  accent) reusing `panel/waterfall/pill/chip`, `h()` only, four states each -->
+  Verified: Tower policy tests green; DB-down shows error + Retry; no new hex.
+  **Evolved same day:** `#/try` + `#/live` retired into **`#/cockpit`** — send +
+  sight on one surface (sticky send/answer column beside shared `mountRail`
+  live rail, own ticket pinned amber, "Run as workflow" → `POST /v1/workflows`
+  with last input, client-held conversation per ADR-0010); old hashes fall back
+  to Overview. See `docs/try-live-cockpit.html`, `docs/cockpit-playbook.html`,
+  `docs/live-rail-playbook.html`.
+- [x] Docs: `docs/API.md` (`POST /mcp`, `GET /v1/events`), design-system
+  example for `#/live`, CHANGELOG `Unreleased` line --> Verified: policy
+  `EnvVarsDocumented/AgentFilesPointHere` green. Plus `PRIVACY.md` conversation
+  exception, `docs/adr/0010` (proposed), conversations endpoints.
+Done: any MCP client lists 5 tools; `#/cockpit` sends once and deep-links the
+trace; live rail slides tickets in real time with prompts redacted; full gate
+`gofmt -l . && go vet ./... && go test -race ./... && go test -count=1 ./policy/`
+green + browser check at 1900px and default width.
+Never: prompt text in spans/events (policy fence), JSON-RPC in the browser,
+chat history, new colors/fonts, multi-replica lease (still Track D).
+Follow-up shelf (same batch, opt-in): `0005_conversations.sql` + 5 conversation
+endpoints + 90-day boot purge + per-thread delete — gateway chat path stays
+stateless; storage only when the client asks.
+
+
+**What NOT to do (this section).** No cloud leaderboard lookups at runtime. No new
+ML model to "predict the best model" — the classifier is a query over eval rows
+plus a promotion rule. No auto-selecting the lineup: the advisor compares, the
+operator (or Track F's gate) promotes. No fine-grained claims ("best for legal
+summarization") without golden pairs in that scenario — no data, no claim.
+
+**Decision log.** Presence-before-advisor (correctness before optimization,
+RULES.md §2); four phased tracks over one big build (each demoable, per §1
+contract style); scenarios reuse `reason` values (no new taxonomy prematurely);
+Track F's significance gate reused for L/M (one statistical standard, not two);
+remote judgment pool (M1): reviewer-first, one-second-provider-later by ADR on
+measured pain, local generation/routing permanently (fence + quotas, not preference).
+**v22 exception:** Track N shipped before J — deliberately out of §11 order.
+N is Go-only, needs only C + #3, and unblocks every demo (any MCP client, live
+sight, cockpit); J/K/L/M stay ordered after it. No ML ordering (§10) affected.
 
 

@@ -64,11 +64,17 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("GET /v1/overview", h.overview)
 	h.mux.HandleFunc("GET /v1/requests", h.requests)
 	h.mux.HandleFunc("GET /v1/evals/runs", h.evalRuns)
+	h.mux.HandleFunc("GET /v1/benchmarks", h.benchmarks)
 	h.mux.HandleFunc("GET /v1/evals/status", h.evalStatus)
 	h.mux.HandleFunc("POST /v1/evals/run", h.evalRun)
 	h.mux.HandleFunc("GET /v1/workflows", h.workflows)
 	h.mux.HandleFunc("POST /v1/workflows", h.startWorkflow)
 	h.mux.HandleFunc("POST /v1/workflows/{id}/resume", h.resumeWorkflow)
+	h.mux.HandleFunc("GET /v1/conversations", h.conversations)
+	h.mux.HandleFunc("POST /v1/conversations", h.createConversation)
+	h.mux.HandleFunc("GET /v1/conversations/{id}/messages", h.convMessages)
+	h.mux.HandleFunc("POST /v1/conversations/{id}/messages", h.appendMessage)
+	h.mux.HandleFunc("DELETE /v1/conversations/{id}", h.deleteConversation)
 	return h
 }
 
@@ -77,14 +83,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.Serv
 // Routes lists the paths this handler owns, so main.go can mount them individually
 // next to the router's own /v1 endpoints.
 func (h *Handler) Routes() []string {
-	return []string{"GET /{$}", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs",
-		"GET /v1/evals/status", "POST /v1/evals/run", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume"}
+	return []string{"GET /{$}", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks",
+		"GET /v1/evals/status", "POST /v1/evals/run", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume",
+		"GET /v1/conversations", "POST /v1/conversations", "GET /v1/conversations/{id}/messages",
+		"POST /v1/conversations/{id}/messages", "DELETE /v1/conversations/{id}"}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		// Marshal first: a value encoding/json rejects (NaN from a 0/0 metric)
+		// must be a loud 502, never headers with an empty body that the
+		// console would render as nothing with no Retry.
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"code": "store_unavailable", "message": "unencodable response"}})
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(raw)
 }
 
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
@@ -178,6 +194,25 @@ func (h *Handler) evalRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// benchmarks serves Track L's model comparison: the latest scored run per
+// model over one golden version, per-scenario splits, and the verdict (tied
+// below the n≥100 significance gate, by design).
+func (h *Handler) benchmarks(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	golden := r.URL.Query().Get("golden")
+	if golden == "" {
+		golden = h.deps.GoldenVersion
+	}
+	in, err := h.deps.Store.BenchmarkData(ctx, golden)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "eval store unavailable")
+		return
+	}
+	c := BuildComparison(in)
+	writeJSON(w, http.StatusOK, map[string]any{"golden_version": golden, "comparison": c, "history": in.History})
+}
+
 func (h *Handler) evalStatus(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	st := h.evalLast
@@ -262,6 +297,99 @@ func (h *Handler) startWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 var ErrNotFound = errors.New("workflow not found")
+
+func (h *Handler) conversations(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	convs, err := h.deps.Store.Conversations(ctx, limitParam(r, 20, 200))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "conversation store unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversations": convs})
+}
+
+func (h *Handler) createConversation(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title string `json:"title"`
+		Model string `json:"model"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	id, err := h.deps.Store.CreateConversation(ctx, strings.TrimSpace(body.Title), strings.TrimSpace(body.Model))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "conversation store unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id})
+}
+
+func (h *Handler) convMessages(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	msgs, err := h.deps.Store.ConversationMessages(ctx, r.PathValue("id"), limitParam(r, 500, 5000))
+	if errors.Is(err, ErrConvNotFound) {
+		writeErr(w, http.StatusNotFound, "conversation_not_found", "no conversation with that id")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "conversation store unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+}
+
+func (h *Handler) appendMessage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Role             string `json:"role"`
+		Content          string `json:"content"`
+		Model            string `json:"model"`
+		TraceID          string `json:"trace_id"`
+		PromptTokens     int    `json:"prompt_tokens"`
+		CompletionTokens int    `json:"completion_tokens"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	body.Role = strings.TrimSpace(body.Role)
+	if body.Role != "user" && body.Role != "assistant" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "role must be user or assistant")
+		return
+	}
+	if strings.TrimSpace(body.Content) == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "content is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	err := h.deps.Store.AppendMessage(ctx, r.PathValue("id"), Message{
+		Role: body.Role, Content: body.Content, Model: strings.TrimSpace(body.Model),
+		TraceID:      strings.TrimSpace(body.TraceID),
+		PromptTokens: body.PromptTokens, CompletionTokens: body.CompletionTokens,
+	})
+	if errors.Is(err, ErrConvNotFound) {
+		writeErr(w, http.StatusNotFound, "conversation_not_found", "no conversation with that id")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "conversation store unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "stored"})
+}
+
+func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := h.deps.Store.DeleteConversation(ctx, r.PathValue("id")); err != nil {
+		if errors.Is(err, ErrConvNotFound) {
+			writeErr(w, http.StatusNotFound, "conversation_not_found", "no conversation with that id")
+			return
+		}
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "conversation store unavailable")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (h *Handler) resumeWorkflow(w http.ResponseWriter, r *http.Request) {
 	if h.deps.ResumeWork == nil {

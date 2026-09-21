@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"agentops/advisor"
 	"agentops/console"
 	"agentops/evals"
 	"agentops/mcp"
@@ -196,6 +198,9 @@ type spanWriter struct {
 	dropped atomic.Uint64
 	done    chan struct{}
 	once    sync.Once
+	// Hub, when set, receives every span for live viewers. Lossy by design:
+	// a slow browser drops spans there; the queue above is unaffected.
+	Hub *eventHub
 }
 
 func newSpanWriter(db pgDB) *spanWriter {
@@ -225,6 +230,9 @@ func (w *spanWriter) loop() {
 		cancel()
 		if err != nil && w.dropped.Add(1) == 1 {
 			log.Printf("span sink: first write failure (later ones are silent): %v", err)
+		}
+		if w.Hub != nil {
+			w.Hub.Publish(rec) // live view even when the database is down
 		}
 	}
 }
@@ -256,6 +264,43 @@ func runTrace(dsn, traceID string) {
 	}
 	raw, _ := json.MarshalIndent(data, "", "  ")
 	log.Printf("trace %s:\n%s", traceID, string(raw))
+}
+
+// extraModels is the cleaned OLLAMA_MODELS list: named models a client may
+// address explicitly. Path-like entries are skipped (Ollama itself uses
+// OLLAMA_MODELS for its models directory — Track J).
+func extraModels(fastModel, qualityModel string) []string {
+	var out []string
+	for _, m := range strings.Split(os.Getenv("OLLAMA_MODELS"), ",") {
+		m = strings.TrimSpace(m)
+		if m == "" || m == fastModel || m == qualityModel {
+			continue
+		}
+		if strings.ContainsAny(m, `/\`) {
+			log.Printf("OLLAMA_MODELS entry %q looks like a path, not a model — skipping", m)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// runAdvise prints the Track K static advisor report: per-model size, VRAM
+// fit against the 8 GB budget, presence, and the co-residency verdict. It
+// changes nothing and serves nothing.
+func runAdvise(cfg Config) {
+	names := []string{cfg.FastModel, cfg.QualityModel}
+	names = append(names, extraModels(cfg.FastModel, cfg.QualityModel)...)
+	names = append(names, "nomic-embed-text")
+	var pulled map[string]bool
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if set, err := router.NewOllamaClient(cfg.OllamaURL).PulledModels(ctx); err == nil {
+		pulled = set
+	} else {
+		log.Printf("advise: presence unknown (%v) — reporting configured lineup", err)
+	}
+	fmt.Print(advisor.Advise(names, pulled).String())
 }
 
 // toyWorkflow builds the Researcher → Drafter → Reviewer step functions over any pgDB
@@ -434,11 +479,7 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 	// OLLAMA_MODELS: extra local models a client may name explicitly (`"model": "qwen2.5:3b-instruct"`).
 	// A multi-agent client places different roles on different models; without this the
 	// gateway would answer unknown_model for anything but the two tier models.
-	for _, m := range strings.Split(os.Getenv("OLLAMA_MODELS"), ",") {
-		m = strings.TrimSpace(m)
-		if m == "" || m == cfg.FastModel || m == cfg.QualityModel {
-			continue
-		}
+	for _, m := range extraModels(cfg.FastModel, cfg.QualityModel) {
 		srv.AddModel(router.ModelRef{Tier: "local", Model: m, Backend: local})
 	}
 	if kws := os.Getenv("SENSITIVE_KEYWORDS"); kws != "" {
@@ -452,13 +493,13 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 	return srv, backends
 }
 
-func runScore(dsn, ollamaURL, goldenPath, goldenVersion string) {
-	if err := scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion); err != nil {
+func runScore(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) {
+	if err := scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func runScheduler(dsn, ollamaURL, goldenPath, goldenVersion, every string) {
+func runScheduler(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel, every string) {
 	d, err := time.ParseDuration(every)
 	if err != nil {
 		log.Fatalf("bad interval %q: %v", every, err)
@@ -467,13 +508,15 @@ func runScheduler(dsn, ollamaURL, goldenPath, goldenVersion, every string) {
 		log.Fatalf("interval must be positive, got %q", every)
 	}
 	for {
-		if err := scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion); err != nil {
+		if err := scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel); err != nil {
 			log.Printf("scheduled eval failed: %v", err)
 		}
 		log.Printf("next scheduled eval in %s", d)
 		time.Sleep(d)
 	}
 }
+
+func float64Ptr(f float64) *float64 { return &f }
 
 // evalTimeout bounds one suite run. 48 pairs take ~8 min on an idle 4060 but well over 30
 // when the judge shares the GPU with live traffic (every request swaps models), so the
@@ -485,7 +528,7 @@ func evalTimeout() time.Duration {
 	return 90 * time.Minute
 }
 
-func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion string) error {
+func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), evalTimeout())
 	defer cancel()
 	raw, err := os.ReadFile(goldenPath)
@@ -537,28 +580,59 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion string) error {
 	}
 	topK := 5
 	var sumF, sumP, sumR float64
+	var scored, misses int
 	var results []evals.PairResult
+	// Track L: with --score-model the answers come from the named model (same
+	// retrieval, same judge); without it the frozen golden answers are scored
+	// exactly as before.
+	var answer evals.Answerer
+	if scoreModel != "" {
+		gen := router.NewOllamaClient(ollamaURL)
+		answer = func(ctx context.Context, question, contextText string) (string, int, error) {
+			text, usage, err := gen.GenerateWith(ctx, scoreModel,
+				[]router.Message{{Role: "user", Content: "Answer the question using only the context below. Reply in one or two full sentences.\n\nContext:\n" + contextText + "\n\nQuestion: " + question}},
+				router.GenParams{MaxTokens: 256, Temperature: float64Ptr(0)})
+			if err != nil {
+				return "", 0, err
+			}
+			return text, usage.CompletionTokens, nil
+		}
+	}
 	for i, p := range pairs {
-		res, err := evals.ScorePair(ctx, p, search, judge, topK)
+		var res evals.PairResult
+		var err error
+		if answer != nil {
+			res, err = evals.ScoreGeneratedPair(ctx, p, search, judge, answer, topK)
+		} else {
+			res, err = evals.ScorePair(ctx, p, search, judge, topK)
+		}
 		if err != nil {
 			return fmt.Errorf("pair %d: %w", i+1, err)
 		}
-		sumF += res.Faithfulness
+		if res.RetrievalMiss {
+			misses++
+		} else {
+			sumF += res.Faithfulness
+			scored++
+		}
 		sumP += res.Precision
 		sumR += res.Recall
 		results = append(results, res)
-		log.Printf("pair %d faith=%.2f p=%.2f r=%.2f q=%.60q", i+1, res.Faithfulness, res.Precision, res.Recall, res.Question)
+		log.Printf("pair %d miss=%v faith=%.2f p=%.2f r=%.2f q=%.60q", i+1, res.RetrievalMiss, res.Faithfulness, res.Precision, res.Recall, res.Question)
 	}
 	n := float64(len(pairs))
-	avgF := sumF / n
-	log.Printf("suite n=%d judge=%s prompt=%s faith=%.3f precision=%.3f recall=%.3f",
-		len(pairs), judgeName, evals.JudgePromptVersion, avgF, sumP/n, sumR/n)
+	avgF := 0.0
+	if scored > 0 {
+		avgF = sumF / float64(scored) // faith where retrieved; misses excluded
+	}
+	log.Printf("suite n=%d scored=%d misses=%d judge=%s prompt=%s faith=%.3f precision=%.3f recall=%.3f",
+		len(pairs), scored, misses, judgeName, evals.JudgePromptVersion, avgF, sumP/n, sumR/n)
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	saver := pgAdapter{tx}
-	runID, err := evals.RecordRun(ctx, saver, saver, goldenVersion, judgeName, avgF, results)
+	runID, err := evals.RecordRun(ctx, saver, saver, goldenVersion, judgeName, scoreModel, avgF, results)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("record run: %w", err)
@@ -571,8 +645,8 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion string) error {
 	if err != nil {
 		return fmt.Errorf("drift report: %w", err)
 	}
-	log.Printf("eval_run id=%d golden=%s faith=%.3f threshold=%.2f alert=%v runs=%d delta=%.3f",
-		runID, goldenVersion, avgF, threshold, rep.Alert, rep.Runs, rep.Delta)
+	log.Printf("eval_run id=%d golden=%s faith=%.3f threshold=%.2f alert=%v runs=%d delta=%.3f misses_now=%d",
+		runID, goldenVersion, avgF, threshold, rep.Alert, rep.Runs, rep.Delta, rep.MissesNow)
 	return nil
 }
 
@@ -632,6 +706,7 @@ func main() {
 	draftGolden := flag.Bool("draft-golden", false, "draft golden QA pairs with local LLM into evals/golden/<golden-version>_draft.jsonl and exit")
 	freezeGolden := flag.Bool("freeze-golden", false, "validate evals/golden/<golden-version>.jsonl and freeze its hash")
 	score := flag.Bool("score", false, "run faithfulness + retrieval suite over golden file and exit")
+	scoreModel := flag.String("score-model", "", "model under test for --score (Track L): generate each answer with MODEL at temperature 0 instead of scoring frozen answers; the run is tagged with the model")
 	goldenPath := flag.String("golden", "", "golden file for --score (default evals/golden/<golden-version>.jsonl)")
 	goldenVersion := flag.String("golden-version", "v3", "golden version: names the draft/frozen files and tags eval_runs")
 	driftFlag := flag.Bool("drift", false, "print drift report for golden version and exit")
@@ -641,6 +716,7 @@ func main() {
 	resumeTracker := flag.String("resume-tracker", "", "resume toy workflow ID and exit")
 	trackerInput := flag.String("tracker-input", "what does agentops do?", "input question for --run-tracker")
 	traceID := flag.String("trace", "", "print redacted spans for TRACE_ID and exit")
+	advise := flag.Bool("advise", false, "print the static model advisor report (Track K) and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	createKey := flag.String("create-key", "", "create an API key with NAME, print the secret once, and exit")
 	keyRPM := flag.Int("key-rpm", 0, "requests per minute for --create-key (0 = unlimited)")
@@ -686,7 +762,7 @@ func main() {
 		return
 	}
 	if *score {
-		runScore(dsn, cfg.OllamaURL, *goldenPath, *goldenVersion)
+		runScore(dsn, cfg.OllamaURL, *goldenPath, *goldenVersion, *scoreModel)
 		return
 	}
 	if *driftFlag {
@@ -694,7 +770,7 @@ func main() {
 		return
 	}
 	if *scheduleEvals != "" {
-		runScheduler(dsn, cfg.OllamaURL, *goldenPath, *goldenVersion, *scheduleEvals)
+		runScheduler(dsn, cfg.OllamaURL, *goldenPath, *goldenVersion, *scoreModel, *scheduleEvals)
 		return
 	}
 	if *runTrackerFlag {
@@ -709,6 +785,10 @@ func main() {
 		runTrace(dsn, *traceID)
 		return
 	}
+	if *advise {
+		runAdvise(cfg)
+		return
+	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		log.Fatalf("postgres dsn: %v", err)
@@ -717,16 +797,40 @@ func main() {
 	srv, backends := buildBackends(cfg)
 	spans := newSpanWriter(pool)
 	srv.SpanSink = spans.Sink()
+	events := newEventHub()
+	spans.Hub = events
 	srv.Keys = router.SQLKeyStore{Exec: pgAdapter{pool}, Query: routerAdapter{pgAdapter{pool}}}
 	srv.RequireKey = strings.EqualFold(os.Getenv("REQUIRE_API_KEY"), "true")
 	srv.Prober = router.NewHealthProber(srv.Metrics, backends...)
+	// Track J: the gateway never advertises an unpulled model. Presence is
+	// refreshed on every probe tick; gaps are logged (once per model) at boot
+	// and on change.
+	srv.Prober.AfterProbe = func(ctx context.Context) { srv.RefreshPulled(ctx) }
 	probeCtx, stopProbe := context.WithCancel(context.Background())
 	defer stopProbe()
 	go srv.Prober.Run(probeCtx, 15*time.Second)
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		srv.RefreshPulled(ctx)
+		cancel()
+	}
 	if v, ok := latestEvalScore(pool, *driftGolden); ok {
 		srv.Metrics.SetEvalFaithfulness(v)
 	}
+	// Retention: threads idle 90+ days are purged at boot, best-effort.
+	// See PRIVACY.md and migrations/0005_conversations.sql.
+	func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		store := console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}}
+		if n, err := store.PurgeConversations(ctx, 90); err != nil {
+			log.Printf("conversation purge skipped: %v", err)
+		} else if n > 0 {
+			log.Printf("conversation purge: dropped %d idle thread(s)", n)
+		}
+	}()
 	mcpSrv := mcp.NewServer(srv)
+	mcpSrv.SpanSink = spans.Sink() // MCP tool calls land in the same span store
 	mcpSrv.TraceLookup = func(id string) (any, error) {
 		return queryTrace(pool, id)
 	}
@@ -755,7 +859,7 @@ func main() {
 		}()
 	}
 	ui := console.New(console.Deps{
-		Store:         console.SQLStore{Query: pgAdapter{pool}},
+		Store:         console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}},
 		Router:        srv,
 		GoldenVersion: *driftGolden,
 		Version:       version,
@@ -763,7 +867,7 @@ func main() {
 			return queryDrift(pool, golden, evalThreshold())
 		},
 		RunEval: func(ctx context.Context, golden string) error {
-			return scoreOnce(dsn, cfg.OllamaURL, "evals/golden/"+golden+".jsonl", golden)
+			return scoreOnce(dsn, cfg.OllamaURL, "evals/golden/"+golden+".jsonl", golden, "")
 		},
 		StartWorkflow: func(ctx context.Context, input string) (string, error) {
 			id := tracker.NewWorkflowID()
@@ -796,7 +900,15 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(data)
+		raw, err := json.Marshal(data)
+		if err != nil {
+			// Marshal first: an unencodable report (NaN metric) must be a loud
+			// 502, never 200 headers with an empty body.
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "eval_unavailable", "message": "eval store unavailable"}})
+			return
+		}
+		_, _ = w.Write(raw)
 	})
 	mux.HandleFunc("GET /v1/traces/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -819,6 +931,46 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(data)
+	})
+	// Live ticket rail for Tower #/live: redacted spans as server-sent events.
+	mux.Handle("GET /v1/events", events)
+	// MCP over HTTP for remote agents: the same five tools as --mcp stdio, one
+	// request per POST, answered by the same handle() via HandleOne — the two
+	// transports cannot drift. Model calls still travel the fail-closed
+	// Router.Chat path (sensitive never leaves the box). RPM/budget accounting
+	// stays on the chat path; this gate only checks presence and validity.
+	mux.HandleFunc("POST /mcp", func(w http.ResponseWriter, r *http.Request) {
+		traceID := tracker.NewWorkflowID()
+		mcpErr := func(status int, code, msg string) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": msg, "trace_id": traceID}})
+		}
+		if srv.RequireKey {
+			secret := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			if secret == "" {
+				mcpErr(http.StatusUnauthorized, "missing_api_key", "Authorization: Bearer <api key> is required")
+				return
+			}
+			key, err := srv.Keys.Lookup(r.Context(), router.HashSecret(secret))
+			if err != nil {
+				mcpErr(http.StatusUnauthorized, "invalid_api_key", "api key not recognised")
+				return
+			}
+			if key.Disabled {
+				mcpErr(http.StatusForbidden, "api_key_disabled", "api key disabled")
+				return
+			}
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			mcpErr(http.StatusBadRequest, "bad_request", "unreadable body")
+			return
+		}
+		raw, status := mcpSrv.HandleOne(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(raw)
 	})
 	mux.Handle("/", srv)
 	httpSrv := &http.Server{

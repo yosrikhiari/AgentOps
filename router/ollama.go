@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -137,6 +138,43 @@ func (c *OllamaClient) StreamWith(ctx context.Context, model string, msgs []Mess
 		return u, err
 	}
 	return u, fmt.Errorf("ollama stream ended without done")
+}
+
+// PulledModels decodes GET /api/tags into the set of models on disk. The set
+// holds every reported name plus the name with a trailing ":latest" stripped,
+// so a ref "qwen2.5:3b-instruct" matches Ollama's "qwen2.5:3b-instruct:latest".
+// An unreachable Ollama is an error, never an empty set: absence of evidence
+// must not read as evidence of absence.
+func (c *OllamaClient) PulledModels(ctx context.Context) (map[string]bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama status %d", resp.StatusCode)
+	}
+	var out struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(out.Models))
+	for _, m := range out.Models {
+		if m.Name == "" {
+			continue
+		}
+		set[m.Name] = true
+		set[strings.TrimSuffix(m.Name, ":latest")] = true
+	}
+	return set, nil
 }
 
 // Health is a cheap GET /api/tags — it answers even while a model is loading.

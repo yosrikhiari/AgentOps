@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -92,6 +93,11 @@ type Server struct {
 	SensitiveKeywords []string
 	RequestTimeout    time.Duration
 	mux               *http.ServeMux
+	// missingLogged remembers which models already got a "not pulled" log line
+	// so every probe tick does not re-log them; a model is forgotten when it
+	// reappears on disk.
+	missingMu     sync.Mutex
+	missingLogged map[string]bool
 }
 
 // NewServer builds a gateway with one local backend serving the fast and quality tiers.
@@ -120,6 +126,65 @@ func NewServer(fastModel, qualityModel string, local Backend) *Server {
 // AddModel registers another model (typically a cloud fallback with Tier "cloud").
 func (s *Server) AddModel(ref ModelRef) { s.Models = append(s.Models, ref) }
 
+// presentRefs splits Models into routable refs and refs whose model is known
+// missing from disk. Only positive knowledge of absence removes a ref —
+// unknown presence (no prober, backend down, cloud backend) never filters.
+func (s *Server) presentRefs() (present, dropped []ModelRef) {
+	for _, r := range s.Models {
+		if s.Prober != nil {
+			if pulled, known := s.Prober.Pulled(r.Backend.Name(), r.Model); known && !pulled {
+				dropped = append(dropped, r)
+				continue
+			}
+		}
+		present = append(present, r)
+	}
+	return present, dropped
+}
+
+// droppedTierModel names the missing model for the tier a prompt classifies
+// into, or "" when the tier is still served (or was never configured).
+func droppedTierModel(msgs []Message, dropped []ModelRef) string {
+	tier, _ := Classify(lastUserContent(msgs))
+	for _, d := range dropped {
+		if d.Tier == tier {
+			return d.Model
+		}
+	}
+	return ""
+}
+
+// RefreshPulled logs every served model that is known missing from disk, once
+// per model until it reappears. Called at boot and after every probe tick.
+func (s *Server) RefreshPulled(_ context.Context) {
+	if s.Prober == nil {
+		return
+	}
+	_, dropped := s.presentRefs()
+	s.missingMu.Lock()
+	defer s.missingMu.Unlock()
+	if s.missingLogged == nil {
+		s.missingLogged = map[string]bool{}
+	}
+	seen := map[string]bool{}
+	for _, d := range dropped {
+		seen[d.Model] = true
+		if !s.missingLogged[d.Model] {
+			s.missingLogged[d.Model] = true
+			if strings.ContainsAny(d.Model, `/\`) {
+				log.Printf("model %q is configured but not pulled (not a pullable model name)", d.Model)
+			} else {
+				log.Printf("model %q not pulled — run: ollama pull %s", d.Model, d.Model)
+			}
+		}
+	}
+	for m := range s.missingLogged {
+		if !seen[m] {
+			delete(s.missingLogged, m)
+		}
+	}
+}
+
 func newTraceID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
@@ -147,14 +212,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleModels is the OpenAI list shape with tier/backend/health extensions.
+// up is backend-health AND presence: a served-but-unpulled model reads
+// up=false with reason "not_pulled" instead of surprising at request time.
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	type model struct {
-		ID      string `json:"id"`
-		Object  string `json:"object"`
-		OwnedBy string `json:"owned_by"`
-		Tier    string `json:"tier"`
-		Local   bool   `json:"local"`
-		Up      *bool  `json:"up,omitempty"`
+		ID      string  `json:"id"`
+		Object  string  `json:"object"`
+		OwnedBy string  `json:"owned_by"`
+		Tier    string  `json:"tier"`
+		Local   bool    `json:"local"`
+		Up      *bool   `json:"up,omitempty"`
+		Reason  *string `json:"reason,omitempty"`
 	}
 	out := struct {
 		Object string  `json:"object"`
@@ -165,6 +233,12 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		if s.Prober != nil {
 			up := s.Prober.Up(ref.Backend.Name())
 			m.Up = &up
+			if pulled, known := s.Prober.Pulled(ref.Backend.Name(), ref.Model); known && !pulled {
+				f := false
+				m.Up = &f
+				reason := "not_pulled"
+				m.Reason = &reason
+			}
 		}
 		out.Data = append(out.Data, m)
 	}
@@ -320,11 +394,14 @@ func writeSSE(w http.ResponseWriter, v any) {
 func (s *Server) writeChatError(w http.ResponseWriter, err error, traceID string) {
 	var unknown ErrUnknownModel
 	var sens ErrSensitiveCloud
+	var notPulled ErrModelNotPulled
 	switch {
 	case errors.As(err, &unknown):
 		writeError(w, http.StatusBadRequest, "unknown_model", err.Error(), traceID)
 	case errors.As(err, &sens):
 		writeError(w, http.StatusForbidden, "sensitive_cloud_blocked", err.Error(), traceID)
+	case errors.As(err, &notPulled):
+		writeError(w, http.StatusServiceUnavailable, "model_not_pulled", err.Error(), traceID)
 	case errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusGatewayTimeout, "timeout", "model did not answer in time", traceID)
 	default:
@@ -379,8 +456,27 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		msgs = []Message{{Role: "user", Content: req.Prompt}}
 	}
 	sensitive := req.Sensitive || IsSensitive(msgs, s.SensitiveKeywords)
-	route, err := Plan(req.Model, msgs, sensitive, s.Models)
+	// Presence first: an explicitly requested model that is known missing from
+	// disk is a 503 naming it (403 still wins for sensitive-to-cloud). An
+	// auto-tier whose model is missing is caught after Plan below.
+	present, dropped := s.presentRefs()
+	if req.Model != "" && req.Model != "auto" {
+		for _, d := range dropped {
+			if d.Model == req.Model || d.Backend.Name()+"/"+d.Model == req.Model {
+				if sensitive && !d.Local() {
+					return ChatResponse{TraceID: traceID}, ErrSensitiveCloud{Model: req.Model}
+				}
+				return ChatResponse{TraceID: traceID}, ErrModelNotPulled{Model: d.Model}
+			}
+		}
+	}
+	route, err := Plan(req.Model, msgs, sensitive, present)
 	if err != nil {
+		if req.Model == "" || req.Model == "auto" {
+			if m := droppedTierModel(msgs, dropped); m != "" {
+				return ChatResponse{TraceID: traceID}, ErrModelNotPulled{Model: m}
+			}
+		}
 		return ChatResponse{TraceID: traceID}, err
 	}
 	decideSpan, genSpan, respondSpan := newTraceID(), newTraceID(), newTraceID()

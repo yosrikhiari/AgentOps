@@ -59,6 +59,42 @@ func TestScorePair(t *testing.T) {
 	}
 }
 
+func TestScoreGeneratedPair(t *testing.T) {
+	search := func(ctx context.Context, q string, k int) ([]Chunk, error) {
+		return []Chunk{{DocID: "01-router", Text: "ctx"}}, nil
+	}
+	p := Pair{Question: "q?", Answer: "ignored golden answer here", DocIDs: []string{"01-router"}}
+	answer := func(ctx context.Context, question, contextText string) (string, int, error) {
+		if question != "q?" || contextText != "ctx" {
+			t.Fatalf("answerer got %q %q", question, contextText)
+		}
+		return "Ollama runs on port 11434. It serves local models.", 12, nil
+	}
+	res, err := ScoreGeneratedPair(context.Background(), p, search, &fakeJudge{supported: true}, answer, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Faithfulness != 1 || res.Tokens != 12 {
+		t.Fatalf("got %+v", res)
+	}
+	if res.LatencyS < 0 {
+		t.Fatalf("negative latency: %+v", res)
+	}
+}
+
+func TestScoreGeneratedPairErrorFailsLoud(t *testing.T) {
+	search := func(ctx context.Context, q string, k int) ([]Chunk, error) {
+		return []Chunk{{DocID: "01-router", Text: "ctx"}}, nil
+	}
+	p := Pair{Question: "q?", Answer: "Ollama runs on port 11434.", DocIDs: []string{"01-router"}}
+	answer := func(ctx context.Context, question, contextText string) (string, int, error) {
+		return "", 0, errors.New("model down")
+	}
+	if _, err := ScoreGeneratedPair(context.Background(), p, search, &fakeJudge{supported: true}, answer, 5); err == nil {
+		t.Fatal("generation failure must fail the pair, not score zero")
+	}
+}
+
 func TestWithRetrySucceeds(t *testing.T) {
 	n := 0
 	err := WithRetry(context.Background(), 3, time.Millisecond, func() error {
@@ -129,6 +165,32 @@ func TestParseVerdict(t *testing.T) {
 	ok, _ = parseVerdict("VERDICT: UNSUPPORTED")
 	if ok {
 		t.Fatal("UNSUPPORTED must be refuted")
+	}
+}
+
+// A retrieval miss (recall 0) must never be scored as unfaithful: the judge
+// would see the wrong context, so ScorePair skips it entirely with zero calls.
+func TestRetrievalMissNotScoredAsUnfaithful(t *testing.T) {
+	search := func(ctx context.Context, q string, k int) ([]Chunk, error) {
+		return []Chunk{{DocID: "other-doc", Text: "wrong context"}}, nil
+	}
+	p := Pair{Question: "q?", Answer: "Ollama runs on port 11434. It serves local models.", DocIDs: []string{"01-router"}}
+	j := &fakeJudge{supported: true}
+	res, err := ScorePair(context.Background(), p, search, j, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.RetrievalMiss {
+		t.Fatalf("recall 0 must be a retrieval miss, got %+v", res)
+	}
+	if j.calls != 0 {
+		t.Fatalf("judge must not be called on a miss, calls=%d", j.calls)
+	}
+	if res.Recall != 0 {
+		t.Fatalf("want recall 0, got %+v", res)
+	}
+	if len(res.Claims) != 0 {
+		t.Fatalf("miss must carry no judged claims, got %+v", res.Claims)
 	}
 }
 

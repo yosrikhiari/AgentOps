@@ -1,4 +1,4 @@
-# AgentOps Platform — Project Plan (v25, 2026-09-21 — Track J done live: presence check ships, 503 model_not_pulled, path-skip for OLLAMA_MODELS, purge interval fix; Track K done live: static advisor 104 tests)
+# AgentOps Platform — Project Plan (v26, 2026-09-21 — Track J done live: presence check ships, 503 model_not_pulled, path-skip for OLLAMA_MODELS, purge interval fix; Track K done live: static advisor 104 tests)
 
 **What you're trying to achieve, stated plainly, so every decision below serves it:** a
 finished, demoable, fully-your-own-code project that proves you can do ML-systems-level work
@@ -467,6 +467,11 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-22 (22nd pass, Tracks O–T drafted).** ECC research → six portable
+mechanisms → brainstormed (all six as §9 tracks, NFRs locked, approach A:
+six small dependency-ordered tracks) → drafted above. No code yet; each track
+gets grilled (multi-agent-brainstorming) pre-code, then TDD + gate + live proof
+where applicable.
 **2026-09-22 (21st pass, post-push E2E sweep).** Server 21:41 binary (all pushed
 code): health ok; both tiers up, no junk entries; fresh short→3B / long→7B
 chats with chained 3-span traces; overview `by_model` + `since_start` live
@@ -1682,6 +1687,88 @@ Follow-up shelf (same batch, opt-in): `0005_conversations.sql` + 5 conversation
 endpoints + 90-day boot purge + per-thread delete — gateway chat path stays
 stateless; storage only when the client asks.
 
+### Track O — pre-commit verify gate (½ day, ECC verification-loop port)
+
+Brief: one script that proves the tree is green before a commit exists. Serves
+operability (RULES §2), not a day-two question — tooling first, so every later
+track is gated from birth. ECC runs this as hooks; here it is a script + a CI
+job (no daemon, no new container).
+- [ ] `scripts/verify.sh`: `gofmt -l`, `go vet`, `go test ./...`, `go test
+  -count=1 ./policy/`, secret-shape grep over agent files, `git diff --stat`
+  → Verify: exits nonzero on the first red gate; fails loudly on a scratch
+  breakage (e.g. an unformatted file)
+- [ ] CI job calls the script (same commands as the local gate) → Verify: green
+  run on push; README documents the script + the manual PowerShell equivalent
+- [ ] Advisory first: warn-only until green for 2 weeks, then blocking →
+  Verify: log line cites the date it went enforcing
+Done: no commit lands red; the gate is the same list AGENTS.md already prints.
+
+### Track P — agent-config self-scan (½ day, ECC AgentShield port, config-only)
+
+Brief: audit the agent surface, not the app. Serves the fail-closed posture:
+a leaked key or wildcard permission in our own config is a hole no gateway
+rule can close. Scans config; never executes anything.
+- [ ] `TestPolicyAgentConfigClean`: greps `AGENTS.md`, `CLAUDE.md`,
+  `GEMINI.md`, `.cursor/`, `.github/`, `docker-compose.yml`, `console/`
+  for secret shapes (`sk-`, `ghp_`, `AKIA`, `user:password@`), wildcard
+  allows, and bypass flags → Verify: fails on a scratch breakage (temp copy
+  with a fake key)
+- [ ] RULES §9 row for the scan → Verify: `TestPolicyRulesCiteRealTests` green
+Done: our own config cannot carry the secrets we forbid elsewhere.
+
+### Track Q — embedding hash cache (½–1 day, ECC content-hash-cache port)
+
+Brief: stop re-embedding unchanged chunks. Ingest writes a SHA-256 `{hash}.json`
+sidecar per chunk; re-ingest embeds only what changed; a corrupted cache file
+reads as a miss, never an error. Ingest-local: no request path, no schema.
+- [ ] `evals/hashcache.go`: read-through cache around the embed call →
+  Verify: fake-embedder test counts zero embed calls on a clean re-ingest
+- [ ] Corruption → miss (re-embed, rewrite) → Verify: truncated sidecar file
+  still ingests correctly
+- [ ] Ingest log shows hits/misses → Verify: second run logs `hits=N misses=0`
+Done: re-ingest of an untouched corpus costs no embedding calls.
+
+### Track R — router context budget (1 day, ECC context-budget port)
+
+Brief: a counted token ledger per request (chars/4 estimate, 500 tokens per
+tool schema): retrieval topK + generation params are trimmed to fit a
+configured budget. Counting only — no extra inference on the request path.
+Over-budget trims chunks, never fails the request.
+- [ ] Budget assembly in the chat path with trim-oldest-chunks-first →
+  Verify: oversized-context test trims to budget; small contexts pass through
+  byte-identical
+- [ ] `route.decide` span records `budget_trimmed` (count, never text) →
+  Verify: span test asserts the attr, prompts-never-in-spans still green
+- [ ] `docs/API.md` documents the budget, the estimate, and trim behavior →
+  Verify: policy tests green
+Done: no prompt assembly exceeds the budget, whatever the corpus grows to.
+
+### Track S — create-only history (1–2 days, ECC memory-vault port)
+
+Brief: history is appended, never overwritten. `eval_runs` and
+`workflows/steps` gain a `supersedes` link; readers resolve the latest, and a
+history query returns the full chain. The vault idea without the daemon.
+- [ ] Migration `0007_supersedes.sql` + store writers append-only (UPDATEs
+  removed from these paths) → Verify: re-score/resume appends rows; row
+  counts grow, nothing mutates
+- [ ] Chain query (latest + full history) for evals and workflows → Verify:
+  history endpoint returns the chain in order; existing tests updated, green
+- [ ] No console change (API-only; Tower renders the chain when a page needs
+  it) → Verify: full gate green, no new Tower classes
+Done: every eval run and workflow step is forever auditable.
+
+### Track T — eval release gates (1 day, ECC eval-harness port)
+
+Brief: a release gate with teeth. A version tag requires k-of-k consecutive
+golden passes on the frozen set; candidate execution stays local-only (their
+containment refusal, ported as policy, not infrastructure). Gates releases —
+never routes (Track F's n≥100/p<0.05 remains the only promotion rule).
+- [ ] Gate check (script + test): last-k runs for the golden version all green
+  → Verify: gate test fails a tag with one flaky run in the window
+- [ ] CHANGELOG release checklist cites the gate → Verify: checklist present;
+  first tagged release notes the gate result
+Done: no tag ships on a flaky suite.
+
 
 **What NOT to do (this section).** No cloud leaderboard lookups at runtime. No new
 ML model to "predict the best model" — the classifier is a query over eval rows
@@ -1698,5 +1785,13 @@ measured pain, local generation/routing permanently (fence + quotas, not prefere
 **v22 exception:** Track N shipped before J — deliberately out of §11 order.
 N is Go-only, needs only C + #3, and unblocks every demo (any MCP client, live
 sight, cockpit); J/K/L/M stay ordered after it. No ML ordering (§10) affected.
+**v26 (Tracks O–T, ECC ports):** six small tracks, dependency-ordered —
+tooling first (O gates everything after), config scan while small (P),
+ingest-local (Q), request-path counting (R), schema change (S), release gate
+last (T, needs L/F context to mean anything). Each independently demoable and
+stop-anywhere; multi-agent-brainstorming grills each brief pre-code. Rejected:
+two batched tracks (breaks ≤3-day sizing), folding into shipped tracks
+(reopens done-done criteria). ECC's daemon, multi-harness weight, runtime
+leaderboard lookups, and auto-promotion explicitly not ported.
 
 

@@ -4,6 +4,8 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- **Track T — eval release gates:** `--release-gate` (`--golden-version`, `--gate-k` default 3) exits 0 only if the last k golden-answer runs clear today's `EVAL_THRESHOLD` on one judge, printing the window table either way; mixed judges, sub-threshold scores, and short windows fail with the recovery spelled out. Per-model runs never enter the window. README gains the flags plus a 3-step release checklist (verify, gate, tag — all local, CI has no GPU/Postgres). Live proof fixed a real wiring bug (gate read `--drift-golden` instead of `--golden-version`).
+
 - **Track S — append-only transition trail:** new `audit` package + `0007_audit_log.sql` recording workflow created/resumed/step_done/completed/failed and eval started/finished as typed-constructor events (fixed fields only — a prompt structurally cannot enter the log); writers are best-effort (logged, never abort); `GET /v1/activity` reads chains. Grilled pre-code: eval history was already append-only and resume UPDATEs are operational state, so the brief descoped from "rewrite writers" to "record the trail". Live proof caught a real bug (query named `created_at`, migration names `ts` — endpoint 502'd; fixed + `TestSQLHistoryMapsRows` regression test).
 
 - **Track R — router context budget:** machine-assembled prompts (judge context, researcher context) trim to 3000 tokens by a documented chars/4 estimate, tail-first from relevance order, never emptied; dropped counts surface in the `--score` pair log and researcher log (no span changes, no user-traffic trimming). Proven: unit red-green (estimate, tail-drop, trim-fires, no-op) + live tracker run quiet on small corpus + chat unaffected.

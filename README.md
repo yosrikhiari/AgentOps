@@ -67,6 +67,11 @@ docker compose run --rm agentops --migrate   # once
 
 Releases ship `agentops-vX.Y.Z-{linux,windows,darwin}-amd64` binaries built by CI on every `v*` tag.
 
+Releasing (Track T checklist — all local, CI has no GPU/Postgres):
+1. `bash scripts/verify.sh` green.
+2. `go run . --release-gate` (default: last 3 runs of v3 clear `EVAL_THRESHOLD` on one judge).
+3. Tag `vX.Y.Z` and push; CI builds + attaches binaries.
+
 Then:
 
 ```bash
@@ -95,6 +100,7 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--draft-golden` → review → `--freeze-golden` | build a golden set (`--golden-version vN`): LLM drafts, human reviews, validator rejects unscorable answers, hash frozen |
 | `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show) |
 | `--score-model NAME` | with `--score`: generate each answer with MODEL (temperature 0, 256 tokens) instead of scoring frozen answers; tags the run for Track L model comparison |
+| `--release-gate` (`--golden-version vN`, `--gate-k 3`) | pre-tag check (Track T): exit 0 only if the last k golden-answer runs clear today's `EVAL_THRESHOLD` on one judge; run locally before tagging, CI has no GPU/Postgres |
 | `--version` | print the version stamped at release |
 
 Environment variables are listed in [`docs/API.md`](docs/API.md#backends-environment).

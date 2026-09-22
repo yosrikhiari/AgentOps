@@ -1770,17 +1770,23 @@ rejected loudly; writers best-effort (logged, never abort); `GET
 - [x] `docs/API.md` row + CHANGELOG → Verified: policy green
 Done: every transition is forever auditable; resume semantics untouched.
 
-### Track T — eval release gates (1 day, ECC eval-harness port)
+### Track T — eval release gates (1 day, ECC eval-harness port) — DONE 2026-09-22
 
-Brief: a release gate with teeth. A version tag requires k-of-k consecutive
-golden passes on the frozen set; candidate execution stays local-only (their
-containment refusal, ported as policy, not infrastructure). Gates releases —
-never routes (Track F's n≥100/p<0.05 remains the only promotion rule).
-- [ ] Gate check (script + test): last-k runs for the golden version all green
-  → Verify: gate test fails a tag with one flaky run in the window
-- [ ] CHANGELOG release checklist cites the gate → Verify: checklist present;
-  first tagged release notes the gate result
-Done: no tag ships on a flaky suite.
+Brief: a release gate with teeth. `go run . --release-gate` exits 0 only if
+the last `--gate-k` (default 3) golden-answer runs clear today's
+`EVAL_THRESHOLD` on one judge; per-model runs never enter the window; the
+report prints the table plus the recovery. Grilled pre-code (12 objections →
+10 accepted: k evidence rule, release-time threshold semantics, local-only
+execution since CI has no GPU/Postgres, actionable output, re-baseline docs;
+sliding window already flushes stale runs, so no marker needed).
+- [x] `evals.ReleaseGate` + `--release-gate`/`--gate-k` flags + README flags
+  + release checklist → Verified: 5 unit tests (pass, sub-threshold names
+  run+score, short window, mixed judges, model-run exclusion pinned in SQL),
+  policy green
+- [x] Live: v3/k=3 fails need-3-have-0 (exit 1); one golden run → k=1 PASS
+  (exit 0). The proof caught a real wiring bug (gate read `--drift-golden`,
+  not `--golden-version`) → fixed, re-proven
+Done: no tag ships without the gate's blessing; the gate never routes.
 
 
 **What NOT to do (this section).** No cloud leaderboard lookups at runtime. No new

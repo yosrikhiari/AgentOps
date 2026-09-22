@@ -161,6 +161,25 @@ func runDrift(dsn, goldenVersion string, threshold float64) {
 	log.Printf("drift %s:\n%s", goldenVersion, string(raw))
 }
 
+// runReleaseGate is the Track T pre-tag check: the last k golden-answer runs
+// for a golden version must all clear today's threshold on one judge.
+// Anything else prints the reason and exits 1 (log.Fatal) — no tag.
+func runReleaseGate(dsn, golden string, k int, threshold float64) {
+	var res evals.GateResult
+	err := withConn(dsn, 15*time.Second, func(ctx context.Context, conn *pgx.Conn) error {
+		var err error
+		res, err = evals.ReleaseGate(ctx, pgAdapter{conn}, golden, k, threshold)
+		return err
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("release gate %s (k=%d):\n%s", golden, k, res.Report)
+	if !res.Pass {
+		log.Fatalf("release gate %s: not releasable", golden)
+	}
+}
+
 func latestEvalScore(db pgDB, goldenVersion string) (float64, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -746,6 +765,8 @@ func main() {
 	goldenVersion := flag.String("golden-version", "v3", "golden version: names the draft/frozen files and tags eval_runs")
 	driftFlag := flag.Bool("drift", false, "print drift report for golden version and exit")
 	driftGolden := flag.String("drift-golden", "v3", "golden version for --drift and report endpoint")
+	releaseGate := flag.Bool("release-gate", false, "pre-tag release check (Track T): fail unless the last --gate-k golden runs pass the release bar, then exit")
+	gateK := flag.Int("gate-k", 3, "consecutive green runs --release-gate requires (fewer runs, mixed judges, or a sub-threshold score all fail)")
 	scheduleEvals := flag.String("schedule-evals", "", "run eval suite every INTERVAL (e.g. 24h) forever; empty disables")
 	runTrackerFlag := flag.Bool("run-tracker", false, "run toy Researcher-Drafter-Reviewer workflow and exit")
 	resumeTracker := flag.String("resume-tracker", "", "resume toy workflow ID and exit")
@@ -802,6 +823,10 @@ func main() {
 	}
 	if *driftFlag {
 		runDrift(dsn, *driftGolden, evalThreshold())
+		return
+	}
+	if *releaseGate {
+		runReleaseGate(dsn, *goldenVersion, *gateK, evalThreshold())
 		return
 	}
 	if *scheduleEvals != "" {

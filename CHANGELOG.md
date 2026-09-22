@@ -4,6 +4,8 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- **Track R — router context budget:** machine-assembled prompts (judge context, researcher context) trim to 3000 tokens by a documented chars/4 estimate, tail-first from relevance order, never emptied; dropped counts surface in the `--score` pair log and researcher log (no span changes, no user-traffic trimming). Proven: unit red-green (estimate, tail-drop, trim-fires, no-op) + live tracker run quiet on small corpus + chat unaffected.
+
 - **Track Q — embedding hash cache:** `--ingest` keeps SHA-256 `{hash}.json` sidecars in `evals/corpus/cache/` (git-ignored, beside the clean tree, never inside it) and re-embeds only new, cross-model, or corrupt chunks, logging `hits/new/corrupt/model_changed`. Sidecars carry the model name so a model bump misses and overwrites automatically; embed→sidecar→upsert order converges on re-run. Proven live: 36 new first run, 36 hits (seconds, zero embed calls) second run, retrieval still hits `04-metrics` first. Recovery: `rm -rf evals/corpus/cache` + `--ingest`.
 
 - **Track P — agent-config self-scan:** `TestPolicyAgentConfigClean` fails the build on secret shapes, URL-embedded credentials, pipe-to-shell, `chmod 777`, or disabled host-key checks in shipped/executed config (agent files, workflows, compose, Dockerfile, console assets, MCP readme). Docs/lessons/tests are out of scope by construction — no allow-list to grow. It caught a real one on arrival: a `postgres://USER:PASSWORD@…` DSN literal in `mcp/README.md`, now env parts like the compose fix.

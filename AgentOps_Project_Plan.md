@@ -1733,20 +1733,24 @@ miss, never an error. Ingest-local: no request path, no schema.
   Verified: `hits=36 new=0 corrupt=0 model_changed=0` live
 Done: re-ingest of an untouched corpus costs zero embedding calls.
 
-### Track R — router context budget (1 day, ECC context-budget port)
+### Track R — router context budget (1 day, ECC context-budget port) — DONE 2026-09-22
 
-Brief: a counted token ledger per request (chars/4 estimate, 500 tokens per
-tool schema): retrieval topK + generation params are trimmed to fit a
-configured budget. Counting only — no extra inference on the request path.
-Over-budget trims chunks, never fails the request.
-- [ ] Budget assembly in the chat path with trim-oldest-chunks-first →
-  Verify: oversized-context test trims to budget; small contexts pass through
-  byte-identical
-- [ ] `route.decide` span records `budget_trimmed` (count, never text) →
-  Verify: span test asserts the attr, prompts-never-in-spans still green
-- [ ] `docs/API.md` documents the budget, the estimate, and trim behavior →
-  Verify: policy tests green
-Done: no prompt assembly exceeds the budget, whatever the corpus grows to.
+Brief: a counted token ledger per request. Machine-assembled prompts (judge
+context, researcher context) trim to `DefaultBudgetTokens` (3000) by a
+documented chars/4 estimate, tail-first from relevance order, never emptied.
+User traffic never trimmed (correctness over guardrails). Grilled pre-code:
+estimate bounded by documentation + headroom (3000 sits inside the 2–4K VRAM
+window, not 6000), trim order fixed to relevance rank, chat-path exclusion
+defended, span-attr plan dropped (no new policy surface — counts surface in
+logs instead).
+- [x] `evals/budget.go` (`EstimateTokens`, `TrimToBudget`, budget const) +
+  `PairResult.Trimmed` wired through both score paths + score log line +
+  researcher trim + log → Verified: unit red-green, `verify.sh` green
+- [x] `docs/API.md` documents budget, estimator error direction, trim order →
+  Verified: policy green
+- [x] Live: fresh tracker run quiet (no trim on small corpus — correct),
+  chat unaffected on the new binary
+Done: no machine-assembled prompt exceeds the budget, whatever the corpus grows to.
 
 ### Track S — create-only history (1–2 days, ECC memory-vault port)
 

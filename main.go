@@ -340,7 +340,15 @@ func toyWorkflow(db pgDB, ollamaURL, fastModel string) (tracker.Store, tracker.S
 		if len(parts) == 0 {
 			return "no corpus context; answer from input: " + q, nil
 		}
-		return strings.Join(parts, "\n---\n"), nil
+		// Track R: the researcher context is machine-assembled, so it is
+		// budget-trimmed like the judge context (relevance order from the
+		// similarity query — head survives). The trim is logged, and the
+		// step's output snippet already shows the trimmed text.
+		kept, n := evals.TrimToBudget(parts, evals.DefaultBudgetTokens)
+		if n > 0 {
+			log.Printf("researcher: budget trimmed %d chunk(s)", n)
+		}
+		return strings.Join(kept, "\n---\n"), nil
 	}
 	drafter := func(ctx context.Context, contextText string) (string, error) {
 		text, _, err := client.Generate(ctx, fastModel, []router.Message{{Role: "user", Content: "Draft a 3-sentence brief from this context:\n" + contextText}}, 0)
@@ -618,7 +626,7 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		sumP += res.Precision
 		sumR += res.Recall
 		results = append(results, res)
-		log.Printf("pair %d miss=%v faith=%.2f p=%.2f r=%.2f q=%.60q", i+1, res.RetrievalMiss, res.Faithfulness, res.Precision, res.Recall, res.Question)
+		log.Printf("pair %d miss=%v faith=%.2f p=%.2f r=%.2f trimmed=%d q=%.60q", i+1, res.RetrievalMiss, res.Faithfulness, res.Precision, res.Recall, res.Trimmed, res.Question)
 	}
 	n := float64(len(pairs))
 	avgF := 0.0

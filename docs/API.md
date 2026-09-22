@@ -123,6 +123,16 @@ a re-ingest re-embeds only new/changed-model/corrupt chunks and logs
 `clean/` + cache on every run. Recovery from any doubt: `rm -rf
 evals/corpus/cache` + `--ingest` (full re-embed, always possible).
 
+Context budget (Track R): machine-assembled prompts (judge context, researcher
+context) are trimmed to `DefaultBudgetTokens` (3000) by token estimate
+`chars/4` rounded up — an explicitly documented estimate (optimistic on prose,
+loose on code/CJK), guardrail-only, never billing. Trimming drops
+lowest-relevance chunks first (callers pass relevance order) and never empties
+the context; dropped counts surface in the `--score` pair log (`trimmed=N`)
+and the researcher log line. User traffic is never trimmed. The 3000 default
+sits inside the 2–4K operating window (`docs/VRAM.md`) with headroom for the
+estimate error.
+
 ## Conversations (cockpit shelf)
 
 Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`

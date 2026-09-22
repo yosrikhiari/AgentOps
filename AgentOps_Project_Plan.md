@@ -1687,21 +1687,19 @@ Follow-up shelf (same batch, opt-in): `0005_conversations.sql` + 5 conversation
 endpoints + 90-day boot purge + per-thread delete — gateway chat path stays
 stateless; storage only when the client asks.
 
-### Track O — pre-commit verify gate (½ day, ECC verification-loop port)
+### Track O — pre-commit verify gate (½ day, ECC verification-loop port) — DONE 2026-09-22
 
 Brief: one script that proves the tree is green before a commit exists. Serves
-operability (RULES §2), not a day-two question — tooling first, so every later
-track is gated from birth. ECC runs this as hooks; here it is a script + a CI
-job (no daemon, no new container).
-- [ ] `scripts/verify.sh`: `gofmt -l`, `go vet`, `go test ./...`, `go test
-  -count=1 ./policy/`, secret-shape grep over agent files, `git diff --stat`
-  → Verify: exits nonzero on the first red gate; fails loudly on a scratch
-  breakage (e.g. an unformatted file)
-- [ ] CI job calls the script (same commands as the local gate) → Verify: green
-  run on push; README documents the script + the manual PowerShell equivalent
-- [ ] Advisory first: warn-only until green for 2 weeks, then blocking →
-  Verify: log line cites the date it went enforcing
-Done: no commit lands red; the gate is the same list AGENTS.md already prints.
+operability (RULES §2). ECC runs this as hooks; here a script + CI job (no daemon).
+- [x] `scripts/verify.sh` (gofmt, vet, tests, build, policy, diff stat) →
+  Verified red-green: green on this tree, FAIL gofmt on a scratch breakage,
+  green again on removal (Git Bash; system bash is a broken WSL stub)
+- [x] CI job calls the script (`VERIFY_RACE=1`; SHA pins untouched) → Verified:
+  `go` job is one verify step; local runs the same file bare
+- [x] README documents the script + manual PowerShell equivalent →
+  Verified: secret grep deliberately deferred to Track P (allow-listed policy
+  test beats a wolf-crying grep)
+Done: `scripts/verify.sh` is the single definition of green.
 
 ### Track P — agent-config self-scan (½ day, ECC AgentShield port, config-only)
 

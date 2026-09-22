@@ -123,6 +123,14 @@ AGENTS.md    what a coding agent must read first (rules, the Tower design system
 
 The engineering rules — architecture style, sync vs async, retries, latency and scalability budgets, security requirements, guardrails, testing/experiment rules, static analysis, and the executable policies that enforce them — are in [`docs/RULES.md`](docs/RULES.md). Full decision one-pagers in [`docs/adr/`](docs/adr/README.md).
 
+Before every commit, run the gate (Track O — the same script CI runs):
+
+```bash
+bash scripts/verify.sh   # gofmt, vet, tests, build, policy, diff stat
+```
+
+Windows without bash: run the same five commands by hand (`gofmt -l .`, `go vet ./...`, `go test -count=1 ./...`, `go build ./...`, `go test -count=1 ./policy/`). CI adds `-race` via `VERIFY_RACE=1` (needs cgo).
+
 - **One module, one binary** — every mode is a flag; packages reach Postgres through tiny interfaces and never import the driver. (ADR-0001)
 - **pgvector, not a vector DB** — one Postgres for workflows, spans, evals *and* vectors; HNSW `m=16, ef_construction=128`. (ADR-0004)
 - **Postgres-native durability, not DBOS/Temporal** — `(workflow_id, seq)` idempotency keys + `pending→running→done` rows; resume = re-run the same id and skip `done`. (ADR-0003)

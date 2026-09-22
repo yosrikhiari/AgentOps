@@ -30,14 +30,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: gofmt
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      - name: vet
-        run: go vet ./...
-      - name: test
-        run: go test -race -count=1 ./...
-      - name: build
-        run: go build ./...
+      # Track O: the whole Go gate is scripts/verify.sh (single definition of
+      # green — local runs the same file without VERIFY_RACE).
+      - name: verify
+        run: VERIFY_RACE=1 bash scripts/verify.sh
 
   # Static analysis + executable policies (docs/RULES.md). Fails the build on a policy break,
   # a staticcheck finding, or a known vulnerability in the module graph.

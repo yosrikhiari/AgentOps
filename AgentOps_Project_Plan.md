@@ -1701,18 +1701,19 @@ operability (RULES §2). ECC runs this as hooks; here a script + CI job (no daem
   test beats a wolf-crying grep)
 Done: `scripts/verify.sh` is the single definition of green.
 
-### Track P — agent-config self-scan (½ day, ECC AgentShield port, config-only)
+### Track P — agent-config self-scan (½ day, ECC AgentShield port, config-only) — DONE 2026-09-22
 
 Brief: audit the agent surface, not the app. Serves the fail-closed posture:
 a leaked key or wildcard permission in our own config is a hole no gateway
 rule can close. Scans config; never executes anything.
-- [ ] `TestPolicyAgentConfigClean`: greps `AGENTS.md`, `CLAUDE.md`,
-  `GEMINI.md`, `.cursor/`, `.github/`, `docker-compose.yml`, `console/`
-  for secret shapes (`sk-`, `ghp_`, `AKIA`, `user:password@`), wildcard
-  allows, and bypass flags → Verify: fails on a scratch breakage (temp copy
-  with a fake key)
-- [ ] RULES §9 row for the scan → Verify: `TestPolicyRulesCiteRealTests` green
-Done: our own config cannot carry the secrets we forbid elsewhere.
+- [x] `TestPolicyAgentConfigClean` over an explicit shipped/executed file list
+  (agent files, workflows, compose, Dockerfile, console assets, MCP readme);
+  docs/lessons/tests out of scope by construction, no allow-list → Verified:
+  green on clean tree, FAIL on scratch breakage (watched, then reverted);
+  grilled pre-code (10 objections accepted, 2 rejected with rationale)
+- [x] RULES §9 row for the scan → Verify: `TestPolicyRulesCiteRealTests` green
+Done: caught a real one on arrival — `postgres://USER:PASSWORD@…` DSN in
+`mcp/README.md`, now env parts like the compose fix.
 
 ### Track Q — embedding hash cache (½–1 day, ECC content-hash-cache port)
 

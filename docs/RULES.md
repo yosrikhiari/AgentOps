@@ -199,6 +199,7 @@ These fail the build when a rule above is broken. Names are the rules.
 | `TestPolicySensitiveHasNoCloudCandidate` | `Plan()` never yields a non-local candidate for a sensitive request; explicit cloud is refused |
 | `TestPolicyOneErrorShape` | 400/401/502 from the gateway all carry `{error:{code,message,trace_id}}` |
 | `TestPolicyModelNotPulledIsOneErrorShape` | 503 `model_not_pulled` carries the one error shape; the missing model is never attempted |
+| `TestPolicyAgentConfigClean` | shipped/executed config files carry no secret shapes, URL credentials, pipe-to-shell, chmod 777, or disabled host-key checks (docs/lessons/tests out of scope by construction — no allow-list) |
 | `TestPolicySpanSinkIsNonBlocking` | the span sink is a `select` with a `default` branch |
 | `TestPolicyEnvVarsDocumented` | every `os.Getenv("X")` in the code is documented in `docs/API.md` |
 | `TestPolicyFlagsDocumented` | every CLI flag in `main.go` appears in `README.md` |

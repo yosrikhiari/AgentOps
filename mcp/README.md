@@ -20,7 +20,11 @@ Cursor / VS Code / Windsurf take the same command + args):
         "OLLAMA_URL": "http://localhost:11434",
         "FAST_MODEL": "qwen2.5:3b-instruct",
         "QUALITY_MODEL": "qwen2.5:7b-instruct-q4_K_M",
-        "POSTGRES_DSN": "postgres://USER:PASSWORD@localhost:5432/agentops"
+        "POSTGRES_USER": "agentops",
+        "POSTGRES_PASSWORD": "agentops",
+        "POSTGRES_HOST": "localhost",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "agentops"
       }
     }
   }

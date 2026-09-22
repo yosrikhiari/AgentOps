@@ -516,6 +516,32 @@ func TestPolicyModelNotPulledIsOneErrorShape(t *testing.T) {
 	}
 }
 
+// RULE Track P: our own config cannot carry the secrets we forbid elsewhere.
+// Scans shipped/executed files only — an explicit list, so docs/lessons/tests
+// are out of scope by construction and there is no allow-list to grow. Shapes:
+// API keys and private-key headers, URL-embedded credentials (user:password@),
+// pipe-to-shell, chmod 777, disabled host-key checking.
+func TestPolicyAgentConfigClean(t *testing.T) {
+	rels := []string{
+		"AGENTS.md", "CLAUDE.md", "GEMINI.md", "opencode.json",
+		".cursor/rules/agents.mdc", ".github/copilot-instructions.md",
+		".github/workflows/ci.yml", "docker-compose.yml", "Dockerfile",
+		"console/static/app.js", "console/static/index.html",
+		"console/static/tower.css", "mcp/README.md",
+	}
+	secret := regexp.MustCompile(`sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|://[^/\s]*:[^/@\s]+@`)
+	danger := regexp.MustCompile(`curl\s+[^\n]*\|\s*(ba)?sh|chmod\s+777|StrictHostKeyChecking\s+no`)
+	for _, rel := range rels {
+		body := read(t, rel)
+		for _, m := range secret.FindAllString(body, -1) {
+			t.Errorf("%s: secret-shaped literal %q", rel, m)
+		}
+		for _, m := range danger.FindAllString(body, -1) {
+			t.Errorf("%s: dangerous one-liner %q", rel, m)
+		}
+	}
+}
+
 // RULE AGENTS.md is the one agent instruction file; every per-tool file points to it, and it
 // cites the rule book and the design system (AGENTS.md → "Which tool reads what").
 func TestPolicyAgentFilesPointHere(t *testing.T) {

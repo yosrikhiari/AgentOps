@@ -1,3 +1,6 @@
+# embedding sidecars (Track Q): derived local state, rebuilt by --ingest
+evals/corpus/cache/
+
 # local runtime — never commit
 /logs/
 *.log

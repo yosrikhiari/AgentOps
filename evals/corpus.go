@@ -156,7 +156,7 @@ func Migrate(ctx context.Context, db Execer, q Queryer, dir string) (int, error)
 	return n, nil
 }
 
-func Ingest(ctx context.Context, db Execer, chunks []Chunk, embed *Embedder) (int, error) {
+func Ingest(ctx context.Context, db Execer, chunks []Chunk, embed TextEmbedder) (int, error) {
 	done := 0
 	for _, c := range chunks {
 		vec, err := embed.Embed(c.Text)

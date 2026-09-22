@@ -116,6 +116,13 @@ Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval
 | `EMBED_MODEL` | `nomic-embed-text` | embeddings for ingest and retrieval (768 dims) |
 | `DRAFT_MODEL` | `qwen3:8b` | model that drafts golden pairs |
 
+Ingest cache (Track Q): `--ingest` keeps SHA-256 `{hash}.json` sidecars in
+`evals/corpus/cache/` (git-ignored local state, never inside the clean tree);
+a re-ingest re-embeds only new/changed-model/corrupt chunks and logs
+`hits/new/corrupt/model_changed`. Precedence: pgvector is rebuilt from
+`clean/` + cache on every run. Recovery from any doubt: `rm -rf
+evals/corpus/cache` + `--ingest` (full re-embed, always possible).
+
 ## Conversations (cockpit shelf)
 
 Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`

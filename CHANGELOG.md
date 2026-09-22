@@ -4,6 +4,8 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- **Track Q — embedding hash cache:** `--ingest` keeps SHA-256 `{hash}.json` sidecars in `evals/corpus/cache/` (git-ignored, beside the clean tree, never inside it) and re-embeds only new, cross-model, or corrupt chunks, logging `hits/new/corrupt/model_changed`. Sidecars carry the model name so a model bump misses and overwrites automatically; embed→sidecar→upsert order converges on re-run. Proven live: 36 new first run, 36 hits (seconds, zero embed calls) second run, retrieval still hits `04-metrics` first. Recovery: `rm -rf evals/corpus/cache` + `--ingest`.
+
 - **Track P — agent-config self-scan:** `TestPolicyAgentConfigClean` fails the build on secret shapes, URL-embedded credentials, pipe-to-shell, `chmod 777`, or disabled host-key checks in shipped/executed config (agent files, workflows, compose, Dockerfile, console assets, MCP readme). Docs/lessons/tests are out of scope by construction — no allow-list to grow. It caught a real one on arrival: a `postgres://USER:PASSWORD@…` DSN literal in `mcp/README.md`, now env parts like the compose fix.
 
 - **Track O — pre-commit verify gate:** `scripts/verify.sh` is the single definition of green (gofmt, vet, tests, build, policy, diff stat) — CI's Go job calls it with `VERIFY_RACE=1`, developers run it bare; secret scanning stays in Track P's allow-listed policy test, not in a grep. Proven red-green (scratch breakage fails gofmt, removal restores green); README documents the gate plus the manual Windows equivalent.

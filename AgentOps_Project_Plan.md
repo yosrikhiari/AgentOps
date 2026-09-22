@@ -1715,17 +1715,23 @@ rule can close. Scans config; never executes anything.
 Done: caught a real one on arrival — `postgres://USER:PASSWORD@…` DSN in
 `mcp/README.md`, now env parts like the compose fix.
 
-### Track Q — embedding hash cache (½–1 day, ECC content-hash-cache port)
+### Track Q — embedding hash cache (½–1 day, ECC content-hash-cache port) — DONE 2026-09-22
 
 Brief: stop re-embedding unchanged chunks. Ingest writes a SHA-256 `{hash}.json`
-sidecar per chunk; re-ingest embeds only what changed; a corrupted cache file
-reads as a miss, never an error. Ingest-local: no request path, no schema.
-- [ ] `evals/hashcache.go`: read-through cache around the embed call →
-  Verify: fake-embedder test counts zero embed calls on a clean re-ingest
-- [ ] Corruption → miss (re-embed, rewrite) → Verify: truncated sidecar file
-  still ingests correctly
-- [ ] Ingest log shows hits/misses → Verify: second run logs `hits=N misses=0`
-Done: re-ingest of an untouched corpus costs no embedding calls.
+sidecar per chunk; re-ingest embeds only what changed; corruption reads as a
+miss, never an error. Ingest-local: no request path, no schema.
+- [x] `evals/hashcache.go` read-through cache (`TextEmbedder` interface;
+  `Ingest` takes the interface, `*Embedder` implements it) → Verified:
+  5 unit tests (hits, new-text miss, truncated/corrupt miss + rewrite,
+  model-change miss, dims-mismatch miss) with counting fake + tempdir
+- [x] Sidecars beside the clean tree (`evals/corpus/cache/`, git-ignored),
+  payload carries model+dims+vector with a validity predicate (parse, model,
+  dims==len, finite) → Verified live: 36 new first ingest, 36 hits second
+  (seconds), retrieval still correct; grilled pre-code (10 accepted, 2 rejected:
+  file-I/O cost needs no estimate at N=36, daily-loop payoff)
+- [x] Miss-reason counters in the ingest log + recovery doc (`docs/API.md`) →
+  Verified: `hits=36 new=0 corrupt=0 model_changed=0` live
+Done: re-ingest of an untouched corpus costs zero embedding calls.
 
 ### Track R — router context budget (1 day, ECC context-budget port)
 

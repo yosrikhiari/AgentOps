@@ -691,11 +691,15 @@ func runIngest(dsn, ollamaURL string) {
 	if embedModel == "" {
 		embedModel = "nomic-embed-text"
 	}
-	n, err := evals.Ingest(ctx, pgAdapter{conn}, chunks, evals.NewEmbedder(ollamaURL, embedModel))
+	// Track Q: sidecars live beside the clean corpus (never inside it, so the
+	// cleaner cannot wipe them); a re-ingest embeds only changed chunks.
+	cache := evals.NewHashCache("evals/corpus/cache", embedModel, evals.NewEmbedder(ollamaURL, embedModel))
+	n, err := evals.Ingest(ctx, pgAdapter{conn}, chunks, cache)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("ingested %d chunks", n)
+	log.Printf("ingested %d chunks (cache hits=%d new=%d corrupt=%d model_changed=%d)",
+		n, cache.Hits, cache.New, cache.Corrupt, cache.ModelChanged)
 }
 
 func main() {

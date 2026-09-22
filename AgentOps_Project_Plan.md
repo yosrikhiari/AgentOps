@@ -467,6 +467,15 @@ GitHub issues when you start; close in order. Stop rule: if any slice slips >1 w
 Section 7 first. Never cut tests.
 
 Progress log (skills: `project-management:feature-tracking`, `phase-gate-reviewer`, `deep-review`):
+**2026-09-22 (21st pass, post-push E2E sweep).** Server 21:41 binary (all pushed
+code): health ok; both tiers up, no junk entries; fresh short→3B / long→7B
+chats with chained 3-span traces; overview `by_model` + `since_start` live
+(Tower Models panel inputs); requests, evals/status idle, workflows done,
+conversations shelf; MCP stdio (5 tools) + HTTP `inspect_trace` real spans;
+sensitive→local 3B; explicit unknown→400 `unknown_model`; tracker happy path;
+SSE rail streaming redacted spans; `--drift/--migrate/--version` ok; console
+serves index + benchmarks nav + tower.css. v3 full L runs still queued
+(need quiet GPU + foreground hours).
 **2026-09-21 (20th pass, commit + L endpoint proven live).** Committed c70e724
 (53 files: dashboard removal, J/K/L code, purge fix, docs, ADRs) + merged
 origin README commits, pushed (remote == local). Live on the restarted

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"agentops/audit"
 	"agentops/evals"
 )
 
@@ -54,6 +55,25 @@ func (m *memStore) BenchmarkData(ctx context.Context, golden string) (BenchmarkI
 	out := m.bench
 	out.Golden = golden
 	return out, nil
+}
+
+func (m *memStore) Activity(ctx context.Context, entity, id string, limit int) ([]audit.LoggedEntry, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []audit.LoggedEntry{}, nil
+}
+
+func TestActivityEndpoint(t *testing.T) {
+	h := New(Deps{Store: &memStore{}})
+	rec := do(h, "GET", "/v1/activity?entity=workflow", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"entries":[]`) {
+		t.Fatalf("activity: %d %s", rec.Code, rec.Body.String())
+	}
+	hbad := New(Deps{Store: &memStore{err: errors.New("down")}})
+	if rec := do(hbad, "GET", "/v1/activity", ""); rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), `"code":"store_unavailable"`) {
+		t.Fatalf("store down: %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 func (m *memStore) Conversations(ctx context.Context, limit int) ([]Conversation, error) {

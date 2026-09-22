@@ -176,6 +176,7 @@ The web UI is served by the same binary from embedded files — no build step, n
 | `GET /v1/requests?limit=30` | newest router chats first, one row per trace assembled from its `route.decide` + `model.generate` spans: model, backend, tier, reason, sensitive, latency, tokens, fallback, error |
 | `GET /v1/evals/runs?golden=v2&limit=50` | every `eval_runs` row for a golden version + its drift report (worst cases included) |
 | `GET /v1/benchmarks?golden=v3` | Track L comparison: latest scored run per model (same golden version), per-scenario faithfulness split by routing reason, verdict (`winner` only at n≥100 / p<0.05, else `tied — route on cost`), plus recent model-run history; differing judges invalidate |
+| `GET /v1/activity?entity=&id=&limit=100` | Track S transition trail (append-only): workflow created/resumed/step_done/completed/failed and eval started/finished with ids, counts and scores — never prompts. Writers live in CLI/console call sites and never abort on failure; `0007_audit_log.sql` |
 | `GET /v1/evals/status` | `{running, started_at, finished_at, error, golden_version}` of the console-triggered run |
 | `POST /v1/evals/run` `{"golden_version":"v2"}` | starts one suite run in the background → `202`; a second while one runs → `409 eval_running` |
 | `GET /v1/workflows?limit=20` | workflows newest first with their steps (`seq, name, status, attempts, output_snippet`) |

@@ -1752,19 +1752,23 @@ logs instead).
   chat unaffected on the new binary
 Done: no machine-assembled prompt exceeds the budget, whatever the corpus grows to.
 
-### Track S — create-only history (1–2 days, ECC memory-vault port)
+### Track S — create-only history (1–2 days, ECC memory-vault port) — DONE 2026-09-22
 
-Brief: history is appended, never overwritten. `eval_runs` and
-`workflows/steps` gain a `supersedes` link; readers resolve the latest, and a
-history query returns the full chain. The vault idea without the daemon.
-- [ ] Migration `0007_supersedes.sql` + store writers append-only (UPDATEs
-  removed from these paths) → Verify: re-score/resume appends rows; row
-  counts grow, nothing mutates
-- [ ] Chain query (latest + full history) for evals and workflows → Verify:
-  history endpoint returns the chain in order; existing tests updated, green
-- [ ] No console change (API-only; Tower renders the chain when a page needs
-  it) → Verify: full gate green, no new Tower classes
-Done: every eval run and workflow step is forever auditable.
+Brief (descoped by grill: eval history is already append-only; resume UPDATEs
+are operational state, not audit history): an append-only TRANSITION trail.
+New `audit` package + `0007_audit_log.sql`: workflow
+created/resumed/step_done/completed/failed + eval started/finished as typed
+constructors (fixed fields — prompts structurally excluded); unknown events
+rejected loudly; writers best-effort (logged, never abort); `GET
+/v1/activity` reads chains (API-only, no Tower page yet).
+- [x] Package + migration + CLI/console call sites + endpoint → Verified:
+  unit red-green (order, rejection, round-trip, limit, SQL mapping),
+  `verify.sh` green
+- [x] Live: tracker run wrote created→completed; endpoint returned the chain;
+  the proof caught a real bug (query said `created_at`, migration says `ts`)
+  → fixed + regression test → endpoint green
+- [x] `docs/API.md` row + CHANGELOG → Verified: policy green
+Done: every transition is forever auditable; resume semantics untouched.
 
 ### Track T — eval release gates (1 day, ECC eval-harness port)
 

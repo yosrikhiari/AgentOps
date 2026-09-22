@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"agentops/audit"
 	"agentops/router"
 )
 
@@ -65,6 +66,7 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("GET /v1/requests", h.requests)
 	h.mux.HandleFunc("GET /v1/evals/runs", h.evalRuns)
 	h.mux.HandleFunc("GET /v1/benchmarks", h.benchmarks)
+	h.mux.HandleFunc("GET /v1/activity", h.activity)
 	h.mux.HandleFunc("GET /v1/evals/status", h.evalStatus)
 	h.mux.HandleFunc("POST /v1/evals/run", h.evalRun)
 	h.mux.HandleFunc("GET /v1/workflows", h.workflows)
@@ -83,7 +85,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.Serv
 // Routes lists the paths this handler owns, so main.go can mount them individually
 // next to the router's own /v1 endpoints.
 func (h *Handler) Routes() []string {
-	return []string{"GET /{$}", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks",
+	return []string{"GET /{$}", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks", "GET /v1/activity",
 		"GET /v1/evals/status", "POST /v1/evals/run", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume",
 		"GET /v1/conversations", "POST /v1/conversations", "GET /v1/conversations/{id}/messages",
 		"POST /v1/conversations/{id}/messages", "DELETE /v1/conversations/{id}"}
@@ -211,6 +213,23 @@ func (h *Handler) benchmarks(w http.ResponseWriter, r *http.Request) {
 	}
 	c := BuildComparison(in)
 	writeJSON(w, http.StatusOK, map[string]any{"golden_version": golden, "comparison": c, "history": in.History})
+}
+
+// activity serves the Track S transition trail (read-only; writers live in
+// main.go call sites). No Tower page yet by design — JSON first, page later.
+func (h *Handler) activity(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	entries, err := h.deps.Store.Activity(ctx,
+		r.URL.Query().Get("entity"), r.URL.Query().Get("id"), limitParam(r, 100, 1000))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "audit store unavailable")
+		return
+	}
+	if entries == nil {
+		entries = []audit.LoggedEntry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
 func (h *Handler) evalStatus(w http.ResponseWriter, r *http.Request) {

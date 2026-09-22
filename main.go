@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"agentops/advisor"
+	"agentops/audit"
 	"agentops/console"
 	"agentops/evals"
 	"agentops/mcp"
@@ -380,10 +381,25 @@ func runTracker(dsn, ollamaURL, resumeID, input string, fastModel string) {
 	if workflowID == "" {
 		workflowID = tracker.NewWorkflowID()
 	}
+	// Track S: the transition trail is best-effort telemetry — a failed audit
+	// write is logged loudly and never aborts the workflow.
+	auditLog := audit.SQLStore{Exec: pgAdapter{conn}, Query: pgAdapter{conn}}
+	auditNote := func(e audit.Entry) {
+		if err := auditLog.Append(ctx, e); err != nil {
+			log.Printf("audit: %v", err)
+		}
+	}
+	if resumeID == "" {
+		auditNote(audit.WorkflowCreated(workflowID, "toy"))
+	} else {
+		auditNote(audit.WorkflowResumed(workflowID))
+	}
 	final, err := tracker.RunToy(ctx, store, workflowID, input, researcher, drafter, reviewer)
 	if err != nil {
+		auditNote(audit.WorkflowFailed(workflowID, "run_error"))
 		log.Fatalf("tracker workflow %s: %v", workflowID, err)
 	}
+	auditNote(audit.WorkflowCompleted(workflowID))
 	log.Printf("tracker workflow %s done: %.120q", workflowID, final)
 }
 
@@ -590,6 +606,10 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	var sumF, sumP, sumR float64
 	var scored, misses int
 	var results []evals.PairResult
+	auditLog := audit.SQLStore{Exec: pgAdapter{conn}, Query: pgAdapter{conn}}
+	if err := auditLog.Append(ctx, audit.EvalStarted(goldenVersion, scoreModel, len(pairs))); err != nil {
+		log.Printf("audit: %v", err)
+	}
 	// Track L: with --score-model the answers come from the named model (same
 	// retrieval, same judge); without it the frozen golden answers are scored
 	// exactly as before.
@@ -652,6 +672,9 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	rep, err := evals.DriftReportFor(ctx, pgAdapter{conn}, goldenVersion, threshold)
 	if err != nil {
 		return fmt.Errorf("drift report: %w", err)
+	}
+	if err := auditLog.Append(ctx, audit.EvalFinished(runID, avgF, rep.Alert)); err != nil {
+		log.Printf("audit: %v", err)
 	}
 	log.Printf("eval_run id=%d golden=%s faith=%.3f threshold=%.2f alert=%v runs=%d delta=%.3f misses_now=%d",
 		runID, goldenVersion, avgF, threshold, rep.Alert, rep.Runs, rep.Delta, rep.MissesNow)
@@ -858,15 +881,25 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	// Tower console: UI at / plus its read endpoints and two actions, all on the pool.
+	auditTrail := audit.SQLStore{Exec: pgAdapter{pool}, Query: pgAdapter{pool}}
+	auditNote := func(e audit.Entry) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := auditTrail.Append(ctx, e); err != nil {
+			log.Printf("audit: %v", err)
+		}
+	}
 	runWorkflow := func(id, input string) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
 			store, researcher, drafter, reviewer := toyWorkflow(pool, cfg.OllamaURL, cfg.FastModel)
 			if _, err := tracker.RunToy(ctx, store, id, input, researcher, drafter, reviewer); err != nil {
+				auditNote(audit.WorkflowFailed(id, "run_error"))
 				log.Printf("workflow %s: %v", id, err)
 				return
 			}
+			auditNote(audit.WorkflowCompleted(id))
 			log.Printf("workflow %s done", id)
 		}()
 	}
@@ -883,6 +916,7 @@ func main() {
 		},
 		StartWorkflow: func(ctx context.Context, input string) (string, error) {
 			id := tracker.NewWorkflowID()
+			auditNote(audit.WorkflowCreated(id, "toy"))
 			runWorkflow(id, input)
 			return id, nil
 		},
@@ -897,6 +931,7 @@ func main() {
 			if status == tracker.StatusDone {
 				return fmt.Errorf("workflow %s is already done", id)
 			}
+			auditNote(audit.WorkflowResumed(id))
 			runWorkflow(id, "")
 			return nil
 		},

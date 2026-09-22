@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"agentops/audit"
 	"agentops/evals"
 	"agentops/tracker"
 )
@@ -88,6 +89,9 @@ type Store interface {
 	AppendMessage(ctx context.Context, convID string, m Message) error
 	DeleteConversation(ctx context.Context, id string) error
 	PurgeConversations(ctx context.Context, olderThanDays int) (int64, error)
+	// Activity reads the Track S transition trail (append-only; writers live
+	// in main.go call sites, never in this package).
+	Activity(ctx context.Context, entity, id string, limit int) ([]audit.LoggedEntry, error)
 }
 
 // Conversation is one stored thread on the cockpit shelf.
@@ -527,4 +531,9 @@ func (s SQLStore) PurgeConversations(ctx context.Context, days int) (int64, erro
 	}
 	return s.Exec.Exec(ctx,
 		`DELETE FROM conversations WHERE updated_at < now() - make_interval(days => $1)`, days)
+}
+
+// Activity delegates to the audit trail (Track S); the console only reads.
+func (s SQLStore) Activity(ctx context.Context, entity, id string, limit int) ([]audit.LoggedEntry, error) {
+	return audit.SQLStore{Query: s.Query}.History(ctx, entity, id, limit)
 }

@@ -4,6 +4,8 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- **Track S — append-only transition trail:** new `audit` package + `0007_audit_log.sql` recording workflow created/resumed/step_done/completed/failed and eval started/finished as typed-constructor events (fixed fields only — a prompt structurally cannot enter the log); writers are best-effort (logged, never abort); `GET /v1/activity` reads chains. Grilled pre-code: eval history was already append-only and resume UPDATEs are operational state, so the brief descoped from "rewrite writers" to "record the trail". Live proof caught a real bug (query named `created_at`, migration names `ts` — endpoint 502'd; fixed + `TestSQLHistoryMapsRows` regression test).
+
 - **Track R — router context budget:** machine-assembled prompts (judge context, researcher context) trim to 3000 tokens by a documented chars/4 estimate, tail-first from relevance order, never emptied; dropped counts surface in the `--score` pair log and researcher log (no span changes, no user-traffic trimming). Proven: unit red-green (estimate, tail-drop, trim-fires, no-op) + live tracker run quiet on small corpus + chat unaffected.
 
 - **Track Q — embedding hash cache:** `--ingest` keeps SHA-256 `{hash}.json` sidecars in `evals/corpus/cache/` (git-ignored, beside the clean tree, never inside it) and re-embeds only new, cross-model, or corrupt chunks, logging `hits/new/corrupt/model_changed`. Sidecars carry the model name so a model bump misses and overwrites automatically; embed→sidecar→upsert order converges on re-run. Proven live: 36 new first run, 36 hits (seconds, zero embed calls) second run, retrieval still hits `04-metrics` first. Recovery: `rm -rf evals/corpus/cache` + `--ingest`.

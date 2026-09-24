@@ -30,7 +30,7 @@ The agreed backlog of UI/UX improvements, each with a live demo, is `docs/tower-
 
 ## Which tool reads what
 
-This file is the only instruction file with content. Every other agent file is a pointer to it, so the rules cannot fork per tool. `TestPolicyAgentFilesPointHere` fails the build if a pointer stops pointing here or this file stops citing the rule book and the design system.
+This file is the only instruction file with content, and the only one in git besides the Copilot pointer. The other per-tool pointers below are local files, listed in `.gitignore`: create the one your tool needs. `TestPolicyAgentFilesPointHere` fails the build if a pointer that exists stops pointing here, or this file stops citing the rule book and the design system.
 
 | Tool | Reads | Notes |
 |---|---|---|
@@ -41,6 +41,8 @@ This file is the only instruction file with content. Every other agent file is a
 | GitHub Copilot (IDE chat) | `.github/copilot-instructions.md` | |
 | Gemini CLI | `GEMINI.md` | |
 | Anything else | point it at `AGENTS.md` | add a row here and a line to the policy test |
+
+Local pointer contents: `CLAUDE.md` is `@AGENTS.md`; `GEMINI.md` says to read `AGENTS.md`; `opencode.json` is `{"instructions": ["AGENTS.md"]}`; `.cursor/rules/agents.mdc` is an `alwaysApply` rule pointing at `AGENTS.md`.
 
 ## Where things are
 
@@ -63,3 +65,7 @@ This file is the only instruction file with content. Every other agent file is a
 - GitHub Actions in `ci.yml` are pinned to full commit SHAs with the release tag as a comment; Dependabot bumps them. Do not replace a SHA with a tag.
 - Prompts never reach spans. Sensitive requests never reach a cloud backend. Both are policies; both have tests.
 - `CHANGELOG.md` has an `## Unreleased` section; add a line for anything a user or operator would notice.
+
+## Commit messages
+
+The subject says what the change does for someone using or reading the code, in the imperative, under 72 characters: `Block a release when faithfulness drops below the gate`, not `Track T: eval release gates (flag + checklist + docs)`. Plan-track IDs, pass numbers and checklists go in the body. One logical change per commit.

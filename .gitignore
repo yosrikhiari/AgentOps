@@ -11,3 +11,11 @@ evals/corpus/cache/
 
 # local env overrides
 .env
+
+# per-tool agent pointers (Claude Code, Gemini CLI, OpenCode, Cursor) — kept
+# locally; AGENTS.md is the one shared instruction file
+/CLAUDE.md
+/GEMINI.md
+/opencode.json
+/.cursor/
+/.claude/

@@ -28,6 +28,17 @@ var repo = func() string {
 	return filepath.Dir(wd) // policy/ lives one level below the module root
 }()
 
+// localAgentPointers are per-tool agent files kept out of git (.gitignore):
+// the policies check them when they exist on this machine, and a fresh clone
+// without them is still green.
+var localAgentPointers = []string{"CLAUDE.md", "GEMINI.md", "opencode.json", ".cursor/rules/agents.mdc"}
+
+// present reports whether rel exists under the repo root.
+func present(rel string) bool {
+	_, err := os.Stat(filepath.Join(repo, rel))
+	return err == nil
+}
+
 func read(t *testing.T, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(repo, rel))
@@ -523,11 +534,15 @@ func TestPolicyModelNotPulledIsOneErrorShape(t *testing.T) {
 // pipe-to-shell, chmod 777, disabled host-key checking.
 func TestPolicyAgentConfigClean(t *testing.T) {
 	rels := []string{
-		"AGENTS.md", "CLAUDE.md", "GEMINI.md", "opencode.json",
-		".cursor/rules/agents.mdc", ".github/copilot-instructions.md",
+		"AGENTS.md", ".github/copilot-instructions.md",
 		".github/workflows/ci.yml", "docker-compose.yml", "Dockerfile",
 		"console/static/app.js", "console/static/index.html",
 		"console/static/tower.css", "mcp/README.md",
+	}
+	for _, rel := range localAgentPointers {
+		if present(rel) {
+			rels = append(rels, rel)
+		}
 	}
 	secret := regexp.MustCompile(`sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|://[^/\s]*:[^/@\s]+@`)
 	danger := regexp.MustCompile(`curl\s+[^\n]*\|\s*(ba)?sh|chmod\s+777|StrictHostKeyChecking\s+no`)
@@ -551,12 +566,15 @@ func TestPolicyAgentFilesPointHere(t *testing.T) {
 			t.Errorf("AGENTS.md no longer mentions %q", must)
 		}
 	}
-	for _, rel := range []string{"CLAUDE.md", "GEMINI.md", "opencode.json", ".cursor/rules/agents.mdc", ".github/copilot-instructions.md"} {
+	for _, rel := range append([]string{".github/copilot-instructions.md"}, localAgentPointers...) {
+		if rel != ".github/copilot-instructions.md" && !present(rel) {
+			continue
+		}
 		if !strings.Contains(read(t, rel), "AGENTS.md") {
 			t.Errorf("%s does not point at AGENTS.md", rel)
 		}
 	}
-	if strings.Contains(read(t, "CLAUDE.md"), "## ") {
+	if present("CLAUDE.md") && strings.Contains(read(t, "CLAUDE.md"), "## ") {
 		t.Errorf("CLAUDE.md has its own sections — it must stay a pointer (@AGENTS.md), not a second rule file")
 	}
 }

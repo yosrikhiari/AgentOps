@@ -4,6 +4,8 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- **Repository root trimmed:** the per-tool agent pointers (`CLAUDE.md`, `GEMINI.md`, `opencode.json`, `.cursor/`, `.claude/`) are now local and git-ignored — `AGENTS.md` stays the one shared instruction file, and the agent-file policies check a pointer only when it exists, so a fresh clone is green. The project plan moved from the root to `docs/PLAN.md`. `AGENTS.md` gains a commit-message convention.
+
 - **Track T — eval release gates:** `--release-gate` (`--golden-version`, `--gate-k` default 3) exits 0 only if the last k golden-answer runs clear today's `EVAL_THRESHOLD` on one judge, printing the window table either way; mixed judges, sub-threshold scores, and short windows fail with the recovery spelled out. Per-model runs never enter the window. README gains the flags plus a 3-step release checklist (verify, gate, tag — all local, CI has no GPU/Postgres). Live proof fixed a real wiring bug (gate read `--drift-golden` instead of `--golden-version`).
 
 - **Track S — append-only transition trail:** new `audit` package + `0007_audit_log.sql` recording workflow created/resumed/step_done/completed/failed and eval started/finished as typed-constructor events (fixed fields only — a prompt structurally cannot enter the log); writers are best-effort (logged, never abort); `GET /v1/activity` reads chains. Grilled pre-code: eval history was already append-only and resume UPDATEs are operational state, so the brief descoped from "rewrite writers" to "record the trail". Live proof caught a real bug (query named `created_at`, migration names `ts` — endpoint 502'd; fixed + `TestSQLHistoryMapsRows` regression test).

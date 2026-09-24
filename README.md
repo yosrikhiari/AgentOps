@@ -122,7 +122,7 @@ lessons/     33 plain-language HTML lessons on this repo — open lessons/index.
 docs/        MARKET.md (market study + roadmap) · RULES.md (engineering rules) · API.md · VRAM.md · adr/ (8 decision records) · tower-design-system.html (the console design system, live against console/static/tower.css) · tower-enhancements.html (20 worked UI/UX enhancements with demos)
 policy/      executable policies: tests that fail the build when a rule in docs/RULES.md is broken
 AGENTS.md    what a coding agent must read first (rules, the Tower design system, the traps). OpenCode/Codex read it natively;
-             CLAUDE.md, GEMINI.md, opencode.json, .cursor/rules/, .github/copilot-instructions.md are pointers to it
+             per-tool pointers to it (CLAUDE.md, GEMINI.md, …) are local and git-ignored; .github/copilot-instructions.md is tracked
 ```
 
 ## Rules and decisions
@@ -157,7 +157,7 @@ Windows without bash: run the same five commands by hand (`gofmt -l .`, `go vet 
 - Tracker: no lease for two concurrent resumers, no `failed` terminal state; step spans use the workflow id as parent.
 - Retrieval is vector-only; hybrid BM25 + RRF is parked.
 
-Roadmap and the full defect log live in [`AgentOps_Project_Plan.md`](AgentOps_Project_Plan.md) (§7 backlog, §9 v1.0 tracks). Where this sits in the market and what to build next: [`docs/MARKET.md`](docs/MARKET.md).
+Roadmap and the full defect log live in [`docs/PLAN.md`](docs/PLAN.md) (§7 backlog, §9 v1.0 tracks). Where this sits in the market and what to build next: [`docs/MARKET.md`](docs/MARKET.md).
 
 ## Privacy & license
 

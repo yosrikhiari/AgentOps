@@ -9,9 +9,43 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// lockedRecorder lets the test read the body while the handler is still
+// streaming into it; a bare httptest.ResponseRecorder is not safe for that.
+type lockedRecorder struct {
+	mu  sync.Mutex
+	rec *httptest.ResponseRecorder
+}
+
+func (l *lockedRecorder) Header() http.Header { return l.rec.Header() }
+
+func (l *lockedRecorder) WriteHeader(code int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rec.WriteHeader(code)
+}
+
+func (l *lockedRecorder) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.rec.Write(b)
+}
+
+func (l *lockedRecorder) Flush() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rec.Flush()
+}
+
+func (l *lockedRecorder) body() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.rec.Body.String()
+}
 
 func TestEventHubBroadcastsSpan(t *testing.T) {
 	hub := newEventHub()
@@ -53,7 +87,7 @@ func TestEventsEndpointStreamsSpans(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := &lockedRecorder{rec: httptest.NewRecorder()}
 	done := make(chan struct{})
 	go func() {
 		hub.ServeHTTP(rec, req)
@@ -63,7 +97,7 @@ func TestEventsEndpointStreamsSpans(t *testing.T) {
 	hub.Publish(spanRecord{traceID: "t1", spanID: "s1", parentID: "", name: "mcp.tool", attrs: `{"tool":"get_stats","ok":true}`})
 	deadline := time.After(2 * time.Second)
 	for {
-		body := rec.Body.String()
+		body := rec.body()
 		if strings.Contains(body, "mcp.tool") && strings.HasPrefix(body, "data: ") {
 			break
 		}

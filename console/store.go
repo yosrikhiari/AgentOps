@@ -12,6 +12,7 @@ import (
 
 	"agentops/audit"
 	"agentops/evals"
+	"agentops/gpu"
 	"agentops/tracker"
 )
 
@@ -92,6 +93,9 @@ type Store interface {
 	// Activity reads the Track S transition trail (append-only; writers live
 	// in main.go call sites, never in this package).
 	Activity(ctx context.Context, entity, id string, limit int) ([]audit.LoggedEntry, error)
+	// GPUSamples is Track U's history: local GPU utilisation and VRAM,
+	// newest-first. A nil slice (no rows) is not an error.
+	GPUSamples(ctx context.Context, since time.Time, limit int) ([]gpu.Sample, error)
 }
 
 // Conversation is one stored thread on the cockpit shelf.
@@ -119,6 +123,9 @@ type SQLStore struct {
 	Query evals.Queryer
 	Exec  evals.Execer
 	Row   evals.Querier
+	// GPU is Track U's sample reader. gpu.Rows is a distinct named type from
+	// evals.Rows, so it needs its own queryer; main.go supplies gpuAdapter.
+	GPU gpu.Queryer
 }
 
 // ErrConvNotFound answers 404: no thread with that id.
@@ -536,4 +543,14 @@ func (s SQLStore) PurgeConversations(ctx context.Context, days int) (int64, erro
 // Activity delegates to the audit trail (Track S); the console only reads.
 func (s SQLStore) Activity(ctx context.Context, entity, id string, limit int) ([]audit.LoggedEntry, error) {
 	return audit.SQLStore{Query: s.Query}.History(ctx, entity, id, limit)
+}
+
+// GPUSamples delegates to gpu.SQLStore so the SQL for gpu_samples lives in one
+// package. GPU is nil in tests that only exercise spans, so guard it: a nil
+// queryer is "no history", never a panic on a page load.
+func (s SQLStore) GPUSamples(ctx context.Context, since time.Time, limit int) ([]gpu.Sample, error) {
+	if s.GPU == nil {
+		return nil, nil
+	}
+	return gpu.SQLStore{Query: s.GPU}.Series(ctx, since, limit)
 }

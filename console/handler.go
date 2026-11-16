@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"agentops/audit"
+	"agentops/gpu"
 	"agentops/router"
 )
 
@@ -31,6 +32,9 @@ type Deps struct {
 	ResumeWork    func(ctx context.Context, id string) error
 	GoldenVersion string
 	Version       string
+	// GPU is Track U's live snapshot; nil when the prober is off (tests,
+	// non-GPU builds) and the page renders the empty state.
+	GPU func() gpu.Snapshot
 }
 
 // Handler serves the UI at / and the console JSON under /v1/. It nests router endpoints
@@ -72,6 +76,7 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("GET /v1/workflows", h.workflows)
 	h.mux.HandleFunc("POST /v1/workflows", h.startWorkflow)
 	h.mux.HandleFunc("POST /v1/workflows/{id}/resume", h.resumeWorkflow)
+	h.mux.HandleFunc("GET /v1/gpu", h.gpu)
 	h.mux.HandleFunc("GET /v1/conversations", h.conversations)
 	h.mux.HandleFunc("POST /v1/conversations", h.createConversation)
 	h.mux.HandleFunc("GET /v1/conversations/{id}/messages", h.convMessages)
@@ -87,6 +92,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.Serv
 func (h *Handler) Routes() []string {
 	return []string{"GET /{$}", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks", "GET /v1/activity",
 		"GET /v1/evals/status", "POST /v1/evals/run", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume",
+		"GET /v1/gpu",
 		"GET /v1/conversations", "POST /v1/conversations", "GET /v1/conversations/{id}/messages",
 		"POST /v1/conversations/{id}/messages", "DELETE /v1/conversations/{id}"}
 }
@@ -230,6 +236,38 @@ func (h *Handler) activity(w http.ResponseWriter, r *http.Request) {
 		entries = []audit.LoggedEntry{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+// gpu serves what the prober last measured plus the stored history. It is a
+// read of in-memory state plus one indexed query: it never calls nvidia-smi, so
+// a scrape cannot cost 100 ms.
+func (h *Handler) gpu(w http.ResponseWriter, r *http.Request) {
+	now := gpu.Snapshot{At: time.Now().UTC(), Error: "GPU prober not running"}
+	if h.deps.GPU != nil {
+		now = h.deps.GPU()
+	}
+	since := time.Now().Add(-6 * time.Hour)
+	if v := r.URL.Query().Get("since"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= time.Minute && d <= 168*time.Hour {
+			since = time.Now().Add(-d)
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	hist, err := h.deps.Store.GPUSamples(ctx, since, 720)
+	if hist == nil {
+		hist = []gpu.Sample{} // gpu.Series returns nil for no rows; null breaks the page
+	}
+	out := map[string]any{"now": now, "history": hist}
+	if err != nil {
+		// The live reading is measured locally, not read from Postgres, so a
+		// dead database must not take the GPU page down with it: that is
+		// exactly when an operator wants to see the card. Keep the 200, hand
+		// back "now", and say why the chart has no history instead of making
+		// "no samples yet" and "store unreachable" look the same.
+		out["history_error"] = "gpu store unavailable"
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) evalStatus(w http.ResponseWriter, r *http.Request) {

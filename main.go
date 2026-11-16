@@ -967,8 +967,9 @@ func main() {
 		}()
 	}
 	ui := console.New(console.Deps{
-		Store:         console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}},
+		Store:         console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}, GPU: gpuAdapter{pgAdapter{pool}}},
 		Router:        srv,
+		GPU:           gpuProber.Snapshot,
 		GoldenVersion: *driftGolden,
 		Version:       version,
 		Drift: func(ctx context.Context, golden string) (any, error) {

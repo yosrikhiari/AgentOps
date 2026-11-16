@@ -15,15 +15,17 @@ import (
 
 	"agentops/audit"
 	"agentops/evals"
+	"agentops/gpu"
 )
 
 type memStore struct {
-	reqs  []Request
-	runs  []EvalRun
-	wfs   []Workflow
-	err   error
-	convs map[string]*memConv
-	bench BenchmarkInput
+	reqs    []Request
+	runs    []EvalRun
+	wfs     []Workflow
+	err     error
+	convs   map[string]*memConv
+	bench   BenchmarkInput
+	gpuHist []gpu.Sample
 }
 
 type memConv struct {
@@ -47,6 +49,13 @@ func (m *memStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Ev
 	return m.runs, m.err
 }
 func (m *memStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) { return m.wfs, m.err }
+
+func (m *memStore) GPUSamples(ctx context.Context, since time.Time, limit int) ([]gpu.Sample, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.gpuHist, nil
+}
 
 func (m *memStore) BenchmarkData(ctx context.Context, golden string) (BenchmarkInput, error) {
 	if m.err != nil {
@@ -387,8 +396,17 @@ func (r *fakeRows) Scan(dest ...any) error {
 			*p = row[i].(time.Time)
 		case *int:
 			*p = row[i].(int)
+		case *int64:
+			*p = row[i].(int64)
 		case *float64:
 			*p = row[i].(float64)
+		case **float64:
+			if row[i] == nil {
+				*p = nil
+				continue
+			}
+			v := row[i].(float64)
+			*p = &v
 		}
 	}
 	return nil
@@ -399,6 +417,14 @@ func (r *fakeRows) Close()     {}
 type fakeQueryer struct{ rows [][]any }
 
 func (f fakeQueryer) Query(ctx context.Context, sql string, args ...any) (evals.Rows, error) {
+	return &fakeRows{rows: f.rows}, nil
+}
+
+// fakeGPUQueryer is fakeQueryer for gpu.Queryer: same method name, different
+// return type, so one type cannot satisfy both.
+type fakeGPUQueryer struct{ rows [][]any }
+
+func (f fakeGPUQueryer) Query(ctx context.Context, sql string, args ...any) (gpu.Rows, error) {
 	return &fakeRows{rows: f.rows}, nil
 }
 
@@ -423,5 +449,140 @@ func TestRecentRequestsGroupsSpansPerTrace(t *testing.T) {
 	}
 	if r1.AgentRole != "critic" || r1.ClientRef != "s1/t3/critic/2" {
 		t.Fatalf("t1 client ref not surfaced: %+v", r1)
+	}
+}
+
+// ---- Track U: /v1/gpu ----
+
+// TestGPUEndpointLive: live snapshot from the prober, history from the store.
+func TestGPUEndpointLive(t *testing.T) {
+	now := time.Now().UTC()
+	h := New(Deps{
+		Store: &memStore{gpuHist: []gpu.Sample{{At: now, Name: "GTX 1650", UtilPct: 12}}},
+		GPU: func() gpu.Snapshot {
+			return gpu.Snapshot{At: now, Available: true, SwapsLast10m: 2,
+				Sample:   gpu.Sample{Name: "GTX 1650", UtilPct: 39, MemUsedBytes: 77 << 20, MemTotalBytes: 4096 << 20},
+				Resident: []gpu.Resident{{Name: "qwen2.5:3b-instruct", SizeVRAMBytes: 2 << 30}}}
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/gpu", nil))
+	if rec.Code != 200 {
+		t.Fatalf("code %d: %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Now struct {
+			Available bool `json:"available"`
+			Sample    struct {
+				UtilPct float64 `json:"util_pct"`
+			} `json:"sample"`
+			Resident []struct {
+				Name string `json:"name"`
+			} `json:"resident"`
+			Swaps10m int `json:"swaps_last_10m"`
+		} `json:"now"`
+		History []struct {
+			UtilPct float64 `json:"util_pct"`
+		} `json:"history"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Now.Available || got.Now.Sample.UtilPct != 39 || got.Now.Swaps10m != 2 || len(got.Now.Resident) != 1 {
+		t.Fatalf("now = %+v", got.Now)
+	}
+	if len(got.History) != 1 || got.History[0].UtilPct != 12 {
+		t.Fatalf("history = %+v", got.History)
+	}
+}
+
+// TestGPUEndpointNoProber: no GPU is not an error and not a 500. The page must
+// be able to tell "no driver" from "idle GPU", so available=false carries an
+// explanation.
+func TestGPUEndpointNoProber(t *testing.T) {
+	h := New(Deps{Store: &memStore{}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/gpu", nil))
+	if rec.Code != 200 {
+		t.Fatalf("code %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"available":false`) {
+		t.Fatalf("body = %s", rec.Body)
+	}
+}
+
+// TestGPUEndpointEmptyHistoryIsAList: gpu.Series returns a nil slice for no
+// rows, which marshals as null. The page does history.map(...) — null throws.
+func TestGPUEndpointEmptyHistoryIsAList(t *testing.T) {
+	h := New(Deps{Store: &memStore{}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/gpu", nil))
+	if !strings.Contains(rec.Body.String(), `"history":[]`) {
+		t.Fatalf("history is not an empty array: %s", rec.Body)
+	}
+}
+
+// TestGPUEndpointKeepsNowWhenHistoryFails: the live reading comes from the
+// prober, not the database. A dead Postgres must not hide the card it is meant
+// to describe, so the read stays 200 with "now" and an explained empty chart -
+// and history_error is what stops "no samples yet" looking like "store down".
+func TestGPUEndpointKeepsNowWhenHistoryFails(t *testing.T) {
+	h := New(Deps{
+		Store: &memStore{err: errors.New("no database")},
+		GPU: func() gpu.Snapshot {
+			return gpu.Snapshot{At: time.Now().UTC(), Available: true,
+				Sample: gpu.Sample{Name: "GTX 1650", UtilPct: 39}}
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/gpu", nil))
+	if rec.Code != 200 {
+		t.Fatalf("code %d: %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Now struct {
+			Available bool `json:"available"`
+			Sample    struct {
+				UtilPct float64 `json:"util_pct"`
+			} `json:"sample"`
+		} `json:"now"`
+		History      []gpu.Sample `json:"history"`
+		HistoryError string       `json:"history_error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Now.Available || got.Now.Sample.UtilPct != 39 {
+		t.Fatalf("now = %+v", got.Now)
+	}
+	if got.HistoryError == "" {
+		t.Fatalf("store failure is not explained: %s", rec.Body)
+	}
+	if got.History == nil {
+		t.Fatalf("history is null, not []: %s", rec.Body)
+	}
+}
+
+// TestSQLStoreGPUSamplesMapsEveryColumn: a fake store cannot catch a Scan that
+// silently leaves mem_used or power_w at zero.
+func TestSQLStoreGPUSamplesMapsEveryColumn(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	q := fakeGPUQueryer{rows: [][]any{{
+		now, "GTX 1650", 39.0, int64(77 << 20), int64(4096 << 20), 12.5, 66.0,
+	}}}
+	got, err := SQLStore{GPU: q}.GPUSamples(context.Background(), now.Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("rows = %d", len(got))
+	}
+	s := got[0]
+	if !s.At.Equal(now) || s.Name != "GTX 1650" || s.UtilPct != 39 ||
+		s.MemUsedBytes != 77<<20 || s.MemTotalBytes != 4096<<20 {
+		t.Fatalf("sample = %+v", s)
+	}
+	if s.PowerW == nil || *s.PowerW != 12.5 || s.TempC == nil || *s.TempC != 66 {
+		t.Fatalf("power/temp = %v/%v", s.PowerW, s.TempC)
 	}
 }

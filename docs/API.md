@@ -149,7 +149,7 @@ Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`
 
 ## Observability endpoints
 
-- `GET /metrics` — Prometheus exposition (`router_requests_total`, `router_errors_total`, `router_tokens_total`, `router_latency_seconds`, `router_backend_up`, `router_key_*`, `eval_faithfulness`).
+- `GET /metrics` — Prometheus exposition (`router_requests_total`, `router_errors_total`, `router_tokens_total`, `router_latency_seconds`, `router_backend_up`, `router_key_*`, `eval_faithfulness`, `gpu_*`).
 - `GET /v1/traces/{trace_id}` — every span of one request or workflow (`trace_id, span_id, parent_id, name, started_at, attrs`), prompts redacted; `404 trace_not_found`. Spans are written when their work completes, so `started_at` is the end time; `attrs.latency_s` (router `model.generate`, every tracker step) gives the duration.
 - `GET /v1/drift/report` — last two eval runs for the default golden version: `{score_then, score_now, delta, alert, runs, misses_now, misses_then, worst_cases[{question, faithfulness|null, precision, recall, retrieval_miss}]}`. `score` averages retrieved pairs only; a pair with `recall=0` is a `retrieval_miss` (stored as `faithfulness NULL`, judge never called) and is excluded from the average. History starts clean — runs before `0004_retrieval_miss.sql` keep their old scores.
 - `POST /mcp` — MCP over HTTP for remote agents: one JSON-RPC request per POST

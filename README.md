@@ -81,7 +81,7 @@ curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","cont
 curl -s -N localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}],"stream":true}'   # SSE
 curl -s localhost:8080/v1/models           # served models with tier, backend, health
 curl -s localhost:8080/v1/traces/598d…     # 3 spans: route.decide → model.generate → router.respond
-curl -s localhost:8080/metrics             # router_*, router_backend_up, router_key_*, eval_faithfulness
+curl -s localhost:8080/metrics             # router_*, router_backend_up, router_key_*, eval_faithfulness, gpu_*
 ```
 
 To require keys: `go run . --create-key alice --key-rpm 60` (prints `ak_…` once), then run with `REQUIRE_API_KEY=true` and send `Authorization: Bearer ak_…`.

@@ -79,7 +79,9 @@ func (s SQLStore) Nearest(ctx context.Context, at time.Time, tolerance time.Dura
 	return x, true, nil
 }
 
-// Purge drops samples older than keep. Called at boot and hourly.
+// Purge drops samples older than keep. Called once at boot, not on a ticker:
+// retention is therefore applied on restart, which is fine at the 168h default
+// but must not be read as continuous pruning.
 func (s SQLStore) Purge(ctx context.Context, keep time.Duration) (int64, error) {
 	return s.Exec.Exec(ctx,
 		`DELETE FROM gpu_samples WHERE ts < now() - make_interval(secs => $1)`, keep.Seconds())

@@ -25,3 +25,13 @@ Rules: run `--score` (or the console's *Run eval suite*) on a quiet box or on a 
 (`--schedule-evals`) outside traffic hours; `EVAL_TIMEOUT` (default 90m) bounds a run; a run
 that dies writes nothing (header + pair rows are one transaction).
 
+## Measured, not assumed
+
+The numbers above are a budget for the 8 GB demo box, not a reading. `#/gpu` in the
+console (and `GET /v1/gpu`) report what the driver and Ollama say right now:
+utilisation, VRAM used vs installed, watts, temperature, which models are resident and
+how much VRAM each holds, and how many model swaps happened in the last ten minutes.
+`go run . --advise` reads the total VRAM from the card when a driver is present and falls
+back to the 8 GB budget when it is not - the report always prints which one it used
+(`measured: NVIDIA GeForce GTX 1650` vs `docs/VRAM.md`). On the 4 GB dev box that means
+the 7B is now vetoed there, instead of being told it "fits alone".

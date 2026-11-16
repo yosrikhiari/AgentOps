@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,56 @@ import (
 	"agentops/gpu"
 	"agentops/tracker"
 )
+
+// TestBuildInfoNamesTheBuild: a release binary must be able to say which commit
+// it is, because that is what the cosign identity and the provenance attestation
+// point at. Version comes from the linker, Go and module from the toolchain.
+func TestBuildInfoNamesTheBuild(t *testing.T) {
+	bi := buildInfoOf("v1.2.3", "", "")
+	if bi.Version != "v1.2.3" {
+		t.Fatalf("version = %q", bi.Version)
+	}
+	if !strings.HasPrefix(bi.Go, "go") {
+		t.Fatalf("go = %q, want the toolchain version", bi.Go)
+	}
+	if bi.Module == "" {
+		t.Fatal("module is empty; a release build must name itself")
+	}
+}
+
+// TestBuildInfoLinkerStampsWin: -X flags are what the release workflow sets, so
+// they must beat whatever VCS metadata the local checkout happened to carry.
+func TestBuildInfoLinkerStampsWin(t *testing.T) {
+	bi := buildInfoOf("v9.9.9", "cafebabe", "2026-11-16T10:00:00Z")
+	if bi.Commit != "cafebabe" {
+		t.Fatalf("commit = %q, want the linker stamp", bi.Commit)
+	}
+	if bi.Date != "2026-11-16T10:00:00Z" {
+		t.Fatalf("date = %q, want the linker stamp", bi.Date)
+	}
+}
+
+// TestBuildInfoJSONIsOneLine: --version-json is piped into jq and into the
+// release checklist, so it must be exactly one JSON object, not pretty-printed
+// and not mixed with a log line.
+func TestBuildInfoJSONIsOneLine(t *testing.T) {
+	raw, err := json.Marshal(buildInfoOf("dev", "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\n") {
+		t.Fatalf("not one line: %q", raw)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("not JSON: %v (%s)", err, raw)
+	}
+	for _, k := range []string{"version", "go", "module"} {
+		if got[k] == nil || got[k] == "" {
+			t.Fatalf("%s missing from %s", k, raw)
+		}
+	}
+}
 
 func TestExtraModelsSkipsPaths(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", `C:\Users\yosri\.ollama,qwen3:8b`)

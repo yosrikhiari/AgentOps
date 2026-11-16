@@ -101,9 +101,30 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show) |
 | `--score-model NAME` | with `--score`: generate each answer with MODEL (temperature 0, 256 tokens) instead of scoring frozen answers; tags the run for Track L model comparison |
 | `--release-gate` (`--golden-version vN`, `--gate-k 3`) | pre-tag check (Track T): exit 0 only if the last k golden-answer runs clear today's `EVAL_THRESHOLD` on one judge; run locally before tagging, CI has no GPU/Postgres |
-| `--version` | print the version stamped at release |
+| `--version` | print version, commit and build date |
+| `--version-json` | the same as one line of JSON (`version`, `commit`, `date`, `go`, `module`) for scripts and the release checklist |
 
 Environment variables are listed in [`docs/API.md`](docs/API.md#backends-environment).
+
+## Verify a release
+
+A release is only useful if you can check what you downloaded. Every tagged build is
+reproducible from source, signed with Sigstore keyless, has an SPDX SBOM, and carries a
+build-provenance attestation:
+
+```bash
+sha256sum -c SHA256SUMS
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/yosrikhiari/AgentOps/.github/workflows/ci.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
+gh attestation verify agentops-v1.2.3-linux-amd64 --repo yosrikhiari/AgentOps
+agentops --version-json     # version + the exact commit the signature covers
+```
+
+No Python package, no transitive dependency tree: the gateway installs as one static binary
+with one direct dependency (`pgx`). That is deliberate, and it is the part of this project
+that a supply-chain compromise cannot reach through a dependency.
 
 ## Layout
 

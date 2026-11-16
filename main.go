@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +38,61 @@ import (
 )
 
 // version is stamped by the release build (-ldflags "-X main.version=v1.2.3").
-var version = "dev"
+// commit and buildDate are stamped by the same command, so a downloaded binary
+// can name the exact revision its signature and SBOM are for.
+var (
+	version   = "dev"
+	commit    = ""
+	buildDate = ""
+)
+
+// buildInfo is what a binary knows about itself. The linker stamps win; a plain
+// `go build` still reports the VCS metadata the toolchain embeds.
+type buildInfo struct {
+	Version     string `json:"version"`
+	Commit      string `json:"commit,omitempty"`
+	Date        string `json:"date,omitempty"`
+	Go          string `json:"go"`
+	Module      string `json:"module"`
+	VCSModified bool   `json:"vcs_modified,omitempty"`
+}
+
+// buildInfoOf takes the stamps as arguments instead of reading the package
+// globals, so it is testable without mutating state.
+func buildInfoOf(ver, commitStamp, dateStamp string) buildInfo {
+	bi := buildInfo{Version: ver, Go: runtime.Version(), Module: "agentops"}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Path != "" {
+			bi.Module = info.Main.Path
+		}
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				bi.Commit = s.Value
+			case "vcs.time":
+				bi.Date = s.Value
+			case "vcs.modified":
+				bi.VCSModified = s.Value == "true"
+			}
+		}
+	}
+	if commitStamp != "" {
+		bi.Commit = commitStamp
+	}
+	if dateStamp != "" {
+		bi.Date = dateStamp
+	}
+	return bi
+}
+
+// shortCommit keeps --version to one readable line; --version-json has the full
+// hash for verification.
+func shortCommit(c string) string {
+	if len(c) > 7 {
+		return c[:7]
+	}
+	return c
+}
 
 var errEmptyDraft = errors.New("empty draft")
 
@@ -816,13 +872,30 @@ func main() {
 	trackerInput := flag.String("tracker-input", "what does agentops do?", "input question for --run-tracker")
 	traceID := flag.String("trace", "", "print redacted spans for TRACE_ID and exit")
 	advise := flag.Bool("advise", false, "print the static model advisor report (Track K) and exit")
-	showVersion := flag.Bool("version", false, "print version and exit")
+	showVersion := flag.Bool("version", false, "print version, commit and build date, then exit")
+	versionJSON := flag.Bool("version-json", false, "print the build info as one line of JSON and exit")
 	createKey := flag.String("create-key", "", "create an API key with NAME, print the secret once, and exit")
 	keyRPM := flag.Int("key-rpm", 0, "requests per minute for --create-key (0 = unlimited)")
 	keyBudget := flag.Int64("key-budget", 0, "lifetime token budget for --create-key (0 = unlimited)")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println("agentops " + version)
+		bi := buildInfoOf(version, commit, buildDate)
+		line := "agentops " + bi.Version
+		if bi.Commit != "" {
+			line += " (" + shortCommit(bi.Commit) + ")"
+		}
+		if bi.Date != "" {
+			line += " built " + bi.Date
+		}
+		fmt.Println(line)
+		return
+	}
+	if *versionJSON {
+		raw, err := json.Marshal(buildInfoOf(version, commit, buildDate))
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(string(raw))
 		return
 	}
 	cfg, err := loadConfig()

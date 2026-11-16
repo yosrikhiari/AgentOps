@@ -1,0 +1,62 @@
+// Package gpu measures what local model inference is doing to this machine's
+// GPU. It shells out to nvidia-smi and asks Ollama which models are resident,
+// because those are the only two honest sources: the driver knows
+// utilisation/VRAM/power, Ollama knows which model holds it. Every poll is
+// cheap (~100 ms) and never happens on a request path.
+package gpu
+
+import (
+	"context"
+	"time"
+)
+
+// Sample is one point in time. Memory is bytes everywhere in this package;
+// nvidia-smi's MiB is converted once in nvidia.go.
+type Sample struct {
+	At            time.Time `json:"at"`
+	Name          string    `json:"name"`
+	UtilPct       float64   `json:"util_pct"`
+	MemUsedBytes  int64     `json:"mem_used_bytes"`
+	MemTotalBytes int64     `json:"mem_total_bytes"`
+	PowerW        *float64  `json:"power_w,omitempty"` // nil when the driver says N/A
+	TempC         *float64  `json:"temp_c,omitempty"`
+}
+
+func (s Sample) UsedPercent() float64 {
+	if s.MemTotalBytes == 0 {
+		return 0
+	}
+	return float64(s.MemUsedBytes) / float64(s.MemTotalBytes) * 100
+}
+
+func (s Sample) UsedGB() float64  { return float64(s.MemUsedBytes) / (1 << 30) }
+func (s Sample) TotalGB() float64 { return float64(s.MemTotalBytes) / (1 << 30) }
+
+// Resident is one model Ollama is holding in VRAM right now. SizeVRAMBytes is
+// Ollama's own number and is the only per-model VRAM attribution that exists:
+// nvidia-smi sees a single ollama process.
+type Resident struct {
+	Name          string    `json:"name"`
+	SizeVRAMBytes int64     `json:"size_vram_bytes"`
+	ContextLength int       `json:"context_length"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+// Snapshot is what the prober last saw. Available=false with a non-empty Error
+// means the box has no usable nvidia-smi; the console must render that as an
+// empty state, never as zero percent.
+type Snapshot struct {
+	At           time.Time  `json:"at"`
+	Sample       Sample     `json:"sample"`
+	Resident     []Resident `json:"resident"`
+	Available    bool       `json:"available"`
+	Error        string     `json:"error,omitempty"`
+	SwapsLast10m int        `json:"swaps_last_10m"`
+}
+
+// Reader is the one method the prober needs, so tests inject a fake and never
+// shell out. Implementations must respect ctx: nvidia-smi
+// (exec.CommandContext) and Ollama both get a hard deadline.
+type Reader interface {
+	Read(ctx context.Context) (Sample, error)
+}

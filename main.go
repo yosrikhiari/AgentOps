@@ -1180,7 +1180,7 @@ func main() {
 			mcpErr(http.StatusBadRequest, "bad_request", "unreadable body")
 			return
 		}
-		raw, status := mcpSrv.HandleOne(body)
+		raw, status := mcpSrv.HandleOneHTTP(body, r.Header.Get("MCP-Protocol-Version"))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write(raw)

@@ -59,7 +59,7 @@ func TestInitializeAndList(t *testing.T) {
 		t.Fatalf("got %d responses", len(resps))
 	}
 	init := resps[0]["result"].(map[string]any)
-	if init["protocolVersion"] != protocolVersion {
+	if init["protocolVersion"] != legacyProtocolVersion {
 		t.Fatalf("bad handshake %+v", init)
 	}
 	tools := resps[1]["result"].(map[string]any)["tools"].([]any)

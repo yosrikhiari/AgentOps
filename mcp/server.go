@@ -15,7 +15,16 @@ import (
 	"agentops/tracker"
 )
 
-const protocolVersion = "2024-11-05"
+// legacyProtocolVersion is what an initialize with no requested version gets, and
+// what this server answered before it learned the stateless revision.
+const legacyProtocolVersion = "2024-11-05"
+
+// supportedVersions is newest first: 2026-07-28 is the stateless revision this
+// server implements (per-request version in params._meta or the
+// MCP-Protocol-Version header, mandatory server/discover); the rest are the legacy
+// handshake revisions it still serves. It is also what an
+// UnsupportedProtocolVersionError lists so a client can retry instead of guessing.
+var supportedVersions = []string{"2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 
 type Server struct {
 	Router      *router.Server
@@ -47,6 +56,7 @@ type rpcResponse struct {
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 type toolDef struct {
@@ -191,11 +201,42 @@ func newToolTraceID() string {
 	return hex.EncodeToString(b[:])
 }
 
-func (s *Server) handle(req rpcRequest) *rpcResponse {
+func (s *Server) handle(req rpcRequest, headerVersion string) *rpcResponse {
+	version := paramsVersion(req.Params)
+	if version == "" {
+		version = headerVersion
+	}
+	if version != "" && !supportedVersion(version) {
+		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{
+			Code: -32022, Message: "Unsupported protocol version",
+			Data: map[string]any{"supported": supportedVersions, "requested": version},
+		}}
+	}
 	switch req.Method {
-	case "initialize":
+	case "server/discover":
 		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-			"protocolVersion": protocolVersion,
+			"resultType":        "complete",
+			"supportedVersions": supportedVersions,
+			"capabilities":      map[string]any{"tools": map[string]any{}},
+			"_meta": map[string]any{
+				"io.modelcontextprotocol/serverInfo": map[string]any{"name": "agentops", "version": "0.1.0"},
+			},
+			"instructions": "AgentOps gateway: list served models and their health, read live stats, test which tier a prompt routes to, inspect a redacted trace, read the eval drift report.",
+			"ttlMs":        3600000,
+			"cacheScope":   "public",
+		}}
+	case "initialize":
+		negotiated := legacyProtocolVersion
+		if v := paramsProtocolVersion(req.Params); supportedVersion(v) {
+			negotiated = v
+		} else if v != "" {
+			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{
+				Code: -32022, Message: "Unsupported protocol version",
+				Data: map[string]any{"supported": supportedVersions, "requested": v},
+			}}
+		}
+		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+			"protocolVersion": negotiated,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "agentops", "version": "0.1.0"},
 		}}
@@ -227,20 +268,66 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 	}
 }
 
+// paramsVersion reads the modern per-request version from params._meta. Empty
+// means the caller is speaking a legacy revision.
+func paramsVersion(raw json.RawMessage) string {
+	var p struct {
+		Meta struct {
+			ProtocolVersion string `json:"io.modelcontextprotocol/protocolVersion"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return ""
+	}
+	return p.Meta.ProtocolVersion
+}
+
+// paramsProtocolVersion reads the legacy initialize field.
+func paramsProtocolVersion(raw json.RawMessage) string {
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return ""
+	}
+	return p.ProtocolVersion
+}
+
+func supportedVersion(v string) bool {
+	for _, s := range supportedVersions {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 // HandleOne serves a single JSON-RPC request body — the Streamable-HTTP
 // transport. It reuses handle() so stdio and HTTP can never drift apart.
 // Notifications (nil response) answer 202 with an empty result.
 func (s *Server) HandleOne(body []byte) ([]byte, int) {
+	return s.HandleOneHTTP(body, "")
+}
+
+// HandleOneHTTP is HandleOne plus the MCP-Protocol-Version header the 2026-07-28
+// HTTP transport carries. The body's params._meta wins when both are present.
+func (s *Server) HandleOneHTTP(body []byte, protocolVersion string) ([]byte, int) {
 	var req rpcRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		raw, _ := json.Marshal(&rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return raw, http.StatusOK
 	}
-	resp := s.handle(req)
+	resp := s.handle(req, protocolVersion)
 	if resp == nil {
 		return []byte(`{"jsonrpc":"2.0","result":{}}`), http.StatusAccepted
 	}
 	raw, _ := json.Marshal(resp)
+	// An unsupported version is a modern client's cue to retry: the transport
+	// spec pairs it with 400 so a dual-era client can inspect the body and fall
+	// back instead of treating it as a server fault.
+	if resp.Error != nil && resp.Error.Code == -32022 {
+		return raw, http.StatusBadRequest
+	}
 	return raw, http.StatusOK
 }
 
@@ -260,7 +347,7 @@ func (s *Server) Run(in io.Reader, out io.Writer) error {
 			}
 			continue
 		}
-		resp := s.handle(req)
+		resp := s.handle(req, "")
 		if resp == nil {
 			continue
 		}

@@ -154,3 +154,94 @@ Ollama and local UIs: [Ollama in 2026: from local runner to platform](https://an
 MCP gateways: [Best open-source MCP gateways 2026 (Maxim)](https://www.getmaxim.ai/articles/best-open-source-mcp-gateways-in-2026/) · [Best open-source MCP gateways (Lunar)](https://www.lunar.dev/post/the-best-open-source-mcp-gateways-in-2026).
 
 Standards: [OTel GenAI conventions are not stable yet (Jul 2026)](https://dev.to/azena-ai/opentelemetrys-genai-semantic-conventions-are-not-stable-yet-heres-what-actually-shipped-in-2026-3mke) · [OTel GenAI semantic conventions (Dash0)](https://www.dash0.com/knowledge/opentelemetry-genai-semantic-conventions-explained) · [OTel GenAI agent tracing in production](https://veraexmachina.com/tech/opentelemetry-genai-agent-observability-production/).
+
+## 9. November 2026 revision
+
+*What changed since the September pass, what this repo shipped in between, and the four
+items that are now worth building first. Detailed steps live in
+`docs/plans/2026-11-16-tier0-market-gaps.md`.*
+
+### 9.1 Market deltas that change the plan
+
+1. **LiteLLM was compromised twice.** `1.82.7`/`1.82.8` shipped a credential stealer in
+   March (PyPI token stolen through a compromised Trivy scanner); `1.107.0` did it again on
+   October 21 through stolen GitHub credentials, including the floating Docker tags.
+   2,100-2,500+ organisations exposed, an FBI FLASH advisory, and DSPy/MLflow/CrewAI/Phoenix
+   pinning away the same day. **Supply-chain verifiability is now a buying criterion**, and
+   "one static binary, one direct dependency" is the strongest claim this repo has that the
+   gateway market cannot copy quickly.
+2. **Portkey was acquired by Palo Alto Networks** (May 29, now "Prisma AIRS AI Gateway");
+   Helicone left Mintlify and remains maintenance-mode. The consolidation the September
+   study measured has finished: every self-host buyer now asks who owns the project.
+3. **Ollama became an API platform, not just a runner**: Anthropic Messages API
+   compatibility (January), `ollama launch` for Claude Code / Codex / OpenCode, cloud
+   models, decision models, speech models, $88M raised, 8.9M developers, and Team/Enterprise
+   plans with per-token pricing plus cost budgets and model access controls. The governance
+   wedge is still open **for local models**; it is closing for cloud models.
+4. **LM Studio 0.4.0** added a headless `llmster` daemon, a first-party REST API with
+   stateful chats and MCP, Anthropic compatibility and permission keys. Local inference
+   servers now compete on API surface, which raises the bar for "any OpenAI-style backend".
+5. **MCP moved to 2026-07-28**: stateless, no `initialize`, mandatory `server/discover`,
+   `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers, Tasks and Apps as extensions.
+   This repo's server declares `2024-11-05` (`mcp/server.go:18`) - four revisions behind.
+6. **OTel GenAI conventions moved to their own repository with no tagged release** and every
+   `gen_ai.*` attribute still marked Development. OTLP export stays table stakes, but it must
+   be pinned and dual-named; no dashboard should depend on one attribute name.
+7. **New single-binary entrants** (Pangolin, OpenZiti llm-gateway, Agent Router, LLM
+   Gateway, VoidLLM) make "single binary" a category rather than a differentiator. The moat
+   is the bundle (durability + evals + sovereignty) plus verifiability, not the binary alone.
+8. **The name collides.** `agentops.ai` is a funded agent-observability product with a
+   recognised brand and the search term. Decide before a public launch: keep the name with a
+   qualifier ("AgentOps Local"), rename to Tower (already the console's name), or pick a new
+   one. This is a distribution problem, not a code problem.
+
+### 9.2 What shipped here since September
+
+GPU telemetry end to end: `gpu` package (nvidia-smi + Ollama `/api/ps`), `gpu_samples`
+history, seven `gpu_*` Prometheus series, `GET /v1/gpu` (the one endpoint that degrades
+instead of 502ing when Postgres is down), Tower `#/gpu` with four states, a nearest-sample
+chip on every trace, and `--advise` judging fit against the VRAM the box actually reports
+(`measured: NVIDIA GeForce GTX 1650` vs `docs/VRAM.md`). Also fixed by the same end-to-end
+pass: a single `precision = NaN` pair score used to blank `/v1/overview`, `/v1/evals/runs`
+and `/v1/drift/report`.
+
+**No gateway or ops tool in the September comparison reports GPU utilisation, VRAM, power,
+temperature, resident models and swap counts, or correlates them with a trace or an eval
+run.** That is a differentiator the marketplace does not have yet, and it currently has no
+story attached to it.
+
+### 9.3 Tier 0 - build these four next
+
+| # | Item | Why now | Effort |
+|---|---|---|---|
+| 1 | **Release trust pack**: signed binaries (cosign keyless), SBOM, build provenance, `--version --json`, a "verify a release" recipe | Directly answers the LiteLLM breaches; already 90% true (one dep, pinned Actions, `SHA256SUMS`) | 1 day |
+| 2 | **Anthropic Messages API ingress** (`POST /v1/messages`, streaming, `x-api-key`) | Coding agents speak Anthropic; Ollama and LM Studio both serve it; it is the Claude Code/Codex on-ramp to this gateway's keys, budgets and traces | 1.5 days |
+| 3 | **MCP 2026-07-28**: `server/discover`, stateless HTTP, protocol headers, version negotiation, registry listing | Compatibility with current clients plus a distribution channel | 1.5 days |
+| 4 | **GPU to eval correlation**: per-run GPU summary, a "model swaps during this run" warning in `--score` and `--release-gate` | Turns this week's telemetry into the one sentence no competitor can write | 1 day |
+
+### 9.4 Re-prioritised (unchanged items)
+
+- **P0 #5 Anthropic** moves out of P0 and into Tier 0: it is no longer a differentiator, it
+  is a prerequisite.
+- **P0 #2/#3 hybrid retrieval + `retrieval_miss`** stay P0: the eval moat is only credible
+  if the two vocabulary misses are fixed.
+- **P0 #4 OTLP export** stays P0, with the semconv-instability caveat from 9.1(6).
+- **P1 #6 shadow-test promotion** and **P1 #7 sovereignty policy engine** are still the two
+  differentiators nobody local has.
+- **P1 #8 spend** is scoped down: a cost column and a budget alert, not a finance dashboard.
+- **New P2**: Open WebUI recipe (it now has native MCP and auto tool permissions), Promptfoo
+  import/export, "migrating from LiteLLM / TensorZero / Helicone" guides.
+
+### 9.5 November sources
+
+[LiteLLM October incident](https://docs.litellm.ai/blog/security-incident-oct-21-2026) ·
+[Microsoft analysis](https://www.microsoft.com/en-us/security/blog/2026/10/23/inside-the-litellm-1-107-0-supply-chain-compromise-credential-theft-through-python-startup-hooks/) ·
+[CloudSEK exposure data](https://www.cloudsek.com/blog/ai-supply-chain-breach-2500-companies-434000-cicd-pipelines) ·
+[Portkey / Prisma AIRS](https://concentrate.ai/blog/the-9-best-llm-gateways-in-2026-grouped-by-the-job-they-do) ·
+[Ollama blog](https://ollama.com/blog) · [Ollama pricing](https://ollama.com/pricing) ·
+[LM Studio 0.4.0](https://lmstudio.ai/blog/0.4.0) ·
+[MCP 2026-07-28](https://blog.modelcontextprotocol.io/posts/2026-07-28/) ·
+[MCP registry adoption](https://www.digitalapplied.com/blog/mcp-adoption-statistics-2026-model-context-protocol) ·
+[OTel GenAI status, Nov 2026](https://john-hodge.com/blog/opentelemetry-genai-semantic-conventions/) ·
+[Open WebUI MCP](https://docs.openwebui.com/features/extensibility/mcp/) ·
+[agentops.ai](https://www.agentops.ai/).

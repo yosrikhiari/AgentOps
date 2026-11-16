@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"math"
 	"sort"
 )
 
@@ -87,12 +88,12 @@ func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, thres
 		return rep, nil
 	}
 	rep.Runs = len(runs)
-	rep.ScoreNow = runs[0].score
-	rep.ScoreThen = runs[0].score
+	rep.ScoreNow = finiteOrZero(runs[0].score)
+	rep.ScoreThen = rep.ScoreNow
 	rep.JudgeNow = runs[0].judge
 	rep.JudgeThen = runs[0].judge
 	if len(runs) == 2 {
-		rep.ScoreThen = runs[1].score
+		rep.ScoreThen = finiteOrZero(runs[1].score)
 		rep.JudgeThen = runs[1].judge
 	}
 	// A delta measured across two different judges is not drift in the corpus or the
@@ -111,6 +112,15 @@ func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, thres
 		var w WorstCase
 		if err := wrows.Scan(&w.Question, &w.Faithfulness, &w.Precision, &w.Recall, &w.RetrievalMiss); err != nil {
 			return rep, err
+		}
+		// Rows written before PrecisionRecall guarded empty retrieval can carry
+		// NaN. JSON cannot encode it, so one legacy row would take down every
+		// report that embeds it; read a non-finite metric as the zero it should
+		// have been, and a non-finite faithfulness as "not scored".
+		w.Precision = finiteOrZero(w.Precision)
+		w.Recall = finiteOrZero(w.Recall)
+		if w.Faithfulness != nil && !isFinite(*w.Faithfulness) {
+			w.Faithfulness = nil
 		}
 		rep.WorstCases = append(rep.WorstCases, w)
 	}
@@ -134,6 +144,19 @@ func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, thres
 		rep.MissesThen = countMisses(ctx, db, runs[1].id)
 	}
 	return rep, nil
+}
+
+// isFinite reports whether v can be encoded as a JSON number.
+func isFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+
+// finiteOrZero keeps NaN and ±Inf out of everything this package returns.
+// encoding/json rejects them, and a stored metric must never be able to turn a
+// report into a 502.
+func finiteOrZero(v float64) float64 {
+	if !isFinite(v) {
+		return 0
+	}
+	return v
 }
 
 func countMisses(ctx context.Context, db Queryer, runID int) int {

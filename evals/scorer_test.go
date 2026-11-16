@@ -3,10 +3,25 @@ package evals
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestPrecisionRecallWithNothingRetrieved: expecting a relevant doc and
+// retrieving no chunks is 0% precision, not NaN. NaN cannot be encoded as JSON,
+// and one such pair used to blank the whole drift report - and with it the
+// console's overview and evals pages.
+func TestPrecisionRecallWithNothingRetrieved(t *testing.T) {
+	p, r := PrecisionRecall(nil, []string{"b"}, 3)
+	if math.IsNaN(p) || p != 0 {
+		t.Fatalf("precision %v, want 0", p)
+	}
+	if r != 0 {
+		t.Fatalf("recall %v, want 0", r)
+	}
+}
 
 func TestSplitClaims(t *testing.T) {
 	got := SplitClaims("Ollama runs on port 11434. It serves local models! Is that right? Yes.")

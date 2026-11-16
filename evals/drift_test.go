@@ -2,7 +2,9 @@ package evals
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -199,3 +201,33 @@ func TestRecordAndDriftReport(t *testing.T) {
 		t.Fatalf("empty should not alert: %+v", calm)
 	}
 }
+
+// TestDriftReportSurvivesALegacyNaN: rows written before the empty-retrieval
+// fix carry precision = NaN (0/0). JSON cannot encode NaN, so one such row used
+// to turn /v1/overview, /v1/evals/runs and /v1/drift/report into 502s. The read
+// path must hand back a report that marshals, with the non-finite value read as
+// the zero it should have been.
+func TestDriftReportSurvivesALegacyNaN(t *testing.T) {
+	db := &driftMemDB{
+		runs:  []runRow{{id: 1, golden: "v1", judge: "j", score: math.NaN()}},
+		pairs: map[int][]WorstCase{1: {{Question: "q", Faithfulness: ptr(math.NaN()), Precision: math.NaN(), Recall: 0}}},
+	}
+	rep, err := DriftReportFor(context.Background(), db, "v1", 0.7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := json.Marshal(rep); err != nil {
+		t.Fatalf("report is not encodable: %v", err)
+	}
+	if rep.ScoreNow != 0 {
+		t.Fatalf("score_now = %v, want 0 for a non-finite stored score", rep.ScoreNow)
+	}
+	if len(rep.WorstCases) != 1 {
+		t.Fatalf("worst cases = %+v", rep.WorstCases)
+	}
+	if w := rep.WorstCases[0]; w.Precision != 0 || w.Faithfulness != nil {
+		t.Fatalf("legacy NaN not sanitised: %+v", w)
+	}
+}
+
+func ptr(f float64) *float64 { return &f }

@@ -37,6 +37,13 @@ func PrecisionRecall(retrieved []string, relevant []string, k int) (precision, r
 	if len(retrieved) > k {
 		retrieved = retrieved[:k]
 	}
+	// Nothing retrieved is 0% precision, not 0/0. The NaN this used to return is
+	// not JSON-encodable, so a single pair with empty retrieval blanked the drift
+	// report and every page that embeds it (found by the GPU-telemetry
+	// end-to-end pass, where one such row from an old run took /v1/overview down).
+	if len(retrieved) == 0 {
+		return 0, 0
+	}
 	rel := map[string]bool{}
 	for _, d := range relevant {
 		rel[d] = true

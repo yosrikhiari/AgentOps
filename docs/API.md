@@ -190,12 +190,17 @@ Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`
 - `GET /metrics` — Prometheus exposition (`router_requests_total`, `router_errors_total`, `router_tokens_total`, `router_latency_seconds`, `router_backend_up`, `router_key_*`, `eval_faithfulness`, `gpu_*`).
 - `GET /v1/traces/{trace_id}` — every span of one request or workflow (`trace_id, span_id, parent_id, name, started_at, attrs`), prompts redacted; `404 trace_not_found`. Spans are written when their work completes, so `started_at` is the end time; `attrs.latency_s` (router `model.generate`, every tracker step) gives the duration.
 - `GET /v1/drift/report` — last two eval runs for the default golden version: `{score_then, score_now, delta, alert, runs, misses_now, misses_then, worst_cases[{question, faithfulness|null, precision, recall, retrieval_miss}]}`. `score` averages retrieved pairs only; a pair with `recall=0` is a `retrieval_miss` (stored as `faithfulness NULL`, judge never called) and is excluded from the average. History starts clean — runs before `0004_retrieval_miss.sql` keep their old scores.
-- `POST /mcp` — MCP over HTTP for remote agents: one JSON-RPC request per POST
+- `POST /mcp` - MCP over HTTP for remote agents: one JSON-RPC request per POST
   (`tools/list`, `tools/call` with the same five tools as `--mcp` stdio, answered
-  by the same handler). With `REQUIRE_API_KEY=true` a valid Bearer key is required
-  (`401 missing_api_key` / `invalid_api_key`, `403 api_key_disabled`, one error shape);
-  RPM/budget accounting stays on the chat path. Every call emits a redacted
-  `mcp.tool` span. Bodies over 1 MB are refused with `400 bad_request`.
+  by the same handler). Speaks the **2026-07-28** revision (stateless, no
+  handshake; `server/discover` is implemented) *and* the legacy `initialize`
+  handshake back to `2024-11-05`, so old and new clients both work. The version
+  comes from `params._meta["io.modelcontextprotocol/protocolVersion"]` or the
+  `MCP-Protocol-Version` header; an unsupported one gets `400` with JSON-RPC error
+  `-32022` and the supported list. With `REQUIRE_API_KEY=true` a valid Bearer key
+  is required (`401 missing_api_key` / `invalid_api_key`, `403 api_key_disabled`,
+  one error shape); RPM/budget accounting stays on the chat path. Every call emits
+  a redacted `mcp.tool` span. Bodies over 1 MB are refused with `400 bad_request`.
 - `GET /v1/events` — redacted spans as server-sent events (`data: {trace_id,
   span_id, parent_id, name, attrs}` + `: ping` heartbeats) for the Tower `#/live`
   rail. In-memory fan-out, 64-deep per subscriber, slow readers drop and count —

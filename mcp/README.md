@@ -2,8 +2,32 @@
 
 One binary, three ways in. HTTP router by default, MCP stdio server with `--mcp`,
 and MCP over HTTP at `POST /mcp` when the gateway is running. The protocol is
-plain MCP (`2024-11-05` JSON-RPC) — Claude Desktop, Cursor, Windsurf, VS Code,
-or any generic MCP client can use it; nothing here is Claude-specific.
+plain MCP — a **dual-era** server: `2026-07-28` (stateless, `server/discover`
+mandatory) and the legacy `initialize` handshake back to `2024-11-05` — so Claude
+Desktop, Cursor, Windsurf, VS Code, or any generic MCP client can use it; nothing
+here is Claude-specific.
+
+Newer clients can skip the handshake entirely:
+
+```bash
+curl localhost:8080/mcp -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
+```
+
+The reply lists `supportedVersions`, the `tools` capability and the server
+identity. An unsupported version is a `400` with JSON-RPC error `-32022` and the
+supported list, so a client can retry with one of them rather than guess.
+
+Not implemented yet: the **Tasks extension** (`io.modelcontextprotocol/tasks`).
+The five tools are fast reads; long-running workflows should still go through the
+tracker, not an MCP task. The `Mcp-Method` / `Mcp-Name` headers are ignored —
+dispatch always follows the JSON body, which cannot disagree with itself.
+
+To list this server in the official registry, a `server.json` manifest with
+`name` (reverse-DNS, e.g. `io.github.yosrikhiari/agentops`), `description`,
+`version` and the `--mcp` stdio package is enough; publishing is a manual
+`mcp-publisher publish` step, deliberately not wired into CI.
 
 ## Client config (any MCP client)
 

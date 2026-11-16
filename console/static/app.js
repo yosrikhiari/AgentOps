@@ -284,7 +284,7 @@
     const failed = rows.some(r => r.attrs.error);
     const head = h('div', { class: 'tower-trace-head' },
       h('div', null,
-        h('div', { class: 'tower-trace-title' }, h('span', { class: 'tower-mono' }, data.trace_id), ' ', chip(kind), failed ? pill('critical', 'failed') : pill('healthy', 'ok')),
+        h('div', { class: 'tower-trace-title' }, h('span', { class: 'tower-mono' }, data.trace_id), ' ', chip(kind), data.gpu_ok ? chip('GPU ' + Math.round(data.gpu.util_pct) + '% · ' + gpuGB(data.gpu.mem_used_bytes)) : null, failed ? pill('critical', 'failed') : pill('healthy', 'ok')),
         h('div', { class: 'tower-panel-sub' },
           spans.length + ' spans · ' + fmt.ms(total / 1000) + ' end to end',
           rows.length ? ' · started ' + fmt.date(rows[0].span.started_at) : '',

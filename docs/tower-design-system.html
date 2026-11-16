@@ -350,7 +350,7 @@
           </section>
           <section class="tower-panel">
             <div class="tower-trace-head">
-              <div><div class="tower-trace-title"><span class="tower-mono">8f2a1c3d-…</span> <span class="tower-chip">chat</span><span class="tower-pill healthy">ok</span></div><div class="tower-panel-sub">3 spans · 1.02 s end to end · started 15/09/2026 11:42:07 · long_prompt</div></div>
+              <div><div class="tower-trace-title"><span class="tower-mono">8f2a1c3d-…</span> <span class="tower-chip">chat</span><span class="tower-chip">GPU 39% · 0.08 GB</span><span class="tower-pill healthy">ok</span></div><div class="tower-panel-sub">3 spans · 1.02 s end to end · started 15/09/2026 11:42:07 · long_prompt</div></div>
               <div class="tower-form-row"><button class="tower-btn ghost">Copy id</button><a class="tower-btn ghost" href="#">JSON</a></div>
             </div>
             <h4 class="tower-sub-h">Timeline</h4>
@@ -372,7 +372,7 @@
           <tr><th>class</th><th>role</th><th>notes</th></tr>
           <tr><td>.tower-grid-traces</td><td>380px + 1fr, stacks under 1000 px</td><td>list max-height = 100vh − 330, 40vh when stacked</td></tr>
           <tr><td>.tower-trace-item(.selected)</td><td>list card: kind chip + short id, relative time, label, meta row</td><td>hover → border + raised; selected → amber border on amber-dim</td></tr>
-          <tr><td>.tower-trace-head / -title</td><td>full id (mono) + kind chip + ok/failed pill, sub line, ghost actions</td><td>the auto-opened trace gets a "Showing the latest trace" sub above</td></tr>
+          <tr><td>.tower-trace-head / -title</td><td>full id (mono) + kind chip + optional GPU chip + ok/failed pill, sub line, ghost actions</td><td>the auto-opened trace gets a "Showing the latest trace" sub above; the GPU chip renders only when the trace body carries <span class="tower-mono">gpu_ok</span> — the sample nearest the first span's start, formatted with <span class="tower-mono">gpuGB</span> in <span class="tower-mono">traceView</span> (correlation, not per-request attribution)</td></tr>
           <tr><td>.tower-sub-h</td><td>11 px uppercase section header inside a panel</td><td>Timeline · Spans</td></tr>
           <tr><td>.tower-wf-row / -track / -bar</td><td>180px name (indented 14 px per depth) · track · 72px duration</td><td>amber = model.generate, faint = route*/router*, green = agent steps, red = error</td></tr>
           <tr><td>.tower-trace-step(.done/.active)</td><td>timeline dot + body; body click toggles .tower-trace-detail.open</td><td>indent = 11 + depth·14 px; .active (amber dot) marks a failed span</td></tr>

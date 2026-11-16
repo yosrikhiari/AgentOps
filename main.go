@@ -216,7 +216,29 @@ func queryTrace(db pgDB, traceID string) (any, error) {
 	if len(spans) == 0 {
 		return nil, tracker.ErrTraceNotFound
 	}
-	return map[string]any{"trace_id": traceID, "spans": spans}, nil
+	gpuStore := gpu.SQLStore{Query: gpuAdapter{pgAdapter{db}}}
+	return traceJSON(ctx, traceID, spans, func(ctx context.Context, at time.Time) (gpu.Sample, bool, error) {
+		return gpuStore.Nearest(ctx, at, 15*time.Second)
+	}), nil
+}
+
+// traceJSON is the /v1/traces/{id} body. The GPU sample is the one nearest the
+// first span's start — correlation, not attribution: nvidia-smi sees one ollama
+// process, so nothing here claims a request owned the card. When no sample is
+// in the window the keys are absent, because "unmeasured" and "0%" are different
+// facts and only one of them is a reading. ctx is the caller's 10 s bound, so a
+// wedged sample query cannot outlive the request.
+func traceJSON(ctx context.Context, traceID string, spans []tracker.Span, near func(context.Context, time.Time) (gpu.Sample, bool, error)) map[string]any {
+	out := map[string]any{"trace_id": traceID, "spans": spans}
+	if len(spans) == 0 || near == nil {
+		return out
+	}
+	// A dead gpu_samples table must not cost you the trace you came to read.
+	if s, ok, err := near(ctx, spans[0].StartedAt); err == nil && ok {
+		out["gpu"] = s
+		out["gpu_ok"] = true
+	}
+	return out
 }
 
 type spanRecord struct {

@@ -74,3 +74,18 @@ func TestReportPrintsTable(t *testing.T) {
 		}
 	}
 }
+
+// TestAdviseUsesMeasuredBudget: the same table judged against the VRAM the box
+// actually reports. The header must name the number and where it came from, and
+// 4.5 GB of weights cannot fit 4 GB of card.
+func TestAdviseUsesMeasuredBudget(t *testing.T) {
+	r := AdviseWithBudget([]string{"qwen2.5:7b-instruct-q4_K_M"}, nil, 4, "measured: GTX 1650")
+	if !strings.Contains(r.String(), "4 GB") || !strings.Contains(r.String(), "measured") {
+		t.Fatalf("budget not reported:\n%s", r.String())
+	}
+	for _, v := range r.Models {
+		if v.Name == "qwen2.5:7b-instruct-q4_K_M" && !v.Veto {
+			t.Fatal("7B must be vetoed on a 4 GB box")
+		}
+	}
+}

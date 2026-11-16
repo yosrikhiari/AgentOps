@@ -342,8 +342,11 @@ func extraModels(fastModel, qualityModel string) []string {
 }
 
 // runAdvise prints the Track K static advisor report: per-model size, VRAM
-// fit against the 8 GB budget, presence, and the co-residency verdict. It
-// changes nothing and serves nothing.
+// fit against the budget, presence, and the co-residency verdict. It changes
+// nothing and serves nothing. The budget is the VRAM nvidia-smi reports when a
+// driver answers, and docs/VRAM.md's 8 GB otherwise — the header always says
+// which, because a veto on a 4 GB card and a pass on an 8 GB one are otherwise
+// indistinguishable.
 func runAdvise(cfg Config) {
 	names := []string{cfg.FastModel, cfg.QualityModel}
 	names = append(names, extraModels(cfg.FastModel, cfg.QualityModel)...)
@@ -356,7 +359,11 @@ func runAdvise(cfg Config) {
 	} else {
 		log.Printf("advise: presence unknown (%v) — reporting configured lineup", err)
 	}
-	fmt.Print(advisor.Advise(names, pulled).String())
+	budget, source := float64(advisor.BoxVRAMGB), "docs/VRAM.md"
+	if s, err := gpu.NewNvidiaSMI(envOr("GPU_SMI", "nvidia-smi")).Read(ctx); err == nil && s.MemTotalBytes > 0 {
+		budget, source = s.TotalGB(), "measured: "+s.Name
+	}
+	fmt.Print(advisor.AdviseWithBudget(names, pulled, budget, source).String())
 }
 
 // toyWorkflow builds the Researcher → Drafter → Reviewer step functions over any pgDB

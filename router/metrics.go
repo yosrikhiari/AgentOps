@@ -26,6 +26,11 @@ type Metrics struct {
 	keyRejects       map[string]uint64
 	evalFaithfulness float64
 	evalSet          bool
+
+	// Extra, when set, appends another package's exposition to /metrics. main.go
+	// points it at the GPU prober, so router stays ignorant of GPUs and gpu stays
+	// ignorant of router.
+	Extra func() string
 }
 
 func NewMetrics() *Metrics {
@@ -116,9 +121,8 @@ func (m *Metrics) SetEvalFaithfulness(v float64) {
 	m.evalSet = true
 }
 
-func (m *Metrics) Expose() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// exposeLocked renders the router-owned series. The caller must hold m.mu.
+func (m *Metrics) exposeLocked() string {
 	var sb strings.Builder
 	models := make([]string, 0, len(m.models))
 	for name := range m.models {
@@ -190,4 +194,17 @@ func (m *Metrics) Expose() string {
 		fmt.Fprintf(&sb, "eval_faithfulness %f\n", m.evalFaithfulness)
 	}
 	return sb.String()
+}
+
+// Expose renders the Prometheus exposition. Extra runs after the lock is
+// released: it belongs to another package and may take locks of its own.
+func (m *Metrics) Expose() string {
+	m.mu.Lock()
+	s := m.exposeLocked()
+	extra := m.Extra
+	m.mu.Unlock()
+	if extra != nil {
+		s += extra()
+	}
+	return s
 }

@@ -35,6 +35,42 @@ func (f *fakeModels) Resident(ctx context.Context) ([]Resident, error) {
 	return set, nil
 }
 
+// recordingStore captures what the prober persists, so the test can assert the
+// stored sample carries the swap counter, not just the in-memory snapshot.
+type recordingStore struct{ samples []Sample }
+
+func (r *recordingStore) InsertSample(ctx context.Context, s Sample) error {
+	r.samples = append(r.samples, s)
+	return nil
+}
+
+// TestProberPersistsMonotonicSwaps: the rolling 10-minute count is for the page;
+// the persisted total is what makes "3 swaps during this run" provable later, so
+// it must be monotonic and must ride on the stored sample.
+func TestProberPersistsMonotonicSwaps(t *testing.T) {
+	models := &fakeModels{sets: [][]Resident{
+		{{Name: "a"}}, {{Name: "a"}}, {{Name: "b"}}, {{Name: "b"}},
+	}}
+	st := &recordingStore{}
+	p := NewProber(&fakeReader{samples: []Sample{{Name: "X", MemTotalBytes: 4 << 30}}}, models, st)
+	for i := 0; i < 4; i++ {
+		p.ProbeOnce(context.Background())
+	}
+	snap := p.Snapshot()
+	if snap.SwapsTotal != 1 {
+		t.Fatalf("swaps_total = %d, want 1 (one change in the set)", snap.SwapsTotal)
+	}
+	if len(st.samples) != 4 {
+		t.Fatalf("persisted %d samples, want 4", len(st.samples))
+	}
+	if got := st.samples[len(st.samples)-1].SwapsTotal; got != 1 {
+		t.Fatalf("stored swaps_total = %d, want 1", got)
+	}
+	if !strings.Contains(p.Expose(), "gpu_swap_events_total 1") {
+		t.Fatalf("metric does not carry the total:\n%s", p.Expose())
+	}
+}
+
 func TestProberSnapshotAfterOneProbe(t *testing.T) {
 	p := NewProber(&fakeReader{samples: []Sample{{UtilPct: 42, MemUsedBytes: 1 << 30, MemTotalBytes: 4 << 30}}}, nil, nil)
 	p.ProbeOnce(context.Background())

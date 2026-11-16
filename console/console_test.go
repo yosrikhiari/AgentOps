@@ -564,11 +564,11 @@ func TestGPUEndpointKeepsNowWhenHistoryFails(t *testing.T) {
 }
 
 // TestSQLStoreGPUSamplesMapsEveryColumn: a fake store cannot catch a Scan that
-// silently leaves mem_used or power_w at zero.
+// silently leaves mem_used, power_w or the swap counter at zero.
 func TestSQLStoreGPUSamplesMapsEveryColumn(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	q := fakeGPUQueryer{rows: [][]any{{
-		now, "GTX 1650", 39.0, int64(77 << 20), int64(4096 << 20), 12.5, 66.0,
+		now, "GTX 1650", 39.0, int64(77 << 20), int64(4096 << 20), 12.5, 66.0, int64(4),
 	}}}
 	got, err := SQLStore{GPU: q}.GPUSamples(context.Background(), now.Add(-time.Hour), 10)
 	if err != nil {
@@ -584,5 +584,8 @@ func TestSQLStoreGPUSamplesMapsEveryColumn(t *testing.T) {
 	}
 	if s.PowerW == nil || *s.PowerW != 12.5 || s.TempC == nil || *s.TempC != 66 {
 		t.Fatalf("power/temp = %v/%v", s.PowerW, s.TempC)
+	}
+	if s.SwapsTotal != 4 {
+		t.Fatalf("swaps_total = %d, want 4", s.SwapsTotal)
 	}
 }

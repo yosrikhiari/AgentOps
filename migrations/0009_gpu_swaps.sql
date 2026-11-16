@@ -1,0 +1,11 @@
+-- Track U follow-up: the swap counter, persisted.
+--
+-- The probe already knew how many model swaps happened in the last ten minutes,
+-- but that number lived only in the running process. Without it a later question
+-- ("did the judge and the model fight over this card during that eval run?") can
+-- only guess from VRAM jumps. The prober now writes its monotonic counter with
+-- every sample, and a window's swaps are max-min inside the window.
+--
+-- Rows written before this migration read 0: nobody counted then, which is a
+-- different fact from "no swaps happened" and is treated as such by the summary.
+ALTER TABLE gpu_samples ADD COLUMN swaps_total bigint NOT NULL DEFAULT 0;

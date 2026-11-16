@@ -22,6 +22,10 @@ type Prober struct {
 	swaps   []time.Time // timestamps of model-set changes, last 10 min kept
 	lastSet string      // sorted resident names, for change detection
 	seeded  bool        // the first good read is the baseline, not a swap
+	// swapsTotal is monotonic for the life of this process. It is what makes
+	// "swaps during that eval run" provable afterwards, so it is persisted with
+	// every sample and exposed as the (correctly named) _total metric.
+	swapsTotal int64
 }
 
 // modelLister is OllamaPS; an interface so tests inject a fake.
@@ -50,11 +54,6 @@ func (p *Prober) ProbeOnce(ctx context.Context) {
 	} else {
 		snap.Available = true
 		snap.Sample = s
-		if p.store != nil {
-			// Best-effort: a dead database must not stop local measurement, so
-			// the error is dropped on the floor and the snapshot is still kept.
-			_ = p.store.InsertSample(ctx, s)
-		}
 	}
 
 	modelsOK := false
@@ -79,6 +78,7 @@ func (p *Prober) ProbeOnce(ctx context.Context) {
 			p.seeded, p.lastSet = true, key
 		} else if key != p.lastSet {
 			p.swaps = append(p.swaps, snap.At)
+			p.swapsTotal++
 			p.lastSet = key
 		}
 	}
@@ -92,8 +92,17 @@ func (p *Prober) ProbeOnce(ctx context.Context) {
 	}
 	p.swaps = kept
 	snap.SwapsLast10m = len(kept)
+	snap.SwapsTotal = p.swapsTotal
+	snap.Sample.SwapsTotal = p.swapsTotal
 	p.snap = snap
 	p.mu.Unlock()
+
+	// Persist after the accounting, so the stored sample carries the counter that
+	// was true when it was taken. Best-effort: a dead database must not stop
+	// local measurement, so the error is dropped on the floor.
+	if snap.Available && p.store != nil {
+		_ = p.store.InsertSample(ctx, snap.Sample)
+	}
 }
 
 // Run probes until ctx is cancelled, immediately then every `every`.
@@ -143,7 +152,7 @@ func (p *Prober) Expose() string {
 	} else {
 		sb.WriteString("gpu_up 0\n")
 	}
-	sb.WriteString(fmt.Sprintf("# HELP gpu_swap_events_total Ollama model swaps in the last 10 minutes.\n# TYPE gpu_swap_events_total gauge\ngpu_swap_events_total %d\n", snap.SwapsLast10m))
+	sb.WriteString(fmt.Sprintf("# HELP gpu_swap_events_total Model swaps observed by this process (monotonic).\n# TYPE gpu_swap_events_total counter\ngpu_swap_events_total %d\n", snap.SwapsTotal))
 	if !snap.Available {
 		return sb.String()
 	}

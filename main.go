@@ -673,6 +673,10 @@ func evalTimeout() time.Duration {
 func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), evalTimeout())
 	defer cancel()
+	// The window is this run, measured rather than inferred: the prober that
+	// keeps sampling is usually the server's, in another process, which is
+	// exactly why the counter is persisted.
+	runStart := time.Now()
 	raw, err := os.ReadFile(goldenPath)
 	if err != nil {
 		return err
@@ -796,7 +800,31 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	}
 	log.Printf("eval_run id=%d golden=%s faith=%.3f threshold=%.2f alert=%v runs=%d delta=%.3f misses_now=%d",
 		runID, goldenVersion, avgF, threshold, rep.Alert, rep.Runs, rep.Delta, rep.MissesNow)
+	logRunGPU(ctx, conn, runStart, time.Now())
 	return nil
+}
+
+// logRunGPU prints what the card did during this run. It never fails the run:
+// the measurement is evidence about comparability, not a gate. No samples means
+// the prober was off, and that is said plainly instead of being read as a quiet
+// GPU (a zero here would be a claim nobody measured).
+func logRunGPU(ctx context.Context, db pgDB, from, to time.Time) {
+	sum, err := gpu.SQLStore{Query: gpuAdapter{pgAdapter{db}}}.Summary(ctx, from, to)
+	if err != nil {
+		log.Printf("gpu during this run: unavailable (%v)", err)
+		return
+	}
+	if sum.Samples == 0 {
+		log.Printf("gpu during this run: no samples - the prober was not running, so comparability is unknown")
+		return
+	}
+	msg := fmt.Sprintf("gpu during this run: %d samples, mean %.0f%% util, peak %.1f of %.1f GB VRAM, %d model swap(s)",
+		sum.Samples, sum.UtilMean,
+		float64(sum.MemPeakBytes)/(1<<30), float64(sum.MemTotalBytes)/(1<<30), sum.Swaps)
+	if sum.Swaps > 0 {
+		msg += " - a swap unloads one model to load another, so this run is not directly comparable with a quiet one"
+	}
+	log.Printf("%s", msg)
 }
 
 func runSearch(dsn, ollamaURL, query string) {

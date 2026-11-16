@@ -20,6 +20,26 @@ type Sample struct {
 	MemTotalBytes int64     `json:"mem_total_bytes"`
 	PowerW        *float64  `json:"power_w,omitempty"` // nil when the driver says N/A
 	TempC         *float64  `json:"temp_c,omitempty"`
+	// SwapsTotal is the prober's monotonic model-swap counter at sample time.
+	// Stored so a later question ("did models fight over the card during this eval
+	// run?") can be answered from history instead of from a process that has
+	// already exited; omitted when zero so an old row reads naturally.
+	SwapsTotal int64 `json:"swaps_total,omitempty"`
+}
+
+// Summary is what a time window did to the card: the aggregate the eval pages and
+// `--score` need, without shipping thousands of samples to answer one question.
+// Swaps is max-min of Sample.SwapsTotal inside the window, so a restart mid-window
+// undercounts rather than inventing swaps.
+type Summary struct {
+	From          time.Time `json:"from"`
+	To            time.Time `json:"to"`
+	Samples       int       `json:"samples"`
+	UtilMean      float64   `json:"util_mean_pct"`
+	UtilPeak      float64   `json:"util_peak_pct"`
+	MemPeakBytes  int64     `json:"mem_peak_bytes"`
+	MemTotalBytes int64     `json:"mem_total_bytes"`
+	Swaps         int64     `json:"swaps"`
 }
 
 func (s Sample) UsedPercent() float64 {
@@ -52,6 +72,9 @@ type Snapshot struct {
 	Available    bool       `json:"available"`
 	Error        string     `json:"error,omitempty"`
 	SwapsLast10m int        `json:"swaps_last_10m"`
+	// SwapsTotal is monotonic for the life of the process and is what gets
+	// persisted; SwapsLast10m is the rolling window the page shows.
+	SwapsTotal int64 `json:"swaps_total"`
 }
 
 // Reader is the one method the prober needs, so tests inject a fake and never

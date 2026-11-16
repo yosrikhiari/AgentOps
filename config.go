@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"time"
 )
 
 type Config struct {
@@ -42,6 +43,26 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// gpuPollInterval bounds how often nvidia-smi is asked; 10s keeps a model swap
+// visible without paying the ~100ms subprocess cost more than six times a minute.
+func gpuPollInterval() time.Duration {
+	d, err := time.ParseDuration(envOr("GPU_POLL_INTERVAL", "10s"))
+	if err != nil || d < time.Second {
+		return 10 * time.Second
+	}
+	return d
+}
+
+// gpuHistoryKeep bounds how much history gpu_samples retains; 168h is a week of
+// one sample per ten seconds, past which the chart's window cannot reach.
+func gpuHistoryKeep() time.Duration {
+	d, err := time.ParseDuration(envOr("GPU_HISTORY_KEEP", "168h"))
+	if err != nil || d < time.Hour {
+		return 168 * time.Hour
+	}
+	return d
 }
 
 // defaultDSN assembles the local-dev Postgres DSN from the same POSTGRES_* variables

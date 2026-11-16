@@ -29,6 +29,7 @@ import (
 	"agentops/audit"
 	"agentops/console"
 	"agentops/evals"
+	"agentops/gpu"
 	"agentops/mcp"
 	"agentops/router"
 	"agentops/tracker"
@@ -92,6 +93,19 @@ type trackerAdapter struct {
 
 func (t trackerAdapter) Query(ctx context.Context, sql string, args ...any) (tracker.Rows, error) {
 	rows, err := t.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// gpuAdapter exists only because gpu.Rows is a distinct named type.
+type gpuAdapter struct {
+	pgAdapter
+}
+
+func (g gpuAdapter) Query(ctx context.Context, sql string, args ...any) (gpu.Rows, error) {
+	rows, err := g.db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -874,6 +888,30 @@ func main() {
 		srv.RefreshPulled(ctx)
 		cancel()
 	}
+	// GPU sampling is best-effort: a dead Postgres must not stop local
+	// measurement, so the prober drops insert errors and the boot purge is
+	// skipped when the database is unreachable. The prober never runs on a
+	// request path — nvidia-smi costs ~100ms and is read from the last snapshot.
+	gpuStore := gpu.SQLStore{Exec: pgAdapter{pool}, Query: gpuAdapter{pgAdapter{pool}}}
+	gpuProber := gpu.NewProber(
+		gpu.NewNvidiaSMI(envOr("GPU_SMI", "nvidia-smi")),
+		gpu.OllamaPS{URL: cfg.OllamaURL},
+		gpuStore,
+	)
+	go gpuProber.Run(probeCtx, gpuPollInterval())
+	srv.Metrics.Extra = gpuProber.Expose
+	// Retention: samples beyond GPU_HISTORY_KEEP are dropped at boot. Bounded so
+	// an unreachable database delays startup by seconds, not by the TCP timeout.
+	func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		gpuKeep := gpuHistoryKeep()
+		if n, err := gpuStore.Purge(ctx, gpuKeep); err != nil {
+			log.Printf("gpu purge skipped: %v", err)
+		} else if n > 0 {
+			log.Printf("gpu: dropped %d samples older than %s", n, gpuKeep)
+		}
+	}()
 	if v, ok := latestEvalScore(pool, *driftGolden); ok {
 		srv.Metrics.SetEvalFaithfulness(v)
 	}

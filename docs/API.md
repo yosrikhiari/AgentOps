@@ -104,6 +104,9 @@ for its models directory).
 | `SENSITIVE_KEYWORDS` | built-in list | comma-separated override |
 | `ADDR` | `:8080` | listen address |
 | `POSTGRES_DSN` | built from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` (defaults `agentops` / `agentops` / `localhost` / `5432` / `agentops`, the same ones `docker-compose.yml` uses) | spans, traces, evals, workflows, api keys |
+| `GPU_SMI` | `nvidia-smi` | path to the driver CLI the GPU prober shells out to. On a box without a working driver every `gpu_*` series reports `gpu_up 0` and no utilisation is published, rather than a fabricated zero |
+| `GPU_POLL_INTERVAL` | `10s` | how often the driver and Ollama's `/api/ps` are read; clamped to ≥1s, parse errors fall back to the default |
+| `GPU_HISTORY_KEEP` | `168h` | retention for `gpu_samples`, purged at boot; clamped to ≥1h, parse errors fall back to the default |
 
 Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval suite*, `--ingest`, `--draft-golden`):
 

@@ -99,7 +99,7 @@
     const sr = document.getElementById('side-router'); if (sr) sr.textContent = allUp ? 'router live' : 'backend down';
     const sv = document.getElementById('side-version'); if (sv) sv.textContent = ov.version ? 'agentops ' + ov.version : '';
   }
-  const pageTitles = { overview: 'Overview', traces: 'Traces', evals: 'Evals & drift', benchmarks: 'Benchmarks', workflows: 'Workflows', cockpit: 'Cockpit' };
+  const pageTitles = { overview: 'Overview', traces: 'Traces', evals: 'Evals & drift', benchmarks: 'Benchmarks', workflows: 'Workflows', cockpit: 'Cockpit', gpu: 'GPU' };
 
   // ---------- traffic chart (hand-rolled SVG bars) ----------
   function trafficChart(reqs) {
@@ -567,6 +567,103 @@
     refresh();
   }
 
+  // ---------- GPU page (Track U) ----------
+  // Two charts, one table, and one honesty rule: when the prober cannot read the
+  // driver the page says so and draws nothing. A flat 0% line would be a lie.
+  function gpuPct(v) { return v == null ? '–' : Number(v).toFixed(0) + '%'; }
+  function gpuGB(b) { return b == null ? '–' : (Number(b) / (1 << 30)).toFixed(2) + ' GB'; }
+
+  // gpuChart is deliberately the same hand-rolled-SVG idea as trafficChart: no
+  // library, one path, tokens only, y clamped to max so a bad value cannot
+  // escape the box.
+  function gpuChart(points, key, max) {
+    const w = 900, hgt = 140, pad = 8;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + hgt);
+    svg.setAttribute('class', 'tower-gpu-chart');
+    if (!points.length || !max) return svg;
+    const x = i => pad + i * (w - pad * 2) / Math.max(1, points.length - 1);
+    const y = v => hgt - pad - Math.min(1, Math.max(0, v / max)) * (hgt - pad * 2);
+    const d = points.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p[key] || 0).toFixed(1)).join(' ');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('class', 'tower-gpu-line');
+    svg.append(path);
+    return svg;
+  }
+
+  // residentTable takes the snapshot's error as well as its list: with the
+  // driver up and Ollama unreachable the list is empty and err says why, so
+  // "nothing resident" would claim an idle GPU we were never able to observe.
+  function residentTable(list, err) {
+    if (!list.length) {
+      return h('div', { class: 'tower-empty' }, err
+        ? 'Resident models unknown — ' + err
+        : 'Nothing resident. Ollama unloads a model once its keep-alive expires.');
+    }
+    return h('table', { class: 'tower-table' },
+      h('thead', null, h('tr', null, ...['model', 'VRAM', 'context', 'expires'].map(t => h('th', null, t)))),
+      h('tbody', null, list.map(m => h('tr', null,
+        h('td', null, chip(m.name)),
+        h('td', { class: 'tower-mono' }, gpuGB(m.size_vram_bytes)),
+        h('td', { class: 'tower-mono' }, m.context_length || '–'),
+        h('td', { class: 'tower-mono' }, fmt.date(m.expires_at))))));
+  }
+
+  async function pageGPU(signal, _sub, polling) {
+    if (!polling) content.replaceChildren(skeleton(6));
+    let data;
+    try { data = await api('/v1/gpu', null, signal); }
+    catch (e) { if (e.name === 'AbortError') return; content.replaceChildren(errorBox('Could not load GPU: ' + e.message, () => route())); return; }
+    const now = data.now || {};
+    if (!now.available) {
+      // No driver: one tall empty state and no charts at all. Zeroed charts
+      // would invent a reading the prober never took.
+      content.replaceChildren(panel('GPU', 'What local inference does to this machine',
+        h('div', { class: 'tower-empty tower-empty-tall' },
+          h('div', { class: 'tower-empty-title' }, 'No GPU telemetry'),
+          now.error || 'the prober is not running',
+          h('div', { class: 'tower-empty-actions' },
+            h('span', { class: 'tower-panel-sub' }, 'Start the server on a machine with an NVIDIA driver, or set GPU_SMI to the nvidia-smi path.')))));
+    } else {
+      const s = now.sample || {};
+      const hist = (data.history || []).slice().reverse(); // the store returns newest-first
+      // history_error is set when the live read worked but the store did not.
+      // "No history yet" would then be a promise the server cannot keep.
+      const histErr = data.history_error || '';
+      const histEmpty = msg => h('div', { class: 'tower-empty' },
+        histErr ? 'History unavailable — ' + histErr : msg);
+      const metrics = h('div', { class: 'tower-metric-row' },
+        metric('Utilisation', gpuPct(s.util_pct), s.name || ''),
+        metric('VRAM', gpuGB(s.mem_used_bytes) + ' / ' + gpuGB(s.mem_total_bytes),
+          gpuPct(s.mem_total_bytes ? s.mem_used_bytes * 100 / s.mem_total_bytes : null)),
+        metric('Power', s.power_w == null ? '–' : Number(s.power_w).toFixed(0) + ' W', 'driver reading'),
+        metric('Temperature', s.temp_c == null ? '–' : Number(s.temp_c).toFixed(0) + ' °C', fmt.time(now.at)));
+      const swaps = now.swaps_last_10m || 0;
+      const swapCount = swaps + ' model swap' + (swaps === 1 ? '' : 's');
+      // With Ollama unreachable the count is only what was observed before the
+      // failure, so it cannot be stated as a plain fact about the last 10 min.
+      const residentSub = now.error
+        ? 'Ollama unreachable — ' + swapCount + ' observed in the last 10 minutes'
+        : swapCount + ' in the last 10 minutes';
+      const nodes = [metrics,
+        panel('Utilisation', 'Last 6 hours, one point per poll',
+          hist.length ? gpuChart(hist, 'util_pct', 100) : histEmpty('No history yet — the first sample lands within one poll interval')),
+        panel('VRAM used', 'In use against the ' + gpuGB(s.mem_total_bytes) + ' this card has installed',
+          hist.length ? gpuChart(hist, 'mem_used_bytes', s.mem_total_bytes) : histEmpty('No history yet')),
+        panel('Resident models', residentSub,
+          residentTable(now.resident || [], now.error))];
+      if (swaps > 2) {
+        nodes.push(h('div', { class: 'tower-note' },
+          'Ollama swapped models ' + swaps + ' times in the last 10 minutes. Every swap unloads one model to load another, so a run that straddles one is not a fair speed comparison — see docs/VRAM.md.'));
+      }
+      content.replaceChildren(...nodes);
+    }
+    // Page-local refresh, mirroring pageOverview's poll: skip the skeleton so
+    // the charts do not flash, and stop as soon as the route changes.
+    pollTimer = setTimeout(() => { if (location.hash.startsWith('#/gpu')) pageGPU(signal, '', true); }, 5000);
+  }
+
   // ---------- cockpit (try+live merged; single surface) ----------
 
   // Tickets group a trace's spans into quest stages: healthy = stage landed,
@@ -839,7 +936,7 @@
   }
 
   // ---------- router ----------
-  const pages = { overview: pageOverview, traces: pageTraces, evals: pageEvals, benchmarks: pageBenchmarks, workflows: pageWorkflows, cockpit: pageCockpit };
+  const pages = { overview: pageOverview, traces: pageTraces, evals: pageEvals, benchmarks: pageBenchmarks, workflows: pageWorkflows, cockpit: pageCockpit, gpu: pageGPU };
   function route() {
     if (railCleanup) { railCleanup(); railCleanup = null; }
     if (pageCtl) pageCtl.abort();

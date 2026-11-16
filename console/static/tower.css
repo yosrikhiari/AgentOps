@@ -276,6 +276,12 @@
   @media (max-width: 1000px){ .tower-grid-traces{ grid-template-columns:1fr; } .tower-trace-list{ max-height:40vh; } .tower-wf-row{ grid-template-columns:120px 1fr 60px; } }
 
 
+  /* ===== GPU page ===== */
+  /* One line per chart, no library. The viewBox is 900×140; width 100% keeps the
+     aspect ratio so the two panels line up at any console width. */
+  .tower-gpu-chart{ width:100%; height:auto; display:block; }
+  .tower-gpu-line{ fill:none; stroke:var(--tower-amber); stroke-width:2; vector-effect:non-scaling-stroke; }
+
   /* ===== Polish ===== */
   .tower-panel{ transition:border-color .12s ease; }
   .tower-panel:hover{ border-color:var(--tower-border); }

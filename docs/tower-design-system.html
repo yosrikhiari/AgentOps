@@ -312,16 +312,20 @@
             <svg class="tower-gpu-chart" viewBox="0 0 900 140" role="img" aria-label="GPU utilisation over the last six hours"><path class="tower-gpu-line" d="M8 120 L90 96 L172 104 L254 40 L336 62 L418 74 L500 30 L582 88 L664 54 L746 110 L828 72 L892 44"/></svg>
           </section>
           <section class="tower-panel">
-            <div class="tower-panel-head"><div><h3>Resident models</h3><div class="tower-panel-sub">4 model swaps in the last 10 minutes</div></div></div>
-            <table class="tower-table">
-              <thead><tr><th>model</th><th>VRAM</th><th>context</th><th>expires</th></tr></thead>
-              <tbody>
-                <tr><td><span class="tower-chip">qwen2.5:3b-instruct</span></td><td class="tower-mono">1.96 GB</td><td class="tower-mono">4096</td><td class="tower-mono">16/11/2026, 12:02:00</td></tr>
-                <tr><td><span class="tower-chip">qwen2.5:7b-instruct-q4_K_M</span></td><td class="tower-mono">3.61 GB</td><td class="tower-mono">8192</td><td class="tower-mono">16/11/2026, 12:01:14</td></tr>
-              </tbody>
-            </table>
+            <div class="tower-panel-head"><div><h3>VRAM used</h3><div class="tower-panel-sub">In use against the 4.00 GB this card has installed</div></div></div>
+            <svg class="tower-gpu-chart" viewBox="0 0 900 140" role="img" aria-label="VRAM used over the last six hours"><path class="tower-gpu-line" d="M8 96 L90 100 L172 92 L254 88 L336 94 L418 90 L500 86 L582 92 L664 88 L746 84 L828 90 L892 88"/></svg>
           </section>
         </div>
+        <section class="tower-panel">
+          <div class="tower-panel-head"><div><h3>Resident models</h3><div class="tower-panel-sub">4 model swaps in the last 10 minutes</div></div></div>
+          <table class="tower-table">
+            <thead><tr><th>model</th><th>VRAM</th><th>context</th><th>expires</th></tr></thead>
+            <tbody>
+              <tr><td><span class="tower-chip">qwen2.5:3b-instruct</span></td><td class="tower-mono">1.96 GB</td><td class="tower-mono">4096</td><td class="tower-mono">16/11/2026, 12:02:00</td></tr>
+              <tr><td><span class="tower-chip">qwen2.5:7b-instruct-q4_K_M</span></td><td class="tower-mono">3.61 GB</td><td class="tower-mono">8192</td><td class="tower-mono">16/11/2026, 12:01:14</td></tr>
+            </tbody>
+          </table>
+        </section>
         <div class="tower-note">Ollama swapped models 4 times in the last 10 minutes. Every swap unloads one model to load another, so a run that straddles one is not a fair speed comparison — see docs/VRAM.md.</div>
         <table class="ds-spec">
           <tr><th>piece</th><th>behaviour</th><th>used in</th></tr>

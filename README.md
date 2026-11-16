@@ -38,6 +38,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 |---|---|---|
 | Route chat requests between a fast and a quality local model on a rule you can read, with a cloud fallback that is *never* used for sensitive data | `router/` | `reason` on every response; `TestSensitiveNeverLeavesBox` |
 | Speak the OpenAI chat shape, streaming included, to any client library | `router/server.go` | `TestOpenAIShape`, `TestStreamSSE`; [`docs/API.md`](docs/API.md) |
+| Speak the Anthropic Messages API too (`/v1/messages`, `x-api-key`, streaming events) | `router/anthropic.go` | `TestMessagesReturnsAnthropicShape`, `TestMessagesStreamsAnthropicEvents` — text only; `tools` is rejected loudly until passthrough lands |
 | Virtual API keys with per-minute limits and token budgets | `router/keys.go`, `--create-key` | live 200/429/429/429 on a 2-rpm key |
 | Hand-written Prometheus exposition + Tower-native dashboard panels (per-model counts, p50/p99, tokens, error rate) | `router/metrics.go`, `console/` `#/overview` | k6: 0/2725 failed at 50 RPS, p99 70 ms |
 | Keep a multi-step agent alive through `kill -9` and resume without repeating work | `tracker/` | `TestKillResume` + a recorded live kill |
@@ -79,6 +80,7 @@ curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","cont
 # OpenAI shape: {"id":"chatcmpl-…","object":"chat.completion","model":"qwen2.5:3b-instruct","choices":[…],"usage":{…},
 #                "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}   ← AgentOps extensions
 curl -s -N localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}],"stream":true}'   # SSE
+curl -s localhost:8080/v1/messages -H 'x-api-key: ak_…' -d '{"model":"auto","max_tokens":128,"messages":[{"role":"user","content":"hi"}]}'   # Anthropic shape
 curl -s localhost:8080/v1/models           # served models with tier, backend, health
 curl -s localhost:8080/v1/traces/598d…     # 3 spans: route.decide → model.generate → router.respond
 curl -s localhost:8080/metrics             # router_*, router_backend_up, router_key_*, eval_faithfulness, gpu_*

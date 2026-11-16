@@ -117,6 +117,7 @@ func NewServer(fastModel, qualityModel string, local Backend) *Server {
 	}
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChat)
+	s.mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
@@ -246,45 +247,62 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
+// errWriter writes a machine-code failure in whichever wire shape the endpoint
+// speaks. Both formats share the key resolution and the checks around it.
+type errWriter func(w http.ResponseWriter, status int, code, message, traceID string)
+
 // authenticate resolves the API key on a request. ok=false means a response was written.
 func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, traceID string) (*APIKey, bool) {
+	return s.authenticateWith(w, r, traceID, writeError)
+}
+
+// authenticateWith accepts both credential headers: OpenAI clients send
+// Authorization: Bearer, Claude Code and the Anthropic SDK send x-api-key. Keys,
+// budgets and rate limits are the same either way.
+func (s *Server) authenticateWith(w http.ResponseWriter, r *http.Request, traceID string, fail errWriter) (*APIKey, bool) {
 	if s.Keys == nil {
 		return nil, true
 	}
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if auth == "" {
+	secret := ""
+	if auth != "" {
+		secret = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer"))
+	} else {
+		secret = strings.TrimSpace(r.Header.Get("x-api-key"))
+	}
+	if secret == "" {
 		if s.RequireKey {
-			writeError(w, http.StatusUnauthorized, "missing_api_key", "Authorization: Bearer <api key> is required", traceID)
+			fail(w, http.StatusUnauthorized, "missing_api_key",
+				"send Authorization: Bearer <api key> or x-api-key: <api key>", traceID)
 			return nil, false
 		}
 		return nil, true
 	}
-	secret := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer"))
 	key, err := s.Keys.Lookup(r.Context(), HashSecret(secret))
 	if errors.Is(err, ErrKeyNotFound) {
 		s.Metrics.ObserveKey("unknown", true)
-		writeError(w, http.StatusUnauthorized, "invalid_api_key", "api key not recognised", traceID)
+		fail(w, http.StatusUnauthorized, "invalid_api_key", "api key not recognised", traceID)
 		return nil, false
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "key_store_unavailable", "api key store unavailable", traceID)
+		fail(w, http.StatusBadGateway, "key_store_unavailable", "api key store unavailable", traceID)
 		return nil, false
 	}
 	if key.Disabled {
 		s.Metrics.ObserveKey(key.Name, true)
-		writeError(w, http.StatusForbidden, "api_key_disabled", "api key is disabled", traceID)
+		fail(w, http.StatusForbidden, "api_key_disabled", "api key is disabled", traceID)
 		return nil, false
 	}
 	if key.BudgetTokens > 0 && key.TokensUsed >= key.BudgetTokens {
 		s.Metrics.ObserveKey(key.Name, true)
-		writeError(w, http.StatusForbidden, "budget_exceeded",
+		fail(w, http.StatusForbidden, "budget_exceeded",
 			fmt.Sprintf("token budget exhausted (%d/%d)", key.TokensUsed, key.BudgetTokens), traceID)
 		return nil, false
 	}
 	if ok, wait := s.Limiter.Allow(key.ID, key.RPM); !ok {
 		s.Metrics.ObserveKey(key.Name, true)
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-		writeError(w, http.StatusTooManyRequests, "rate_limited",
+		fail(w, http.StatusTooManyRequests, "rate_limited",
 			fmt.Sprintf("key %q allows %d requests per minute", key.Name, key.RPM), traceID)
 		return nil, false
 	}
@@ -391,22 +409,29 @@ func writeSSE(w http.ResponseWriter, v any) {
 	_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
 }
 
-func (s *Server) writeChatError(w http.ResponseWriter, err error, traceID string) {
+// classifyChatError maps a completion failure to one machine code, shared by both
+// wire formats so they cannot drift.
+func classifyChatError(err error) (status int, code, msg string) {
 	var unknown ErrUnknownModel
 	var sens ErrSensitiveCloud
 	var notPulled ErrModelNotPulled
 	switch {
 	case errors.As(err, &unknown):
-		writeError(w, http.StatusBadRequest, "unknown_model", err.Error(), traceID)
+		return http.StatusBadRequest, "unknown_model", err.Error()
 	case errors.As(err, &sens):
-		writeError(w, http.StatusForbidden, "sensitive_cloud_blocked", err.Error(), traceID)
+		return http.StatusForbidden, "sensitive_cloud_blocked", err.Error()
 	case errors.As(err, &notPulled):
-		writeError(w, http.StatusServiceUnavailable, "model_not_pulled", err.Error(), traceID)
+		return http.StatusServiceUnavailable, "model_not_pulled", err.Error()
 	case errors.Is(err, context.DeadlineExceeded):
-		writeError(w, http.StatusGatewayTimeout, "timeout", "model did not answer in time", traceID)
+		return http.StatusGatewayTimeout, "timeout", "model did not answer in time"
 	default:
-		writeError(w, http.StatusBadGateway, "ollama_unavailable", "model backend unavailable", traceID)
+		return http.StatusBadGateway, "ollama_unavailable", "model backend unavailable"
 	}
+}
+
+func (s *Server) writeChatError(w http.ResponseWriter, err error, traceID string) {
+	status, code, msg := classifyChatError(err)
+	writeError(w, status, code, msg, traceID)
 }
 
 // chargeKey records usage off the request path; a lost update costs at most one request

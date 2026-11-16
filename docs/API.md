@@ -72,6 +72,44 @@ curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -H '
 
 **Client reference** — a client that keeps its own record of every model call (Versatile's LangGraph writing orchestrator does: one Dexie row per Editor decision) sends `X-Client-Ref` (≤ 64 chars, opaque, e.g. `<session>/<turn>/<role>/<n>`) and `X-Agent-Role` (≤ 32 chars, e.g. `writer`, `critic`, `editor`, `director`). Both may also be body fields (`client_ref`, `agent_role`). They land as `client_ref` / `agent_role` on all three spans of the trace (`route.decide`, `model.generate`, `router.respond` — and on the failed `model.generate` span) and are echoed back as response headers, so the client can store the gateway's `X-Trace-ID` next to its own record and the Tower trace inspector can group a run's traces by agent role. They are truncated, never rejected, so a prompt can never ride along in a span attribute.
 
+## `POST /v1/messages` (Anthropic Messages API)
+
+The same router, spoken by Anthropic clients. The request is translated into the internal
+`ChatRequest`, so routing, keys (RPM and token budgets), fail-closed sensitive handling,
+fallback and spans are identical to `/v1/chat/completions` — only the wire shape differs.
+
+```bash
+curl localhost:8080/v1/messages \
+  -H 'x-api-key: ak_…' -H 'Content-Type: application/json' \
+  -d '{"model":"auto","max_tokens":256,"system":"be brief",
+       "messages":[{"role":"user","content":"hi"}]}'
+```
+
+```json
+{"id":"msg_598d…","type":"message","role":"assistant","model":"qwen2.5:3b-instruct",
+ "content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","stop_sequence":null,
+ "usage":{"input_tokens":12,"output_tokens":3},
+ "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}
+```
+
+- **Credentials:** `x-api-key: <key>` (what Claude Code and the Anthropic SDK send) or
+  `Authorization: Bearer <key>`. Both go through the same key store.
+- **Content:** `system` may be a string or text blocks; `messages[].content` may be a
+  string or text blocks (joined with a newline). `temp`/`top_p`/`stop_sequences` are
+  forwarded; `max_tokens` defaults to the model's default when absent.
+- **Streaming (`stream:true`)** emits the Anthropic event sequence:
+  `message_start`, `content_block_start`, `content_block_delta` (one per token chunk),
+  `content_block_stop`, `message_delta`, `message_stop`. Input tokens are reported in
+  `message_delta`, not `message_start` (the backend reports usage at the end).
+- **Not translated yet: `tools` / `tool_choice`**, and non-text content blocks. These are
+  rejected with `400 invalid_request_error` naming the field rather than quietly dropped —
+  an agentic client that receives an answer without its `tool_use` block would hang.
+  Use `/v1/chat/completions` with the OpenAI tool shape until tool passthrough lands.
+- **Errors use the Anthropic envelope**, not the OpenAI one:
+  `{"type":"error","error":{"type":"invalid_request_error|authentication_error|permission_error|rate_limit_error|api_error","message":"…"}}`
+  with `X-Trace-ID` on the header. Backend failures map to `api_error` with the same status
+  codes as the OpenAI endpoint (`502`/`503`/`504`).
+
 ## `GET /v1/models`
 
 ```json

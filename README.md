@@ -103,6 +103,7 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show) |
 | `--score-model NAME` | with `--score`: generate each answer with MODEL (temperature 0, 256 tokens) instead of scoring frozen answers; tags the run for Track L model comparison |
 | `--release-gate` (`--golden-version vN`, `--gate-k 3`) | pre-tag check (Track T): exit 0 only if the last k golden-answer runs clear today's `EVAL_THRESHOLD` on one judge; run locally before tagging, CI has no GPU/Postgres |
+| `--route-replay` (`--route-window 720h`) | print the intent/tier decision mix recorded in `route_decisions` and the baselines a learned router must beat; no quality number until shadow outcomes exist |
 | `--version` | print version, commit and build date |
 | `--version-json` | the same as one line of JSON (`version`, `commit`, `date`, `go`, `module`) for scripts and the release checklist |
 

@@ -217,6 +217,74 @@ func withConn(dsn string, timeout time.Duration, fn func(ctx context.Context, co
 	return fn(ctx, conn)
 }
 
+// runRouteReplay prints the decision mix recorded by Phase 0. It deliberately does not
+// print a quality number: AIQ/PGR need per-(query, model) outcomes, which Phase 1 records
+// in shadow mode. Claiming a router beats random before that data exists is exactly the
+// mistake the 2026 audit found in commercial routers.
+func runRouteReplay(dsn, window string) {
+	d, err := time.ParseDuration(window)
+	if err != nil || d <= 0 {
+		d = 720 * time.Hour
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close(ctx)
+
+	rows, err := conn.Query(ctx,
+		`SELECT intent, tier, count(*)::int,
+		        round(avg(intent_confidence)::numeric, 2)::float8,
+		        round(avg(difficulty)::numeric, 2)::float8
+		 FROM route_decisions
+		 WHERE created_at >= now() - make_interval(secs => $1)
+		 GROUP BY intent, tier ORDER BY count(*) DESC`, d.Seconds())
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+	log.Printf("route replay: last %s, policy %s", window, router.PolicyHeuristicV0)
+	log.Printf("  %-10s %-8s %7s %6s %6s", "intent", "tier", "count", "conf", "diff")
+	var total int
+	for rows.Next() {
+		var intent, tier string
+		var n int
+		var conf, diff float64
+		if err := rows.Scan(&intent, &tier, &n, &conf, &diff); err != nil {
+			log.Fatal(err)
+		}
+		total += n
+		log.Printf("  %-10s %-8s %7d %6.2f %6.2f", intent, tier, n, conf, diff)
+	}
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+	if total == 0 {
+		log.Print("  no decisions in the window — send a few requests first")
+		return
+	}
+	var fast, quality, explicit, sensitive, fellBack, failed int
+	if err := conn.QueryRow(ctx,
+		`SELECT count(*) FILTER (WHERE tier = 'fast')::int,
+		        count(*) FILTER (WHERE tier = 'quality')::int,
+		        count(*) FILTER (WHERE reason = 'explicit-model')::int,
+		        count(*) FILTER (WHERE sensitive)::int,
+		        count(*) FILTER (WHERE fallback)::int,
+		        count(*) FILTER (WHERE failed)::int
+		 FROM route_decisions WHERE created_at >= now() - make_interval(secs => $1)`,
+		d.Seconds()).Scan(&fast, &quality, &explicit, &sensitive, &fellBack, &failed); err != nil {
+		log.Fatal(err)
+	}
+	pct := func(n int) int { return n * 100 / total }
+	log.Printf("  mix: fast %d (%d%%), quality %d (%d%%), explicit %d, sensitive %d",
+		fast, pct(fast), quality, pct(quality), explicit, sensitive)
+	log.Printf("  outcomes: %d answered after a fallback, %d failed; always-fast %d%%, always-quality %d%%",
+		fellBack, failed, pct(fast), pct(quality))
+	log.Printf("  quality numbers: none yet — AIQ/PGR and the random-at-matched-cost comparison need Phase 1 shadow labels")
+}
+
 func runDrift(dsn, goldenVersion string, threshold float64) {
 	var data any
 	err := withConn(dsn, 15*time.Second, func(ctx context.Context, conn *pgx.Conn) error {
@@ -372,6 +440,64 @@ func (w *spanWriter) loop() {
 		}
 		if w.Hub != nil {
 			w.Hub.Publish(rec) // live view even when the database is down
+		}
+	}
+}
+
+// decisionWriter drains routing decisions to Postgres on one goroutine, off the request
+// path. Same contract as spanWriter: a dead database costs the request nothing, a full
+// queue drops the decision and counts it.
+type decisionWriter struct {
+	db      pgDB
+	queue   chan router.Decision
+	dropped atomic.Uint64
+	done    chan struct{}
+	once    sync.Once
+}
+
+func newDecisionWriter(db pgDB) *decisionWriter {
+	w := &decisionWriter{db: db, queue: make(chan router.Decision, 512), done: make(chan struct{})}
+	go w.loop()
+	return w
+}
+
+func (w *decisionWriter) Close(timeout time.Duration) {
+	w.once.Do(func() { close(w.queue) })
+	select {
+	case <-w.done:
+	case <-time.After(timeout):
+		log.Printf("decision sink: %d decisions still queued at shutdown", len(w.queue))
+	}
+}
+
+func (w *decisionWriter) loop() {
+	defer close(w.done)
+	for d := range w.queue {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := w.db.Exec(ctx,
+			`INSERT INTO route_decisions
+			 (trace_id, intent, intent_confidence, difficulty, policy, tier, reason, planned, chosen, fallback, failed, candidates, sensitive, created_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+			d.TraceID, string(d.Intent), d.IntentConfidence, d.Difficulty, d.Policy,
+			d.Tier, d.Reason, d.Planned, d.Chosen, d.Fallback, d.Failed, d.Candidates, d.Sensitive, d.At)
+		cancel()
+		if err != nil && w.dropped.Add(1) == 1 {
+			log.Printf("decision sink: first write failure (later ones are silent): %v", err)
+		}
+	}
+}
+
+func (w *decisionWriter) Sink() router.DecisionSink {
+	return func(d router.Decision) {
+		defer func() {
+			if recover() != nil { // send on closed queue during shutdown: drop, count
+				w.dropped.Add(1)
+			}
+		}()
+		select {
+		case w.queue <- d:
+		default:
+			w.dropped.Add(1)
 		}
 	}
 }
@@ -920,6 +1046,8 @@ func main() {
 	driftFlag := flag.Bool("drift", false, "print drift report for golden version and exit")
 	driftGolden := flag.String("drift-golden", "v3", "golden version for --drift and report endpoint")
 	releaseGate := flag.Bool("release-gate", false, "pre-tag release check (Track T): fail unless the last --gate-k golden runs pass the release bar, then exit")
+	routeReplay := flag.Bool("route-replay", false, "print the routing-decision mix from route_decisions (intent, tier, chosen) and exit")
+	routeWindow := flag.String("route-window", "720h", "how far back --route-replay looks")
 	gateK := flag.Int("gate-k", 3, "consecutive green runs --release-gate requires (fewer runs, mixed judges, or a sub-threshold score all fail)")
 	scheduleEvals := flag.String("schedule-evals", "", "run eval suite every INTERVAL (e.g. 24h) forever; empty disables")
 	runTrackerFlag := flag.Bool("run-tracker", false, "run toy Researcher-Drafter-Reviewer workflow and exit")
@@ -966,6 +1094,10 @@ func main() {
 	}
 	if *migrate {
 		runMigrate(dsn)
+		return
+	}
+	if *routeReplay {
+		runRouteReplay(dsn, *routeWindow)
 		return
 	}
 	if *createKey != "" {
@@ -1028,6 +1160,8 @@ func main() {
 	srv, backends := buildBackends(cfg)
 	spans := newSpanWriter(pool)
 	srv.SpanSink = spans.Sink()
+	decisions := newDecisionWriter(pool)
+	srv.DecisionSink = decisions.Sink()
 	events := newEventHub()
 	spans.Hub = events
 	srv.Keys = router.SQLKeyStore{Exec: pgAdapter{pool}, Query: routerAdapter{pgAdapter{pool}}}
@@ -1265,6 +1399,7 @@ func main() {
 		}
 		stopProbe()
 		spans.Close(5 * time.Second)
+		decisions.Close(2 * time.Second)
 		log.Print("bye")
 	}
 }

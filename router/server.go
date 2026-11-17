@@ -83,6 +83,9 @@ type Server struct {
 	Models       []ModelRef
 	Metrics      *Metrics
 	SpanSink     SpanSink
+	// DecisionSink records one routing decision per request (Phase 0 instrumentation).
+	// Nil is a no-op; implementations must be non-blocking.
+	DecisionSink DecisionSink
 	// Keys enables API-key auth when non-nil; RequireKey rejects anonymous requests.
 	Keys       KeyStore
 	RequireKey bool
@@ -506,6 +509,7 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 	}
 	decideSpan, genSpan, respondSpan := newTraceID(), newTraceID(), newTraceID()
 	start := time.Now()
+	sig := Analyse(lastUserContent(msgs))
 	names := make([]string, 0, len(route.Candidates))
 	for _, c := range route.Candidates {
 		names = append(names, c.Backend.Name()+"/"+c.Model)
@@ -524,6 +528,10 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 	}
 	s.emitSpan(traceID, decideSpan, "", "route.decide", spanAttrs(ref(map[string]any{
 		"tier": route.Tier, "reason": route.Reason, "sensitive": sensitive, "candidates": names, "requested": req.Model,
+		// Phase 0 labels: a closed intent, a bounded confidence, a difficulty scalar.
+		// Labels only, never prompt text - the policy test scans for prompt-shaped attrs.
+		"intent": string(sig.Intent), "intent_confidence": sig.Confidence,
+		"difficulty": sig.Difficulty, "policy": PolicyHeuristicV0,
 	})))
 
 	var lastErr error
@@ -567,13 +575,36 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		if len(fallback) > 0 {
 			out.Fallback = strings.Join(fallback, ",") + "->" + cand.Backend.Name() + "/" + cand.Model
 		}
+		s.recordDecision(traceID, sig, route, sensitive, names,
+			cand.Backend.Name()+"/"+cand.Model, len(fallback) > 0, false)
 		return out, nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("no candidate available")
 	}
 	s.emitSpan(traceID, genSpan, decideSpan, "model.generate", spanAttrs(ref(map[string]any{"error": lastErr.Error(), "tried": fallback})))
+	s.recordDecision(traceID, sig, route, sensitive, names, "", len(fallback) > 0, true)
 	return ChatResponse{TraceID: traceID}, lastErr
+}
+
+// recordDecision hands one decision to the sink once the outcome is known, so a replay can
+// credit the model that actually answered. It copies the candidate slice so a sink cannot
+// retain a view into route state, and never panics on a nil sink.
+func (s *Server) recordDecision(traceID string, sig Signal, route Route, sensitive bool, candidates []string, chosen string, fellBack, failed bool) {
+	if s.DecisionSink == nil {
+		return
+	}
+	d := Decision{
+		TraceID: traceID, Intent: sig.Intent, IntentConfidence: sig.Confidence,
+		Difficulty: sig.Difficulty, Policy: PolicyHeuristicV0,
+		Tier: route.Tier, Reason: route.Reason, Sensitive: sensitive,
+		Candidates: append([]string(nil), candidates...), At: time.Now().UTC(),
+		Chosen: chosen, Fallback: fellBack, Failed: failed,
+	}
+	if len(candidates) > 0 {
+		d.Planned = candidates[0]
+	}
+	s.DecisionSink(d)
 }
 
 // generateOn runs one candidate. A ParamBackend gets the full GenParams; a plain Backend

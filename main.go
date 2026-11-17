@@ -462,6 +462,7 @@ func traceJSON(ctx context.Context, traceID string, spans []tracker.Span, near f
 
 type spanRecord struct {
 	traceID, spanID, parentID, name, attrs string
+	at                                     time.Time
 }
 
 // spanWriter drains router spans to Postgres on one goroutine, in emit order, off the
@@ -476,6 +477,123 @@ type spanWriter struct {
 	// Hub, when set, receives every span for live viewers. Lossy by design:
 	// a slow browser drops spans there; the queue above is unaffected.
 	Hub *eventHub
+	// Exporter, when set, also ships each span over OTLP. Off the request path and
+	// lossy, like the database write.
+	Exporter *otlpExporter
+}
+
+// otlpExporter batches spans to an OTLP/HTTP collector. Strictly lossy: a collector that
+// is down must never slow a chat, and Postgres remains the source of truth. The endpoint is
+// the full traces URL (e.g. http://localhost:4318/v1/traces); empty disables export.
+type otlpExporter struct {
+	endpoint string
+	client   *http.Client
+	queue    chan tracker.ExportedSpan
+	sent     atomic.Uint64
+	dropped  atomic.Uint64
+	done     chan struct{}
+	once     sync.Once
+}
+
+func newOTLPExporter(endpoint string) *otlpExporter {
+	e := &otlpExporter{
+		endpoint: endpoint,
+		client:   &http.Client{Timeout: 3 * time.Second},
+		queue:    make(chan tracker.ExportedSpan, 1024),
+		done:     make(chan struct{}),
+	}
+	go e.loop()
+	return e
+}
+
+// Add hands one span to the exporter. It never blocks: the queue drops and counts, and the
+// store's redaction runs again here because an exporter is a new surface.
+func (e *otlpExporter) Add(rec spanRecord) {
+	var attrs map[string]any
+	if err := json.Unmarshal([]byte(tracker.RedactAttrs(rec.attrs)), &attrs); err != nil {
+		e.dropped.Add(1)
+		return
+	}
+	span := tracker.ExportedSpan{TraceID: rec.traceID, SpanID: rec.spanID, ParentID: rec.parentID, Name: rec.name, At: rec.at, Attrs: attrs}
+	select {
+	case e.queue <- span:
+	default:
+		e.dropped.Add(1)
+	}
+}
+
+func (e *otlpExporter) loop() {
+	defer close(e.done)
+	batch := make([]tracker.ExportedSpan, 0, 64)
+	tick := time.NewTimer(time.Hour)
+	if !tick.Stop() {
+		<-tick.C
+	}
+	defer tick.Stop()
+	for {
+		select {
+		case span, ok := <-e.queue:
+			if !ok {
+				e.flush(batch)
+				return
+			}
+			batch = append(batch, span)
+			if len(batch) >= 64 {
+				e.flush(batch)
+				batch = batch[:0]
+				continue
+			}
+			if len(batch) == 1 {
+				tick.Reset(250 * time.Millisecond)
+			}
+		case <-tick.C:
+			e.flush(batch)
+			batch = batch[:0]
+		}
+	}
+}
+
+func (e *otlpExporter) flush(batch []tracker.ExportedSpan) {
+	if len(batch) == 0 {
+		return
+	}
+	body, err := tracker.OTLPPayload(batch, "agentops")
+	if err != nil {
+		e.dropped.Add(uint64(len(batch)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint, strings.NewReader(string(body)))
+	if err != nil {
+		e.dropped.Add(uint64(len(batch)))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := e.client.Do(req)
+	if err != nil {
+		if e.dropped.Add(uint64(len(batch))) == uint64(len(batch)) {
+			log.Printf("otlp export: first failure (later ones are silent): %v", err)
+		}
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		e.dropped.Add(uint64(len(batch)))
+		return
+	}
+	e.sent.Add(uint64(len(batch)))
+}
+
+// Close stops accepting spans, flushes what is queued, and returns after timeout.
+func (e *otlpExporter) Close(timeout time.Duration) {
+	e.once.Do(func() { close(e.queue) })
+	select {
+	case <-e.done:
+	case <-time.After(timeout):
+		log.Printf("otlp export: %d spans still queued at shutdown", len(e.queue))
+	}
 }
 
 func newSpanWriter(db pgDB) *spanWriter {
@@ -500,14 +618,17 @@ func (w *spanWriter) loop() {
 	for rec := range w.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_, err := w.db.Exec(ctx,
-			`INSERT INTO spans (trace_id, span_id, parent_id, name, attrs) VALUES ($1, $2, $3, $4, $5::jsonb) ON CONFLICT (trace_id, span_id) DO NOTHING`,
-			rec.traceID, rec.spanID, rec.parentID, rec.name, rec.attrs)
+			`INSERT INTO spans (trace_id, span_id, parent_id, name, attrs, started_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6) ON CONFLICT (trace_id, span_id) DO NOTHING`,
+			rec.traceID, rec.spanID, rec.parentID, rec.name, rec.attrs, rec.at)
 		cancel()
 		if err != nil && w.dropped.Add(1) == 1 {
 			log.Printf("span sink: first write failure (later ones are silent): %v", err)
 		}
 		if w.Hub != nil {
 			w.Hub.Publish(rec) // live view even when the database is down
+		}
+		if w.Exporter != nil {
+			w.Exporter.Add(rec)
 		}
 	}
 }
@@ -578,7 +699,7 @@ func (w *spanWriter) Sink() router.SpanSink {
 			}
 		}()
 		select {
-		case w.queue <- spanRecord{traceID, spanID, parentID, name, attrs}:
+		case w.queue <- spanRecord{traceID: traceID, spanID: spanID, parentID: parentID, name: name, attrs: attrs, at: time.Now().UTC()}:
 		default:
 			w.dropped.Add(1)
 		}
@@ -1297,6 +1418,10 @@ func main() {
 	srv.DecisionSink = decisions.Sink()
 	events := newEventHub()
 	spans.Hub = events
+	if endpoint := strings.TrimSpace(os.Getenv("OTLP_ENDPOINT")); endpoint != "" {
+		spans.Exporter = newOTLPExporter(endpoint)
+		log.Printf("otlp export: spans also go to %s (dual-named gen_ai.*, prompts never exported)", endpoint)
+	}
 	srv.Keys = router.SQLKeyStore{Exec: pgAdapter{pool}, Query: routerAdapter{pgAdapter{pool}}}
 	srv.RequireKey = strings.EqualFold(os.Getenv("REQUIRE_API_KEY"), "true")
 	srv.Prober = router.NewHealthProber(srv.Metrics, backends...)
@@ -1532,6 +1657,9 @@ func main() {
 		}
 		stopProbe()
 		spans.Close(5 * time.Second)
+		if spans.Exporter != nil {
+			spans.Exporter.Close(5 * time.Second)
+		}
 		decisions.Close(2 * time.Second)
 		log.Print("bye")
 	}

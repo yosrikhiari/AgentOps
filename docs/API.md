@@ -149,6 +149,7 @@ for its models directory).
 | `GPU_SMI` | `nvidia-smi` | path to the driver CLI the GPU prober shells out to. On a box without a working driver every `gpu_*` series reports `gpu_up 0` and no utilisation is published, rather than a fabricated zero |
 | `GPU_POLL_INTERVAL` | `10s` | how often the driver and Ollama's `/api/ps` are read; clamped to ≥1s, parse errors fall back to the default |
 | `GPU_HISTORY_KEEP` | `168h` | retention for `gpu_samples`, purged at boot; clamped to ≥1h, parse errors fall back to the default |
+| `OTLP_ENDPOINT` | - | full OTLP/HTTP traces URL (e.g. `http://localhost:4318/v1/traces`). When set, spans are also exported with the `gen_ai.*` aliases beside the internal attributes (dual-named, because the GenAI semconv is still `Development`), batched and strictly lossy — a collector that is down never slows a request, and prompt text is never exported, even if a span carried it |
 
 Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval suite*, `--ingest`, `--draft-golden`):
 

@@ -352,6 +352,60 @@ func runReleaseGate(dsn, golden string, k int, threshold float64) {
 	}
 }
 
+// runJudgeAudit measures the judge itself. Every score, drift alert and release gate
+// inherits this error, and until this pass nobody had measured it: a faithful
+// paraphrase scoring 0.00 was the symptom, not a bad answer.
+func runJudgeAudit(ollamaURL, model, model2, path string) {
+	if model == "" {
+		model = envOr("JUDGE_MODEL", "qwen3:8b")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		log.Fatalf("judge audit: %v", err)
+	}
+	defer f.Close()
+	items, err := evals.LoadAudit(f)
+	if err != nil {
+		log.Fatalf("judge audit: %v", err)
+	}
+	judges := []evals.NamedJudge{{Name: model, Judge: evals.NewOllamaJudge(ollamaURL, model)}}
+	if model2 != "" {
+		judges = append(judges, evals.NamedJudge{Name: model2, Judge: evals.NewOllamaJudge(ollamaURL, model2)})
+	}
+	rep := evals.RunAudit(context.Background(), items, judges, true)
+	log.Printf("judge audit: %d labelled items, prompt=%s (positive class = unsupported)", rep.Items, evals.JudgePromptVersion)
+	log.Printf("  %-24s %3s %3s %3s %3s %5s %6s %10s %7s", "judge", "tp", "fp", "fn", "tn", "prec", "recall", "false-alrm", "flips")
+	for _, j := range rep.Judges {
+		flips := "n/a"
+		if j.FlipComparable > 0 {
+			flips = fmt.Sprintf("%d/%d", j.Flips, j.FlipComparable)
+		}
+		log.Printf("  %-24s %3d %3d %3d %3d %5.2f %6.2f %10.2f %7s",
+			j.Judge, j.TP, j.FP, j.FN, j.TN, j.Precision(), j.Recall(), j.FalseAlarmRate(), flips)
+		if j.Errors > 0 {
+			log.Printf("  %-24s %d call(s) returned no verdict (counted as errors, not agreement)", j.Judge, j.Errors)
+		}
+	}
+	if rep.Agreement != nil {
+		log.Printf("  agreement: n=%d kappa=%.2f", rep.Agreement.Pairs, rep.Agreement.Kappa)
+	} else {
+		log.Printf("  agreement: single judge - pass --judge2-model to measure it")
+	}
+	total := 0
+	for _, j := range rep.Judges {
+		total += j.Verdicts()
+	}
+	if total == 0 {
+		log.Printf("judge audit: no verdicts at all - is %q pulled and Ollama reachable at %s?", model, ollamaURL)
+		os.Exit(2)
+	}
+	if v := evals.AuditVerdict(rep, 0.80, 0.20); !v.Pass {
+		log.Printf("FAIL: %s", strings.Join(v.Reasons, "; "))
+		os.Exit(1)
+	}
+	log.Printf("PASS: recall >= 0.80 and false-alarm <= 0.20 over %d items. n is small - read the table, not just the verdict.", rep.Items)
+}
+
 func latestEvalScore(db pgDB, goldenVersion string) (float64, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1066,6 +1120,10 @@ func main() {
 	driftFlag := flag.Bool("drift", false, "print drift report for golden version and exit")
 	driftGolden := flag.String("drift-golden", "v3", "golden version for --drift and report endpoint")
 	releaseGate := flag.Bool("release-gate", false, "pre-tag release check (Track T): fail unless the last --gate-k golden runs pass the release bar, then exit")
+	judgeAudit := flag.Bool("judge-audit", false, "measure the faithfulness judge against a labelled claim/context set (precision, recall, agreement, order stability) and exit")
+	auditFile := flag.String("audit-file", "evals/golden/judge-audit.jsonl", "labelled JSONL set for --judge-audit: id, claim, context, supported")
+	judgeModelFlag := flag.String("judge-model", "", "judge model for --judge-audit (default JUDGE_MODEL, else qwen3:8b)")
+	judge2Model := flag.String("judge2-model", "", "second judge for --judge-audit; when set, Cohen's kappa between the two is reported")
 	routeReplay := flag.Bool("route-replay", false, "print the routing-decision mix from route_decisions (intent, tier, chosen) and exit")
 	routeWindow := flag.String("route-window", "720h", "how far back --route-replay looks")
 	gateK := flag.Int("gate-k", 3, "consecutive green runs --release-gate requires (fewer runs, mixed judges, or a sub-threshold score all fail)")
@@ -1150,6 +1208,10 @@ func main() {
 	}
 	if *releaseGate {
 		runReleaseGate(dsn, *goldenVersion, *gateK, evalThreshold())
+		return
+	}
+	if *judgeAudit {
+		runJudgeAudit(cfg.OllamaURL, *judgeModelFlag, *judge2Model, *auditFile)
 		return
 	}
 	if *scheduleEvals != "" {

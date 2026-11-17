@@ -96,6 +96,10 @@ type Server struct {
 	SensitiveKeywords []string
 	RequestTimeout    time.Duration
 	mux               *http.ServeMux
+	// allowed maps a known path to its one method, so an unmatched request can tell
+	// "no such route" (404) from "right route, wrong verb" (405 with Allow) without
+	// asking net/http, whose 404 and 405 bodies are plain text.
+	allowed map[string]string
 	// missingLogged remembers which models already got a "not pulled" log line
 	// so every probe tick does not re-log them; a model is forgotten when it
 	// reappears on disk.
@@ -119,12 +123,38 @@ func NewServer(fastModel, qualityModel string, local Backend) *Server {
 		{Tier: "quality", Model: qualityModel, Backend: local},
 	}
 	s.mux = http.NewServeMux()
-	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChat)
-	s.mux.HandleFunc("POST /v1/messages", s.handleMessages)
-	s.mux.HandleFunc("GET /v1/models", s.handleModels)
-	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+	routes := []struct {
+		method, path string
+		handle       http.HandlerFunc
+	}{
+		{http.MethodPost, "/v1/chat/completions", s.handleChat},
+		{http.MethodPost, "/v1/messages", s.handleMessages},
+		{http.MethodGet, "/v1/models", s.handleModels},
+		{http.MethodGet, "/health", s.handleHealth},
+		{http.MethodGet, "/metrics", s.handleMetrics},
+	}
+	s.allowed = make(map[string]string, len(routes))
+	for _, rt := range routes {
+		s.mux.HandleFunc(rt.method+" "+rt.path, rt.handle)
+		s.allowed[rt.path] = rt.method
+	}
+	// Unmatched paths used to fall through to net/http's plain-text 404 - the only
+	// response the gateway produced that was not the JSON error envelope. A client
+	// parsing every response as JSON got a parse error instead of a code to branch on.
+	s.mux.HandleFunc("/", s.unknownRoute)
 	return s
+}
+
+// unknownRoute answers what the mux did not match: 405 with Allow when the path exists
+// but the method does not, 404 otherwise, both in the one error shape.
+func (s *Server) unknownRoute(w http.ResponseWriter, r *http.Request) {
+	if allow, ok := s.allowed[r.URL.Path]; ok {
+		w.Header().Set("Allow", allow)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed",
+			r.Method+" is not allowed on "+r.URL.Path+"; use "+allow, "")
+		return
+	}
+	writeError(w, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, "")
 }
 
 // AddModel registers another model (typically a cloud fallback with Tier "cloud").

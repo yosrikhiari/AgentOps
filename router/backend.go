@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 )
@@ -55,16 +56,20 @@ type HealthProber struct {
 	mu       sync.RWMutex
 	backends []Backend
 	up       map[string]bool
-	lastErr  map[string]string
-	pulled   map[string]map[string]bool
-	metrics  *Metrics
+	// probed records backends that have answered at least once, so the first probe
+	// reports the state instead of staying silent about a backend that was down from
+	// boot - the case that matters most, because every request silently fails over.
+	probed  map[string]bool
+	lastErr map[string]string
+	pulled  map[string]map[string]bool
+	metrics *Metrics
 	// AfterProbe, when set, runs at the end of every ProbeOnce (boot included).
 	// main.go uses it to log served-but-missing models.
 	AfterProbe func(context.Context)
 }
 
 func NewHealthProber(m *Metrics, backends ...Backend) *HealthProber {
-	p := &HealthProber{backends: backends, up: map[string]bool{}, lastErr: map[string]string{}, metrics: m}
+	p := &HealthProber{backends: backends, up: map[string]bool{}, probed: map[string]bool{}, lastErr: map[string]string{}, metrics: m}
 	for _, b := range backends {
 		p.up[b.Name()] = false
 	}
@@ -78,13 +83,28 @@ func (p *HealthProber) ProbeOnce(ctx context.Context) {
 		err := b.Health(cctx)
 		cancel()
 		p.mu.Lock()
-		p.up[b.Name()] = err == nil
+		up, wasProbed := err == nil, p.probed[b.Name()]
+		changed := !wasProbed || p.up[b.Name()] != up
+		p.up[b.Name()] = up
+		p.probed[b.Name()] = true
 		if err != nil {
 			p.lastErr[b.Name()] = err.Error()
 		} else {
 			delete(p.lastErr, b.Name())
 		}
+		detail := p.lastErr[b.Name()]
 		p.mu.Unlock()
+		// Say it once: a backend that is down from boot is the case that hides a
+		// silent failover, and a transition is when an operator can still act.
+		if changed {
+			if up {
+				log.Printf("backend %s is reachable", b.Name())
+			} else if isLocal(b) {
+				log.Printf("backend %s is unreachable (%s) - local requests will fail over to a cloud backend until it returns", b.Name(), detail)
+			} else {
+				log.Printf("backend %s is unreachable (%s)", b.Name(), detail)
+			}
+		}
 		if p.metrics != nil {
 			p.metrics.SetBackendUp(b.Name(), err == nil)
 		}

@@ -26,6 +26,10 @@ Send it as `Authorization: Bearer ak_…`. With `REQUIRE_API_KEY=true` anonymous
 | 403 | `api_key_disabled` | key disabled |
 | 403 | `budget_exceeded` | lifetime `tokens_used ≥ budget_tokens` |
 | 429 | `rate_limited` (+ `Retry-After`) | more than `rpm` requests in the current minute |
+| 404 | `not_found` | no route for that method+path (unknown API path or a typo) |
+| 405 | `method_not_allowed` (+ `Allow`) | the path exists but not with that verb, e.g. `POST /v1/models` |
+
+Every response with a non-2xx status uses this envelope, including unknown paths and wrong methods — a client can parse the body unconditionally.
 
 Per-key counters: `router_key_requests_total{key}` and `router_key_rejected_total{key}` on `/metrics`.
 

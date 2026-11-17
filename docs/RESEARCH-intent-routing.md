@@ -1,7 +1,9 @@
 # Intent-aware routing: what the literature says, and what to build here
 
 *Research pass, 2026-11-17. Every claim below has a source in §8; the code claims are from this repo.
-Companion to `docs/MARKET.md` §9 (Tier 0) and the plan in `docs/plans/`.*
+Companion to `docs/MARKET.md` §9 (Tier 0) and the plan in `docs/plans/`.
+The follow-up pass — what to build next after the end-to-end test — is
+`docs/RESEARCH-2026-11-next-steps.md`; it corrects §0's "no paper models that cost" claim (see §8.3).*
 
 ## 0. The short version
 
@@ -26,9 +28,11 @@ What is worth building here, in order:
    training set; that is exactly the TRACER setup (production traces → surrogate → parity gate).
 
 Our differentiator is not a better classifier. It is that we know **which model is resident in VRAM, how long
-a swap costs, and what the GPU did during the last eval run** — no paper in this space models that cost. On a
-4 GB card, "the model that would answer this best" and "the model that is already loaded and will not thrash"
-are different answers, and the second one is often the correct product decision.
+a swap costs, and what the GPU did during the last eval run**. The serving literature models the same
+trade-off for *replicas* (prefix/KV-cache-aware routing, §8.3), but not for choosing between models on
+one consumer card with the eviction counted in wall-clock seconds. On a 4 GB card, "the model that would
+answer this best" and "the model that is already loaded and will not thrash" are different answers, and
+the second one is often the correct product decision.
 
 ## 1. The four paradigms (and where we sit)
 
@@ -101,10 +105,13 @@ choose m ∈ candidates(query)
                resident model preferred when quality ties within ε
 ```
 
-`swap_cost(m)` is ours alone: from `gpu.Snapshot().Resident` and the `gpu_samples` history we know whether the
-model is loaded, how much VRAM it holds, and what a swap did to the last eval run. A 7B that must evict the
-resident 3B is not "cheaper at the margin" on a 4 GB card; it costs tens of seconds and makes the current
-conversation slower. Papers model token cost; they do not model eviction.
+`swap_cost(m)` is ours alone in *model choice*: from `gpu.Snapshot().Resident` and the `gpu_samples`
+history we know whether the model is loaded, how much VRAM it holds, and what a swap did to the last
+eval run. The serving literature has the same trade-off for replicas — cache-aware routing picks the
+replica that already holds the prefix — and it loses to a plain load balancer when reuse is low, which
+is the ablation this term needs. A 7B that must evict the resident 3B is not "cheaper at the margin" on
+a 4 GB card; it costs tens of seconds and makes the current conversation slower. Papers model token
+cost and prefix reuse; none models model eviction in seconds on one card.
 
 **Intent enters as a prior, not as the decision.** For each intent label we keep an estimated quality vector
 over models (from eval outcomes, then from shadow traffic), and the decision is the argmax above. When the

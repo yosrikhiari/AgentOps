@@ -394,10 +394,25 @@
 
       <section class="ds-section" id="cockpit">
         <h2>Cockpit</h2>
-        <p class="ds-lead">One Track N page merging send and sight — no new component classes. The rail appends redacted spans from GET /v1/events as they land; sends pin amber. (#/try and #/live retired into it.)</p>
+        <p class="ds-lead">One Track N page merging send and sight: a conversation, not a form. The transcript is one scrollable column of message blocks; the composer grows with the text and sends on Enter. The rail appends redacted spans from <span class="ds-inline">GET /v1/events</span> as they land; your latest send pins amber. (#/try and #/live retired into it.)</p>
+        <div class="ds-frame"><div class="ds-frame-label">Chat — user messages right-aligned on surface-raised, assistant blocks left with an amber border on the latest, metadata (model, backend, reason, tokens, trace) under every answer. Used in pageCockpit()</div>
+          <div class="tower-chat">
+            <div class="tower-chat-log" style="max-height:none">
+              <div class="tower-chat-msg user"><div class="tower-chat-role"><span>you</span><span>11:56:31</span></div><div class="tower-chat-body">Clause 7.2 says the supplier may suspend delivery without notice. Is that enforceable?</div><div class="tower-chat-meta"><a class="tower-link tower-mono" href="#">742966fc</a></div></div>
+              <div class="tower-chat-msg assistant latest"><div class="tower-chat-role"><span>assistant</span><span>11:57:06</span></div><div class="tower-chat-body">It is likely enforceable only if the contract ties suspension to a defined breach or event. An unconditional right can be read down as an abuse of right, and a notice requirement is usually implied for good faith.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:3b-instruct</span><span class="tower-chip">ollama</span><span class="tower-chip">long_prompt</span><span>134 tok</span><a class="tower-link tower-mono" href="#">3c795f68</a></div></div>
+              <div class="tower-chat-msg assistant pending"><div class="tower-chat-role"><span class="tower-live-dot"></span><span>thinking</span></div><div class="tower-chat-body">Waiting for the model — the first answer loads it into VRAM.</div></div>
+            </div>
+            <div class="tower-chat-composer">
+              <textarea class="tower-chat-input" rows="2" placeholder="Ask a question, or paste the clause you are working on…"></textarea>
+              <div class="tower-chat-actions"><span class="tower-chat-hint">4 msgs · ~124 tokens</span><div class="tower-form-row"><button class="tower-btn secondary">Run as workflow</button><button class="tower-btn primary">Send</button></div></div>
+            </div>
+          </div>
+        </div>
         <table class="ds-spec">
           <tr><th>page</th><th>built from</th><th>used in</th></tr>
-          <tr><td>#/cockpit</td><td>panel + tower-form-row tower-live-sendcol (stacked full-width input) + transcript + tower-grid-cockpit 3-column shell with tower-conv sidebar + shared rail (tower-ticket pinned tower-live-yours)</td><td>pageCockpit() in console/static/app.js; client-held messages[] capped at 4000 est. tokens with truncated chip; threads via GET/POST /v1/conversations (+messages, DELETE) with auto-title from first user message; own trace pinned via mountRail pin hook; Run-as-workflow posts to POST /v1/workflows</td></tr>
+          <tr><td>#/cockpit</td><td>panel + tower-chat (log, message blocks, composer) + tower-grid-cockpit shell with tower-conv sidebar + shared rail (tower-ticket pinned tower-live-yours)</td><td>pageCockpit() in console/static/app.js; client-held messages[] capped at 4000 est. tokens (counts in tower-chat-hint); threads via GET/POST /v1/conversations (+messages, DELETE) with auto-title from the first user message; own trace pinned via mountRail pin hook; Run-as-workflow posts to POST /v1/workflows</td></tr>
+          <tr><td>tower-chat-msg</td><td>user = right-aligned on surface-raised; assistant = left on ground; latest = amber border; pending = dashed with the live dot and the model-loading sentence</td><td>pageCockpit() · every turn</td></tr>
+          <tr><td>tower-chat-input</td><td>grows to 160 px, Enter sends, Shift+Enter newlines; disabled while a send is in flight; counts sit left of the buttons</td><td>pageCockpit() · composer</td></tr>
         </table>
       </section>
 

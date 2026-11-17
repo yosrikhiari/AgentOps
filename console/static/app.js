@@ -769,109 +769,164 @@
   // capped by tokens (ADR-0010); the gateway stays stateless. Own sends pin
   // amber via their trace_id. "Run as workflow" posts the last input to the
   // existing toy runner — no backend change.
+  // Cockpit: one conversation surface. The gateway stays stateless, so history
+  // is client-held and resent each turn (ADR-0010), trimmed by a token budget.
+  // "Run as workflow" posts the last input to the toy runner; both paths pin
+  // their trace amber on the rail.
   const coHistBudget = 4000;
   function coEstTokens(s) { return Math.ceil(String(s).length / 4); }
   function coHistTokens(ms) { return ms.reduce((n, m) => n + coEstTokens(m.content), 0); }
-  let coHist = [];        // [{role, content}] oldest-first
+  let coHist = [];        // [{role, content, model, backend, reason, trace_id, tokens, at}]
   let coDropped = 0;      // messages trimmed for the token budget
-  let coPromise = null;
+  let coPromise = false;  // a send is in flight
   let coPin = null;       // trace_id of the latest own send
   let coConvId = null;    // active stored thread, or null for a fresh one
+  let coConvTitle = '';   // its title, so the panel head can say which thread
   let coLastInput = '';
-  let coLastAnswer = null;
-  let coLastErr = '';
+  let coWorkflow = null;  // id of a workflow started from this input
   async function pageCockpit(signal) {
-    const input = h('input', { class: 'tower-input', placeholder: 'message the router — history resends each turn' });
+    const ta = h('textarea', {
+      class: 'tower-chat-input', rows: '2', 'aria-label': 'Message the router',
+      placeholder: 'Ask a question, or paste the clause you are working on…',
+    });
     const sendBtn = h('button', { class: 'tower-btn primary' }, 'Send');
     const wfBtn = h('button', { class: 'tower-btn secondary' }, 'Run as workflow');
-    const histNote = h('div', { class: 'tower-mono tower-muted', style: 'font-size:11px' }, '');
-    const transcript = h('div', null);
-    const answer = h('div', null, h('div', { class: 'tower-empty' }, 'Send a message to start a conversation.'));
+    const hint = h('div', { class: 'tower-chat-hint' }, '');
+    const errSlot = h('div', null);
+    const log = h('div', { class: 'tower-chat-log', 'aria-live': 'polite' });
+    const sub = h('div', { class: 'tower-panel-sub' }, '');
+    const convList = h('div', { class: 'tower-conv' }, skeleton(2));
+    const newBtn = h('button', { class: 'tower-btn secondary' }, '+ New thread');
+    const listBody = h('div', null, skeleton(5));
     const dot = h('span', { class: 'tower-live-dot' });
     const label = h('span', null, '');
-    const counts = h('div', { class: 'tower-mono tower-muted', style: 'margin-bottom:10px;display:flex;gap:8px;align-items:center' }, dot, label);
-    const listBody = h('div', null, skeleton(5));
-    const newBtn = h('button', { class: 'tower-btn secondary' }, '+ New thread');
-    const convList = h('div', { class: 'tower-conv' }, skeleton(2));
-    const side = h('div', { style: 'position:sticky;top:0;align-self:start' },
-      panel('Threads', 'Stored server-side · 90-day retention.',
-        h('div', null, newBtn, h('div', { style: 'margin-top:8px' }, convList))));
-    const left = h('div', { style: 'position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:16px' },
-      panel('Send', 'Client-held history resends every turn; the gateway stays stateless.',
-        h('div', null,
-          h('div', { class: 'tower-form-row tower-live-sendcol' }, input,
-            h('div', { class: 'tower-form-row' }, sendBtn, wfBtn)),
-          histNote)),
-      panel('Answer', null, h('div', null, transcript, answer)));
-    content.replaceChildren(h('div', { class: 'tower-grid-cockpit' }, side, left,
-      panel('Rail', 'Your ticket pins amber; everything lands live.',
-        h('div', null, counts, listBody))));
-    function renderTranscript() {
-      transcript.replaceChildren(...coHist.slice(-6).map(m =>
-        h('div', { class: 'tower-mono tower-muted', style: 'font-size:11.5px;margin-bottom:4px' },
-          (m.role === 'user' ? 'you: ' : 'ai: ') + (m.content.length > 140 ? m.content.slice(0, 140) + '…' : m.content))));
-      const n = coHistTokens(coHist);
-      histNote.textContent = coHist.length ? ('history ' + coHist.length + ' msgs · ~' + n + ' tokens' + (coDropped ? ' · ' + coDropped + ' dropped' : '')) : '';
+    const chat = panel('Conversation', sub,
+      h('div', { class: 'tower-chat' }, log, errSlot,
+        h('div', { class: 'tower-chat-composer' }, ta,
+          h('div', { class: 'tower-chat-actions' }, hint,
+            h('div', { class: 'tower-form-row' }, wfBtn, sendBtn)))));
+    const side = panel('Threads', 'Stored server-side · 90-day retention',
+      h('div', null, newBtn, h('div', { style: 'margin-top:10px' }, convList)));
+    content.replaceChildren(h('div', { class: 'tower-grid-cockpit' }, side, chat,
+      panel('Rail', 'Your trace pins amber; everything lands live.',
+        h('div', null, h('div', { class: 'tower-mono tower-muted', style: 'margin-bottom:10px;display:flex;gap:8px;align-items:center' }, dot, label), listBody))));
+
+    function autosize() {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(160, Math.max(46, ta.scrollHeight)) + 'px';
     }
-    function renderAnswer(r) {
-      answer.replaceChildren(
-        h('div', null, r.text),
-        h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap' },
-          chip(r.model), chip(r.reason), chip(r.backend),
-          h('a', { class: 'tower-link tower-mono', href: '#/traces/' + r.trace_id }, r.trace_id)));
+    function emptyState() {
+      const prompts = [
+        'Summarise what this gateway does in three bullets',
+        'Which model would handle a long contract clause, and why?',
+        'Draft a release checklist for this week',
+      ];
+      return h('div', { class: 'tower-chat-empty' },
+        h('div', { class: 'tower-chat-empty-title' }, 'Ask the models on this box'),
+        h('div', null, 'History is resent each turn; prompts are never stored by the gateway.'),
+        h('div', { class: 'tower-chat-suggest' }, prompts.map(p => {
+          const b = h('button', { class: 'tower-chip tower-chip-btn' }, p);
+          b.addEventListener('click', () => { ta.value = p; autosize(); ta.focus(); });
+          return b;
+        })));
+    }
+    function meta(m) {
+      const bits = [];
+      if (m.model) bits.push(chip(m.model));
+      if (m.backend) bits.push(chip(m.backend));
+      if (m.reason) bits.push(chip(m.reason));
+      if (m.tokens) bits.push(h('span', null, m.tokens + ' tok'));
+      if (m.trace_id) bits.push(h('a', { class: 'tower-link tower-mono', href: '#/traces/' + m.trace_id }, fmt.short(m.trace_id)));
+      return bits.length ? h('div', { class: 'tower-chat-meta' }, ...bits) : null;
+    }
+    function msgEl(m, last) {
+      const mine = m.role === 'user';
+      return h('div', { class: 'tower-chat-msg ' + (mine ? 'user' : 'assistant') + (last && !mine ? ' latest' : '') },
+        h('div', { class: 'tower-chat-role' }, h('span', null, mine ? 'you' : 'assistant'),
+          m.at ? h('span', null, fmt.time(m.at)) : null),
+        h('div', { class: 'tower-chat-body' }, m.content),
+        meta(m));
+    }
+    function pendingEl() {
+      return h('div', { class: 'tower-chat-msg assistant pending' },
+        h('div', { class: 'tower-chat-role' }, dot, h('span', null, 'thinking')),
+        h('div', { class: 'tower-chat-body' }, 'Waiting for the model — the first answer loads it into VRAM.'));
+    }
+    function renderChat() {
+      const nodes = coHist.length ? coHist.map((m, i) => msgEl(m, i === coHist.length - 1)) : [emptyState()];
+      if (coPromise) nodes.push(pendingEl());
+      if (coWorkflow) nodes.push(h('div', { class: 'tower-chat-msg assistant' },
+        h('div', { class: 'tower-chat-role' }, h('span', null, 'workflow')),
+        h('div', { class: 'tower-chat-body' }, 'Started on the same input — it runs as a durable ticket.'),
+        h('div', { class: 'tower-chat-meta' }, chip('workflow'),
+          h('a', { class: 'tower-link tower-mono', href: '#/traces/' + coWorkflow }, coWorkflow))));
+      log.replaceChildren(...nodes);
+      log.scrollTop = log.scrollHeight;
+      const n = coHistTokens(coHist);
+      hint.textContent = coHist.length
+        ? coHist.length + ' msgs · ~' + n + ' tokens' + (coDropped ? ' · ' + coDropped + ' dropped' : '')
+        : 'Enter sends · Shift+Enter newline';
+      sub.textContent = (coConvId ? (coConvTitle || 'thread') + ' · saved' : 'new conversation · not saved yet');
+    }
+    function setBusy(busy) {
+      sendBtn.disabled = busy; wfBtn.disabled = busy; ta.disabled = busy;
+      sendBtn.textContent = busy ? 'Sending…' : 'Send';
     }
     async function send() {
-      const text = input.value.trim();
+      const text = ta.value.trim();
       if (!text || coPromise) return;
-      let msgs = coHist.concat([{ role: 'user', content: text }]);
-      while (msgs.length > 1 && coHistTokens(msgs) > coHistBudget) { msgs.shift(); coDropped++; }
-      coErr(); sendBtn.disabled = true; wfBtn.disabled = true;
-      answer.replaceChildren(skeleton(2));
-      input.value = '';
+      ta.value = ''; autosize(); errSlot.replaceChildren();
+      const mine = { role: 'user', content: text, at: new Date().toISOString() };
+      coHist.push(mine);
+      const wire = coHist.map(m => ({ role: m.role, content: m.content }));
+      coDropped = 0;
+      while (wire.length > 1 && coHistTokens(wire) > coHistBudget) { wire.shift(); coDropped++; }
+      coLastInput = text; coPromise = true;
+      setBusy(true); renderChat();
       const ctl = new AbortController();
       let convId = coConvId;
       if (!convId) {
         // Storage is best-effort: a thread that cannot be stored still chats.
-        try {
-          convId = (await api('/v1/conversations', { method: 'POST', body: JSON.stringify({ model: '' }) }, ctl.signal)).id;
-        } catch (e) { convId = null; }
+        try { convId = (await api('/v1/conversations', { method: 'POST', body: JSON.stringify({ model: '' }) }, ctl.signal)).id; }
+        catch (e) { convId = null; }
       }
-      const p = coPromise = (async () => {
-        try {
-          const r = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: msgs }) }, ctl.signal);
-          coHist = msgs.concat([{ role: 'assistant', content: r.text }]);
-          coPin = r.trace_id;
-          coLastInput = text;
-          coLastAnswer = r; coLastErr = '';
-          if (convId) {
-            coConvId = convId;
-            recordTurn(convId, { role: 'user', content: text, trace_id: r.trace_id }).then(() =>
-              recordTurn(convId, {
-                role: 'assistant', content: r.text, model: r.model, trace_id: r.trace_id,
-                prompt_tokens: r.usage ? r.usage.prompt_tokens : 0,
-                completion_tokens: r.usage ? r.usage.completion_tokens : 0,
-              }).then(() => { if (convList.isConnected) loadConvs(); }));
-          }
-        } catch (e) { if (e.name !== 'AbortError') { coLastAnswer = null; coLastErr = e.message; } }
-        finally { if (coPromise === p) coPromise = null; }
-      })();
-      await p;
-      // The page may be gone (user navigated away): history waits on revisit.
-      if (!answer.isConnected) return;
-      if (coLastAnswer) renderAnswer(coLastAnswer);
-      else answer.replaceChildren(errorBox('Send failed: ' + coLastErr, send));
-      renderTranscript();
-      sendBtn.disabled = false; wfBtn.disabled = false;
+      try {
+        const r = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: wire }) }, ctl.signal);
+        coHist.push({
+          role: 'assistant', content: r.text, model: r.model, backend: r.backend, reason: r.reason,
+          trace_id: r.trace_id, tokens: r.usage ? r.usage.total_tokens : 0, at: new Date().toISOString(),
+        });
+        coPin = r.trace_id;
+        if (convId) {
+          coConvId = convId;
+          if (!coConvTitle) coConvTitle = text.slice(0, 48);
+          recordTurn(convId, { role: 'user', content: text, trace_id: r.trace_id }).then(() =>
+            recordTurn(convId, {
+              role: 'assistant', content: r.text, model: r.model, trace_id: r.trace_id,
+              prompt_tokens: r.usage ? r.usage.prompt_tokens : 0,
+              completion_tokens: r.usage ? r.usage.completion_tokens : 0,
+            }).then(() => { if (convList.isConnected) loadConvs(); }));
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          // Give the message back: a failed send must not vanish, and the retry
+          // must not duplicate it in the transcript.
+          if (coHist[coHist.length - 1] === mine) coHist.pop();
+          ta.value = text; autosize();
+          errSlot.replaceChildren(errorBox('Send failed: ' + e.message, send));
+        }
+      } finally {
+        coPromise = false;
+        if (log.isConnected) { setBusy(false); renderChat(); }
+      }
     }
-    function coErr() { coLastAnswer = null; coLastErr = ''; }
     async function runWorkflow() {
       if (!coLastInput || coPromise) return;
       wfBtn.disabled = true;
       try {
         const r = await api('/v1/workflows', { method: 'POST', body: JSON.stringify({ input: coLastInput }) });
         toast('Workflow ' + r.id + ' started');
-        answer.append(h('div', { style: 'margin-top:8px' }, chip('workflow'), ' ',
-          h('a', { class: 'tower-link tower-mono', href: '#/traces/' + r.id }, r.id)));
+        coWorkflow = r.id; renderChat();
       } catch (e) { toast(e.message, true); }
       if (wfBtn.isConnected) wfBtn.disabled = false;
     }
@@ -891,36 +946,31 @@
         const el = h('div', { class: 'tower-conv-item' + (c.id === coConvId ? ' active' : '') },
           h('div', { class: 'tower-conv-title' }, c.title || '(untitled)'),
           h('div', { class: 'tower-conv-meta' }, chip(c.messages + ' msgs'), h('span', null, fmt.date(c.updated_at)), del));
-        el.addEventListener('click', () => openConv(c.id));
+        el.addEventListener('click', () => openConv(c.id, c.title));
         return el;
       }) : [h('div', { class: 'tower-empty' }, 'No threads yet — send one.')]));
     }
-    async function openConv(id) {
+    async function openConv(id, title) {
       if (coPromise) return;
       let data;
       try { data = await api('/v1/conversations/' + id + '/messages?limit=500'); }
       catch (e) { toast(e.message, true); return; }
-      coConvId = id;
-      coHist = (data.messages || []).map(m => ({ role: m.role, content: m.content }));
-      coDropped = 0;
+      coConvId = id; coConvTitle = title || ''; coDropped = 0; coWorkflow = null;
+      const msgs = data.messages || [];
+      coHist = msgs.map(m => ({
+        role: m.role, content: m.content, model: m.model, trace_id: m.trace_id,
+        tokens: (m.prompt_tokens || 0) + (m.completion_tokens || 0), at: m.created_at,
+      }));
       const users = coHist.filter(m => m.role === 'user');
       coLastInput = users.length ? users[users.length - 1].content : '';
-      const traces = (data.messages || []).map(m => m.trace_id).filter(t => t);
+      const traces = msgs.map(m => m.trace_id).filter(t => t);
       coPin = traces.length ? traces[traces.length - 1] : null;
-      coLastAnswer = null;
-      answer.replaceChildren(h('div', { class: 'tower-empty' }, 'Thread loaded — continue below.'));
-      renderTranscript();
-      loadConvs();
-      input.focus();
+      errSlot.replaceChildren(); setBusy(false); renderChat(); loadConvs(); ta.focus();
     }
     function newThread() {
       if (coPromise) return;
-      coConvId = null; coHist = []; coDropped = 0; coPin = null;
-      coLastInput = ''; coLastAnswer = null;
-      answer.replaceChildren(h('div', { class: 'tower-empty' }, 'Send a message to start a conversation.'));
-      renderTranscript();
-      loadConvs();
-      input.focus();
+      coConvId = null; coConvTitle = ''; coHist = []; coDropped = 0; coPin = null; coLastInput = ''; coWorkflow = null;
+      errSlot.replaceChildren(); setBusy(false); renderChat(); loadConvs(); ta.focus();
     }
     async function deleteConv(id) {
       try { await api('/v1/conversations/' + id, { method: 'DELETE' }); }
@@ -929,18 +979,20 @@
       if (id === coConvId) newThread();
       else loadConvs();
     }
+    ta.addEventListener('input', autosize);
+    ta.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+    sendBtn.addEventListener('click', send);
+    wfBtn.addEventListener('click', runWorkflow);
+    newBtn.addEventListener('click', newThread);
     const feed = () => { railCleanup = mountRail(listBody,
       (nt, ns) => { label.textContent = nt + ' traces · ' + ns + ' spans on rail'; },
       () => coPin,
       msg => listBody.replaceChildren(errorBox(msg, feed))); };
     feed();
     loadConvs();
-    renderTranscript();
-    newBtn.addEventListener('click', newThread);
-    if (coLastAnswer && answer.isConnected) renderAnswer(coLastAnswer);
-    sendBtn.addEventListener('click', send);
-    wfBtn.addEventListener('click', runWorkflow);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+    renderChat();
   }
 
   // ---------- router ----------

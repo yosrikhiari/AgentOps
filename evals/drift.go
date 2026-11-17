@@ -38,33 +38,145 @@ type DriftReport struct {
 	WorstCases    []WorstCase `json:"worst_cases"`
 }
 
-func RecordRun(ctx context.Context, exec Execer, qr Querier, goldenVersion, judgeModel, model, judgePrompt string, score float64, startedAt time.Time, pairs []PairResult) (int, error) {
+// RunDB is the slice of the store a run needs: it writes pairs as they are judged and
+// reads back what an interrupted attempt already stored.
+type RunDB interface {
+	Execer
+	Querier
+	Queryer
+}
+
+// StartOrResumeRun opens a run and returns it with the pairs already stored. An unfinished
+// run for the same golden set, judge model and prompt version is resumed: on a 4 GB card a
+// 72-pair suite can outlive the judge process, and re-judging 66 pairs to reach the last
+// six wastes the very minutes that keep failing.
+type StartedRun struct {
+	ID      int
+	Resumed bool
+	Pairs   []StoredPair
+}
+
+// StoredPair is a pair read back from an earlier attempt. Only the fields the suite
+// summary needs are kept; the claim text and justifications are already on disk.
+type StoredPair struct {
+	Question      string
+	Faithfulness  float64
+	Precision     float64
+	Recall        float64
+	RetrievalMiss bool
+	Claims        int
+}
+
+// Unsolvable is the stored-pair form of Unsolvable(PairResult), same rule.
+func (p StoredPair) Unsolvable() bool {
+	return p.RetrievalMiss || (p.Claims > 0 && p.Faithfulness == 0)
+}
+
+func StartOrResumeRun(ctx context.Context, db RunDB, goldenVersion, judgeModel, model, judgePrompt string, startedAt time.Time) (StartedRun, error) {
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
+	rows, err := db.Query(ctx,
+		`SELECT id FROM eval_runs
+		 WHERE golden_version = $1 AND judge_model = $2 AND model = $3 AND judge_prompt = $4
+		   AND status <> 'complete'
+		 ORDER BY id DESC LIMIT 1`, goldenVersion, judgeModel, model, judgePrompt)
+	if err != nil {
+		return StartedRun{}, err
+	}
 	var id int
-	row := qr.QueryRow(ctx,
-		`INSERT INTO eval_runs (golden_version, judge_model, model, judge_prompt, score, started_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		goldenVersion, judgeModel, model, judgePrompt, score, startedAt)
+	if rows.Next() {
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return StartedRun{}, err
+		}
+	}
+	rows.Close()
+	if id != 0 {
+		pairs, err := LoadRunPairs(ctx, db, id)
+		if err != nil {
+			return StartedRun{}, err
+		}
+		return StartedRun{ID: id, Resumed: true, Pairs: pairs}, nil
+	}
+	row := db.QueryRow(ctx,
+		`INSERT INTO eval_runs (golden_version, judge_model, model, judge_prompt, score, started_at, status)
+		 VALUES ($1, $2, $3, $4, 0, $5, 'running') RETURNING id`,
+		goldenVersion, judgeModel, model, judgePrompt, startedAt)
 	if err := row.Scan(&id); err != nil {
+		return StartedRun{}, err
+	}
+	return StartedRun{ID: id}, nil
+}
+
+// LoadRunPairs reads what an earlier attempt already judged.
+func LoadRunPairs(ctx context.Context, db Queryer, runID int) ([]StoredPair, error) {
+	rows, err := db.Query(ctx,
+		`SELECT question, faithfulness, precision, recall, retrieval_miss, claims
+		 FROM eval_pair_scores WHERE run_id = $1 ORDER BY question`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoredPair
+	for rows.Next() {
+		var p StoredPair
+		var f *float64
+		if err := rows.Scan(&p.Question, &f, &p.Precision, &p.Recall, &p.RetrievalMiss, &p.Claims); err != nil {
+			return nil, err
+		}
+		if f != nil {
+			p.Faithfulness = finiteOrZero(*f)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AddPair stores one judged pair immediately. A crash after this call keeps the evidence.
+func AddPair(ctx context.Context, exec Execer, runID int, p PairResult) error {
+	q := p.Question
+	if len([]rune(q)) > 500 {
+		q = string([]rune(q)[:500])
+	}
+	var f any
+	if !p.RetrievalMiss {
+		f = p.Faithfulness // miss → NULL, never 0.0
+	}
+	_, err := exec.Exec(ctx,
+		`INSERT INTO eval_pair_scores (run_id, question, faithfulness, precision, recall, retrieval_miss, latency_s, tokens, claims) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (run_id, question) DO UPDATE SET faithfulness = EXCLUDED.faithfulness, precision = EXCLUDED.precision, recall = EXCLUDED.recall, retrieval_miss = EXCLUDED.retrieval_miss, latency_s = EXCLUDED.latency_s, tokens = EXCLUDED.tokens, claims = EXCLUDED.claims`,
+		runID, q, f, p.Precision, p.Recall, p.RetrievalMiss, p.LatencyS, p.Tokens, len(p.Claims))
+	return err
+}
+
+// FinishRun seals the run: the score becomes readable and drift and the gate may use it.
+func FinishRun(ctx context.Context, exec Execer, runID int, score float64) error {
+	_, err := exec.Exec(ctx,
+		`UPDATE eval_runs SET score = $2, status = 'complete', finished_at = now() WHERE id = $1`, runID, score)
+	return err
+}
+
+// FailRun records why a run stopped. It stays resumable: 'failed' is not 'complete'.
+func FailRun(ctx context.Context, exec Execer, runID int) error {
+	_, err := exec.Exec(ctx,
+		`UPDATE eval_runs SET status = 'failed', finished_at = now() WHERE id = $1 AND status <> 'complete'`, runID)
+	return err
+}
+
+// RecordRun writes a whole run in one go. Kept for tests and for any caller that already
+// has every pair in hand.
+func RecordRun(ctx context.Context, db RunDB, goldenVersion, judgeModel, model, judgePrompt string, score float64, startedAt time.Time, pairs []PairResult) (int, error) {
+	run, err := StartOrResumeRun(ctx, db, goldenVersion, judgeModel, model, judgePrompt, startedAt)
+	if err != nil {
 		return 0, err
 	}
 	for _, p := range pairs {
-		q := p.Question
-		if len([]rune(q)) > 500 {
-			q = string([]rune(q)[:500])
-		}
-		var f any
-		if !p.RetrievalMiss {
-			f = p.Faithfulness // miss → NULL, never 0.0
-		}
-		if _, err := exec.Exec(ctx,
-			`INSERT INTO eval_pair_scores (run_id, question, faithfulness, precision, recall, retrieval_miss, latency_s, tokens) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (run_id, question) DO UPDATE SET faithfulness = EXCLUDED.faithfulness, precision = EXCLUDED.precision, recall = EXCLUDED.recall, retrieval_miss = EXCLUDED.retrieval_miss, latency_s = EXCLUDED.latency_s, tokens = EXCLUDED.tokens`,
-			id, q, f, p.Precision, p.Recall, p.RetrievalMiss, p.LatencyS, p.Tokens); err != nil {
-			return id, err
+		if err := AddPair(ctx, db, run.ID, p); err != nil {
+			return run.ID, err
 		}
 	}
-	return id, nil
+	return run.ID, FinishRun(ctx, db, run.ID, score)
 }
 
 type runRow struct {
@@ -80,7 +192,7 @@ func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, thres
 	rep := DriftReport{GoldenVersion: goldenVersion, Threshold: threshold, WorstCases: []WorstCase{}}
 	rows, err := db.Query(ctx,
 		`SELECT id, golden_version, judge_model, judge_prompt, score FROM eval_runs
-		 WHERE golden_version = $1
+		 WHERE golden_version = $1 AND status = 'complete'
 		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
 		 ORDER BY created_at DESC, id DESC LIMIT 2`,
 		goldenVersion)

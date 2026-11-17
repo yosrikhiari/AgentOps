@@ -570,8 +570,8 @@ func TestSQLStoreEvalRunsCarriesGPUWindow(t *testing.T) {
 	start := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	end := start.Add(8 * time.Minute)
 	q := fakeQueryer{rows: [][]any{
-		{1, "v3", "qwen3:8b", "faithfulness-v2", "", 0.94, start, end, 72, 41, 63.0, 88.0, int64(2 << 30), int64(4 << 30), int64(3), 84.0, 4},
-		{2, "v3", "qwen3:8b", "", "", 0.95, start, end, 0, 0, 0.0, 0.0, int64(0), int64(0), int64(0), 0.0, 0},
+		{1, "v3", "qwen3:8b", "faithfulness-v2", "", 0.94, start, end, "complete", 72, 41, 63.0, 88.0, int64(2 << 30), int64(4 << 30), int64(3), 84.0, 4},
+		{2, "v3", "qwen3:8b", "", "", 0.95, start, end, "failed", 0, 0, 0.0, 0.0, int64(0), int64(0), int64(0), 0.0, 0},
 	}}
 	got, err := SQLStore{Query: q}.EvalRuns(context.Background(), "v3", 10)
 	if err != nil {
@@ -595,6 +595,9 @@ func TestSQLStoreEvalRunsCarriesGPUWindow(t *testing.T) {
 	}
 	if got[0].JudgePrompt != "faithfulness-v2" || got[1].JudgePrompt != "" {
 		t.Fatalf("judge prompt = %q/%q", got[0].JudgePrompt, got[1].JudgePrompt)
+	}
+	if got[0].Status != "complete" || got[1].Status != "failed" {
+		t.Fatalf("status = %q/%q", got[0].Status, got[1].Status)
 	}
 	if got[1].GPU != nil {
 		t.Fatalf("a run with no samples must not carry a summary: %+v", got[1].GPU)

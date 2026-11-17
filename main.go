@@ -948,7 +948,6 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	topK := 5
 	var sumF, sumP, sumR float64
 	var scored, misses, refuted, noClaims, unsolvable int
-	var results []evals.PairResult
 	auditLog := audit.SQLStore{Exec: pgAdapter{conn}, Query: pgAdapter{conn}}
 	if err := auditLog.Append(ctx, audit.EvalStarted(goldenVersion, scoreModel, len(pairs))); err != nil {
 		log.Printf("audit: %v", err)
@@ -969,7 +968,39 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 			return text, usage.CompletionTokens, nil
 		}
 	}
+	run, err := evals.StartOrResumeRun(ctx, pgAdapter{conn}, goldenVersion, judgeName, scoreModel, evals.JudgePromptVersion, runStart)
+	if err != nil {
+		return fmt.Errorf("start run: %w", err)
+	}
+	done := make(map[string]bool, len(run.Pairs))
+	for _, p := range run.Pairs {
+		done[p.Question] = true
+		// Fold what an earlier attempt already judged into this run's summary, so the
+		// number at the end covers the whole suite rather than only the tail.
+		if p.RetrievalMiss {
+			misses++
+		} else {
+			sumF += p.Faithfulness
+			scored++
+			if p.Claims == 0 {
+				noClaims++
+			} else if p.Faithfulness == 0 {
+				refuted++
+			}
+		}
+		if p.Unsolvable() {
+			unsolvable++
+		}
+		sumP += p.Precision
+		sumR += p.Recall
+	}
+	if run.Resumed {
+		log.Printf("resuming run %d: %d/%d pairs already judged (each pair is stored as it lands; a crash no longer loses the run)", run.ID, len(run.Pairs), len(pairs))
+	}
 	for i, p := range pairs {
+		if done[p.Question] {
+			continue
+		}
 		var res evals.PairResult
 		var err error
 		if answer != nil {
@@ -978,8 +1009,20 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 			res, err = evals.ScorePair(ctx, p, search, judge, topK)
 		}
 		if err != nil {
-			return fmt.Errorf("pair %d: %w", i+1, err)
+			// Mark the run failed but keep every pair already judged: the next attempt
+			// resumes from here instead of re-judging the whole suite.
+			if ferr := evals.FailRun(ctx, pgAdapter{conn}, run.ID); ferr != nil {
+				log.Printf("could not mark run %d failed: %v", run.ID, ferr)
+			}
+			return fmt.Errorf("pair %d (run %d kept %d/%d pairs): %w", i+1, run.ID, len(done), len(pairs), err)
 		}
+		if err := evals.AddPair(ctx, pgAdapter{conn}, run.ID, res); err != nil {
+			if ferr := evals.FailRun(ctx, pgAdapter{conn}, run.ID); ferr != nil {
+				log.Printf("could not mark run %d failed: %v", run.ID, ferr)
+			}
+			return fmt.Errorf("store pair %d (run %d): %w", i+1, run.ID, err)
+		}
+		done[res.Question] = true
 		if res.RetrievalMiss {
 			misses++
 		} else {
@@ -996,7 +1039,6 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		}
 		sumP += res.Precision
 		sumR += res.Recall
-		results = append(results, res)
 		log.Printf("pair %d miss=%v faith=%.2f p=%.2f r=%.2f trimmed=%d q=%.60q", i+1, res.RetrievalMiss, res.Faithfulness, res.Precision, res.Recall, res.Trimmed, res.Question)
 	}
 	n := float64(len(pairs))
@@ -1015,19 +1057,10 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	// next to the score so a low faith number is never read as a routing opportunity.
 	log.Printf("suite n=%d scored=%d misses=%d refuted=%d no-claims=%d unsolvable=%d judge=%s prompt=%s faith=%.3f precision=%.3f recall=%.3f",
 		len(pairs), scored, misses, refuted, noClaims, unsolvable, judgeName, evals.JudgePromptVersion, avgF, sumP/n, sumR/n)
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+	if err := evals.FinishRun(ctx, pgAdapter{conn}, run.ID, avgF); err != nil {
+		return fmt.Errorf("finish run %d: %w", run.ID, err)
 	}
-	saver := pgAdapter{tx}
-	runID, err := evals.RecordRun(ctx, saver, saver, goldenVersion, judgeName, scoreModel, evals.JudgePromptVersion, avgF, runStart, results)
-	if err != nil {
-		_ = tx.Rollback(ctx)
-		return fmt.Errorf("record run: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit run: %w", err)
-	}
+	runID := run.ID
 	threshold := evalThreshold()
 	rep, err := evals.DriftReportFor(ctx, pgAdapter{conn}, goldenVersion, threshold)
 	if err != nil {

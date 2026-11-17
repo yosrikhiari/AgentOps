@@ -62,6 +62,10 @@ type EvalRun struct {
 	Judged    int       `json:"judged"`
 	StartedAt time.Time `json:"started_at"`
 	CreatedAt time.Time `json:"created_at"`
+	// Status is running / complete / failed. Only complete runs carry a trustworthy score:
+	// an interrupted suite keeps its pairs as evidence but its score is stale, so the page
+	// says "incomplete" instead of painting whatever number was last written.
+	Status string `json:"status"`
 	// GPU is what the card did between StartedAt and CreatedAt. Absent when the
 	// prober recorded nothing in the window: "no samples" is not "a quiet GPU".
 	GPU *gpu.Summary `json:"gpu,omitempty"`
@@ -286,7 +290,7 @@ func (s SQLStore) Overview(ctx context.Context) (Overview, error) {
 // page does not issue one query per run to answer "was the card busy?".
 func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]EvalRun, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT r.id, r.golden_version, r.judge_model, r.judge_prompt, r.model, r.score, r.started_at, r.created_at,
+		`SELECT r.id, r.golden_version, r.judge_model, r.judge_prompt, r.model, r.score, r.started_at, r.created_at, r.status,
 		        (SELECT count(*) FROM eval_pair_scores p
 		          WHERE p.run_id = r.id AND p.faithfulness IS NOT NULL)::int AS judged,
 		        g.samples, coalesce(g.util_mean,0), coalesce(g.util_peak,0),
@@ -298,7 +302,7 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 		          max(mem_used) AS mem_peak, max(mem_total) AS mem_total,
 		          max(swaps_total) - min(swaps_total) AS swaps,
 		          max(temp_c) AS max_temp, count(*) FILTER (WHERE throttled) AS throttled
-		   FROM gpu_samples WHERE ts >= r.started_at AND ts <= r.created_at
+		   FROM gpu_samples WHERE ts >= r.started_at AND ts <= coalesce(r.finished_at, now())
 		 ) g ON true
 		 WHERE r.golden_version = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT $2`,
 		golden, limit)
@@ -314,7 +318,7 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 		var memPeak, memTotal, swaps int64
 		var maxTemp float64
 		var throttled int
-		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.JudgePrompt, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt,
+		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.JudgePrompt, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt, &r.Status,
 			&r.Judged, &samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps, &maxTemp, &throttled); err != nil {
 			return nil, err
 		}

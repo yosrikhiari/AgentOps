@@ -19,6 +19,21 @@ type driftMemDB struct {
 
 func (d *driftMemDB) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
 	d.execs++
+	// FinishRun and FailRun update the header; the fake must apply them or the drift
+	// report reads the score the row was created with (0) instead of the sealed one.
+	if strings.Contains(sql, "UPDATE eval_runs SET score") && len(args) == 2 {
+		id, _ := args[0].(int)
+		score, _ := args[1].(float64)
+		for i := range d.runs {
+			if d.runs[i].id == id {
+				d.runs[i].score = score
+			}
+		}
+		return 1, nil
+	}
+	if strings.Contains(sql, "UPDATE eval_runs SET status") {
+		return 1, nil
+	}
 	if len(args) >= 5 {
 		if id, ok := args[0].(int); ok {
 			q, _ := args[1].(string)
@@ -153,7 +168,7 @@ func TestRecordAndDriftReport(t *testing.T) {
 		{Question: "q2", Faithfulness: 0.9, Precision: 1, Recall: 1},
 		{Question: "q-miss", Precision: 0, Recall: 0, RetrievalMiss: true},
 	}
-	id, err := RecordRun(ctx, db, db, "v1", "test-judge", "test-model", "faithfulness-v2", 0.55, time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC), pairs)
+	id, err := RecordRun(ctx, db, "v1", "test-judge", "test-model", "faithfulness-v2", 0.55, time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC), pairs)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -130,6 +130,13 @@ No Python package, no transitive dependency tree: the gateway installs as one st
 with one direct dependency (`pgx`). That is deliberate, and it is the part of this project
 that a supply-chain compromise cannot reach through a dependency.
 
+## Evals, in one page
+
+What the suite measures, the judge's own measured accuracy, how an interrupted run resumes,
+and the **current v3 baseline** (2026-11-17: faithfulness 0.914, unsolvable 8/72, judge
+`phi4-mini:3.8b`) live in [`docs/EVALS.md`](docs/EVALS.md). The number is a baseline to
+improve, not a claim of quality — the page says why in the same breath.
+
 ## Layout
 
 ```

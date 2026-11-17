@@ -1,0 +1,91 @@
+# Evals: what the numbers mean, and the current baseline
+
+The suite exists so a release can be blocked by evidence instead of opinion. This page
+records the protocol, the judge's own measured reliability, and the baseline every later
+number is compared with. `docs/API.md` documents the endpoints; `docs/plans/` holds
+scratch plans.
+
+## What is measured
+
+For each golden pair (question, frozen answer, `doc_ids`):
+
+1. **Retrieval** — embed the question, top-5 vector search, `precision@5` and `recall@5`
+   against the golden `doc_ids`. `recall = 0` is a **retrieval miss**: the judge is never
+   called and the row stores `faithfulness NULL`, because "we looked in the wrong place"
+   is not "the model lied".
+2. **Faithfulness** — split the answer into claims at sentence boundaries, judge each claim
+   against the retrieved context, and score `entailed / claims`. A pair whose claims are all
+   refuted is **solvable-but-wrong**; a miss is **unsolvable**.
+
+The suite line prints all of it:
+
+```
+suite n=72 scored=70 misses=2 refuted=6 no-claims=0 unsolvable=8 judge=phi4-mini:3.8b prompt=faithfulness-v2 faith=0.914 precision=0.325 recall=0.972
+```
+
+`unsolvable` = misses + fully refuted. It is the ceiling any routing policy is measured
+against: no router can rescue a pair the corpus never supplied. `no-claims` counts answers
+too short to split into claims — the judge never saw them, so they are reported apart from a
+refuted verdict.
+
+## The judge, and its own reliability
+
+- Local judge via Ollama, `JUDGE_MODEL`, **temperature 0** so the same claim gets the same
+  verdict on a rerun (`evals/judge_temperature_test.go`). The production judge is Qwen3-8B,
+  which does not fit the 4 GB dev card; runs record which model judged them.
+- Prompt versions: `faithfulness-v1` asked supported/refuted; `faithfulness-v2` asks
+  **entailed / contradicted / baseless** and only `entailed` counts. `eval_runs.judge_prompt`
+  stores the version, drift reports `prompt_changed`, and the release gate refuses a window
+  that straddles a change — a different prompt is a different judge.
+- Validity is measured, not assumed: `--judge-audit` runs a hand-labelled 20-item set with
+  retrieval out of the loop. On 2026-11-17 `phi4-mini:3.8b` on v2 scored **11 TP / 0 FN /
+  0 FP / 9 TN**, with **1/12 label flips and 1/12 decision flips** under a context-order
+  probe (item `s5`, the 4xx/429 retry rule, moved entailed→baseless).
+
+**Read that 20/20 as a ceiling effect, not a verdict.** The seed set is small and its
+contexts are short and clean. The honest claims it supports are narrow: the schema works,
+the parser fails closed, and this judge handled the easy cases. A second judge (κ) and a
+larger, noisier set need a bigger card.
+
+## Run lifecycle
+
+- The header is written as `status = running`, every pair is stored as it is judged, and
+  `status = complete` plus the score are set only at the end.
+- A judge crash marks the run `failed`; the next `--score` for the same golden set, judge
+  and prompt **resumes it** and judges only the missing pairs.
+- Drift and the release gate read `status = 'complete'` only. An interrupted suite keeps its
+  pairs as evidence and the console shows an `incomplete` chip — never a stale score.
+
+## Baseline — v3, 2026-11-17
+
+| Field | Value |
+|---|---|
+| Golden set | `evals/golden/v3.jsonl`, 72 pairs |
+| Corpus | 17 docs / 36 chunks (`evals/corpus/clean`), ingested with `nomic-embed-text` |
+| Judge | `phi4-mini:3.8b`, prompt `faithfulness-v2`, temperature 0 |
+| Judged | 70 / 72 |
+| Retrieval misses | 2 |
+| Refuted (all claims unsupported) | 6 |
+| **Unsolvable** | **8 / 72 = 11.1%** |
+| Faithfulness | **0.914** (threshold 0.70, no alert) |
+| Precision@5 / Recall@5 | 0.325 / 0.972 |
+| Release gate (k=1) | pass |
+
+Two honest caveats on this run: the prober was stopped (the gateway was down to free VRAM),
+so the GPU window says "no samples — comparability unknown"; and 70 pairs judged by a 3.8B
+judge is a small sample with a weak judge. The number is a baseline to improve, not a claim
+of quality.
+
+What would move it: a bigger corpus (36 chunks for 72 questions is thin), hybrid
+BM25+vector retrieval (two whole questions are currently unreachable), and the Qwen3-8B
+judge on an 8 GB card.
+
+## Reproduce
+
+```bash
+go run . --migrate
+EMBED_MODEL=nomic-embed-text go run . --ingest
+JUDGE_MODEL=phi4-mini:3.8b EMBED_MODEL=nomic-embed-text go run . --score --golden-version v3
+go run . --judge-audit --judge-model phi4-mini:3.8b     # the judge's own accuracy
+go run . --release-gate --golden-version v3 --gate-k 1
+```

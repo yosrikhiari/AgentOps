@@ -19,3 +19,6 @@ evals/corpus/cache/
 /opencode.json
 /.cursor/
 /.claude/
+
+# working plans stay local (they are scratch, not documentation)
+/docs/plans/

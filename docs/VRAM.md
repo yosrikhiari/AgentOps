@@ -35,3 +35,36 @@ how much VRAM each holds, and how many model swaps happened in the last ten minu
 back to the 8 GB budget when it is not - the report always prints which one it used
 (`measured: NVIDIA GeForce GTX 1650` vs `docs/VRAM.md`). On the 4 GB dev box that means
 the 7B is now vetoed there, instead of being told it "fits alone".
+
+## Heat is a latency fact, not an answer fact
+
+A hot card does not give different answers. What it does is make the same work take longer,
+and that invalidates exactly the comparisons an eval run exists to make. The prober records
+both halves: `temp_c` is the reading, `throttled` is the consequence (the driver's
+`clocks_event_reasons.active` SW/HW thermal bits, `0012_gpu_thermal.sql`), and `NULL` there
+means the driver was never asked - not "cool".
+
+Measured on the 4 GB GTX 1650 dev box, 2026-11-17, three back-to-back `phi4-mini:3.8b`
+generations (300 tokens each, ~40 s of sampling every 1.5 s):
+
+| Reading | Idle | Under load | Meaning |
+|---|---|---|---|
+| temperature | 56 °C | 76 °C | below the driver's slowdown point |
+| graphics clock | 300 MHz | 1785 MHz | the card's maximum, no cut |
+| utilisation | 0 % | 96 % | compute-bound, as expected |
+| board power | 4 W | 44 W | well inside the card's envelope |
+| `throttled` samples | 0 | 0 | nothing was cut for heat in this window |
+| decode rate | - | 21.2 tok/s | phi4-mini 3.8b q4, warm card |
+
+So on this box today there is ~20 °C of headroom and no throttling, and a run's latency is
+comparable with any other run at similar clocks. The driver's own counters show the other
+case is real though: since the current driver load `nvidia-smi` reports ~42 minutes of SW
+thermal slowdown and 0.1 s of HW thermal slowdown (plus 33 s of power capping). During those
+windows the clock was cut by the driver, so a slow run from that period cannot be compared
+with a quiet one - which is what the `throttled` chip on the runs table and the amber pill
+on `#/gpu` are there to say.
+
+Sampling temperature is the opposite kind of knob: it changes what the model computes, so
+the harness pins it to 0 wherever a comparison happens - the judge on both backends
+(`evals/judge.go`, `evals/judge_temperature_test.go`) and Track L answer generation
+(`--score-model`). Heat has no equivalent effect on the answer, only on the stopwatch.

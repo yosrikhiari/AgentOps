@@ -15,15 +15,30 @@ import (
 	"agentops/tracker"
 )
 
+<<<<<<< HEAD
+=======
+// Latest protocol revision this server speaks. MCP 2026-07-28 is stateless: every
+// request carries its version in params._meta (and, on HTTP, in the
+// MCP-Protocol-Version header), and server/discover is mandatory. Older clients
+// still get the initialize handshake, so this is a dual-era server, which the spec
+// explicitly allows.
+const latestProtocolVersion = "2026-07-28"
+
+>>>>>>> 7c396fc5fe61e2f9af9bfe9c209143cb3686dc12
 // legacyProtocolVersion is what an initialize with no requested version gets, and
 // what this server answered before it learned the stateless revision.
 const legacyProtocolVersion = "2024-11-05"
 
+<<<<<<< HEAD
 // supportedVersions is newest first: 2026-07-28 is the stateless revision this
 // server implements (per-request version in params._meta or the
 // MCP-Protocol-Version header, mandatory server/discover); the rest are the legacy
 // handshake revisions it still serves. It is also what an
 // UnsupportedProtocolVersionError lists so a client can retry instead of guessing.
+=======
+// supportedVersions is newest first, and is what an UnsupportedProtocolVersionError
+// lists so a client can retry instead of guessing.
+>>>>>>> 7c396fc5fe61e2f9af9bfe9c209143cb3686dc12
 var supportedVersions = []string{"2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 
 type Server struct {

@@ -32,6 +32,46 @@ func TestParseSMIHandlesNotAvailable(t *testing.T) {
 	}
 }
 
+// TestParseSMIReadsTheThermalThrottleBit: the driver reports a bitmask of clock-event
+// reasons. Bits 0x20 (SW thermal slowdown) and 0x40 (HW thermal slowdown) mean the card
+// was hot enough to cut clocks - the difference between "slow because the model is big"
+// and "slow because the GPU is cooking", which the eval comparability line needs.
+func TestParseSMIReadsTheThermalThrottleBit(t *testing.T) {
+	hot, err := parseSMI("NVIDIA GeForce GTX 1650, 88, 2048, 4096, 60.5, 84, 0x0000000000000021")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hot.Throttled {
+		t.Fatalf("SW thermal bit not read: %+v", hot)
+	}
+	cool, err := parseSMI("NVIDIA GeForce GTX 1650, 30, 1024, 4096, 40.0, 62, 0x0000000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cool.Throttled {
+		t.Fatalf("idle-only mask must not read as throttled: %+v", cool)
+	}
+	hw, err := parseSMI("NVIDIA GeForce GTX 1650, 90, 4096, 4096, 70.0, 91, 0x0000000000000041")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hw.Throttled {
+		t.Fatalf("HW thermal bit not read: %+v", hw)
+	}
+}
+
+// TestParseSMILegacyQueryHasNoThrottleField: a driver that does not support
+// clocks_event_reasons.active returns six fields. That is "unknown", not throttled.
+func TestParseSMILegacyQueryHasNoThrottleField(t *testing.T) {
+	s, err := parseSMI("Tesla T4, 0, 0, 15360, 10, 20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Throttled {
+		t.Fatalf("legacy six-field row must not claim throttling: %+v", s)
+	}
+}
+
 func TestParseSMIRejectsGarbage(t *testing.T) {
 	if _, err := parseSMI("no commas here"); err == nil {
 		t.Fatal("want error")

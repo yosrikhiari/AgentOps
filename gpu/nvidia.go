@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const smiQuery = "name,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu"
+const smiQuery = "name,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu,clocks_event_reasons.active"
+
+// smiQueryLegacy is the query for drivers without clocks_event_reasons.active.
+const smiQueryLegacy = "name,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu"
 
 // NvidiaSMI reads the first GPU via the driver's own CLI.
 type NvidiaSMI struct {
@@ -35,7 +38,13 @@ func (n *NvidiaSMI) Read(ctx context.Context) (Sample, error) {
 	out, err := exec.CommandContext(cctx, n.Path,
 		"--query-gpu="+smiQuery, "--format=csv,noheader,nounits").Output()
 	if err != nil {
-		return Sample{}, fmt.Errorf("nvidia-smi: %w", err)
+		// Older drivers do not know clocks_event_reasons.active. Losing the throttle
+		// signal is acceptable; losing the whole sample is not.
+		out, err = exec.CommandContext(cctx, n.Path,
+			"--query-gpu="+smiQueryLegacy, "--format=csv,noheader,nounits").Output()
+		if err != nil {
+			return Sample{}, fmt.Errorf("nvidia-smi: %w", err)
+		}
 	}
 	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 	s, err := parseSMI(line)
@@ -51,8 +60,8 @@ func parseSMI(line string) (Sample, error) {
 	for i := range f {
 		f[i] = strings.TrimSpace(f[i])
 	}
-	if len(f) != 6 {
-		return Sample{}, fmt.Errorf("nvidia-smi: want 6 fields, got %d in %q", len(f), line)
+	if len(f) != 6 && len(f) != 7 {
+		return Sample{}, fmt.Errorf("nvidia-smi: want 6 or 7 fields, got %d in %q", len(f), line)
 	}
 	util, err := strconv.ParseFloat(f[1], 64)
 	if err != nil {
@@ -73,7 +82,22 @@ func parseSMI(line string) (Sample, error) {
 		MemTotalBytes: int64(totalMiB * (1 << 20)),
 		PowerW:        optionalFloat(f[4]),
 		TempC:         optionalFloat(f[5]),
+		Throttled:     len(f) == 7 && thermalBit(f[6]),
 	}, nil
+}
+
+// thermalBit reads the clocks_event_reasons.active mask. Bits 0x20 (SW thermal slowdown)
+// and 0x40 (HW thermal slowdown) are the two that mean "the card cut clocks because it is
+// hot"; bit 0x1 (idle) is why a healthy mask is not zero. An unparsable mask is unknown,
+// not throttled - the sample is still useful.
+func thermalBit(mask string) bool {
+	s := strings.TrimSpace(mask)
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
+	v, err := strconv.ParseUint(s, 16, 64)
+	if err != nil {
+		return false
+	}
+	return v&0x20 != 0 || v&0x40 != 0
 }
 
 // optionalFloat returns nil for the driver's "[N/A]" and "[Not Supported]".

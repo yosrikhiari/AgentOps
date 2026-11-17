@@ -52,7 +52,11 @@ type EvalRun struct {
 	Judge     string    `json:"judge_model"`
 	Model     string    `json:"model"`
 	Score     float64   `json:"score"`
+	StartedAt time.Time `json:"started_at"`
 	CreatedAt time.Time `json:"created_at"`
+	// GPU is what the card did between StartedAt and CreatedAt. Absent when the
+	// prober recorded nothing in the window: "no samples" is not "a quiet GPU".
+	GPU *gpu.Summary `json:"gpu,omitempty"`
 }
 
 type Step struct {
@@ -269,9 +273,22 @@ func (s SQLStore) Overview(ctx context.Context) (Overview, error) {
 	return ov, nil
 }
 
+// EvalRuns returns the recent runs of one golden version. The GPU summary rides
+// along in the same query (a lateral aggregate over the run's own window) so the
+// page does not issue one query per run to answer "was the card busy?".
 func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]EvalRun, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT id, golden_version, judge_model, model, score, created_at FROM eval_runs WHERE golden_version = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,
+		`SELECT r.id, r.golden_version, r.judge_model, r.model, r.score, r.started_at, r.created_at,
+		        g.samples, coalesce(g.util_mean,0), coalesce(g.util_peak,0),
+		        coalesce(g.mem_peak,0), coalesce(g.mem_total,0), coalesce(g.swaps,0)
+		 FROM eval_runs r
+		 LEFT JOIN LATERAL (
+		   SELECT count(*)::int AS samples, avg(util_pct) AS util_mean, max(util_pct) AS util_peak,
+		          max(mem_used) AS mem_peak, max(mem_total) AS mem_total,
+		          max(swaps_total) - min(swaps_total) AS swaps
+		   FROM gpu_samples WHERE ts >= r.started_at AND ts <= r.created_at
+		 ) g ON true
+		 WHERE r.golden_version = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT $2`,
 		golden, limit)
 	if err != nil {
 		return nil, err
@@ -280,8 +297,19 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 	var out []EvalRun
 	for rows.Next() {
 		var r EvalRun
-		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.Model, &r.Score, &r.CreatedAt); err != nil {
+		var samples int
+		var utilMean, utilPeak float64
+		var memPeak, memTotal, swaps int64
+		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt,
+			&samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps); err != nil {
 			return nil, err
+		}
+		if samples > 0 {
+			r.GPU = &gpu.Summary{
+				From: r.StartedAt, To: r.CreatedAt, Samples: samples,
+				UtilMean: utilMean, UtilPeak: utilPeak,
+				MemPeakBytes: memPeak, MemTotalBytes: memTotal, Swaps: swaps,
+			}
 		}
 		out = append(out, r)
 	}

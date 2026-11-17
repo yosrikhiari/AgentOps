@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"time"
 )
 
 type WorstCase struct {
@@ -30,11 +31,14 @@ type DriftReport struct {
 	WorstCases    []WorstCase `json:"worst_cases"`
 }
 
-func RecordRun(ctx context.Context, exec Execer, qr Querier, goldenVersion, judgeModel, model string, score float64, pairs []PairResult) (int, error) {
+func RecordRun(ctx context.Context, exec Execer, qr Querier, goldenVersion, judgeModel, model string, score float64, startedAt time.Time, pairs []PairResult) (int, error) {
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
 	var id int
 	row := qr.QueryRow(ctx,
-		`INSERT INTO eval_runs (golden_version, judge_model, model, score) VALUES ($1, $2, $3, $4) RETURNING id`,
-		goldenVersion, judgeModel, model, score)
+		`INSERT INTO eval_runs (golden_version, judge_model, model, score, started_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		goldenVersion, judgeModel, model, score, startedAt)
 	if err := row.Scan(&id); err != nil {
 		return 0, err
 	}

@@ -563,6 +563,35 @@ func TestGPUEndpointKeepsNowWhenHistoryFails(t *testing.T) {
 	}
 }
 
+// TestSQLStoreEvalRunsCarriesGPUWindow: the evals page needs each run's card
+// story from one query, and a window with no samples must carry no summary - so
+// the page shows nothing instead of a 0% GPU nobody measured.
+func TestSQLStoreEvalRunsCarriesGPUWindow(t *testing.T) {
+	start := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	end := start.Add(8 * time.Minute)
+	q := fakeQueryer{rows: [][]any{
+		{1, "v3", "qwen3:8b", "", 0.94, start, end, 41, 63.0, 88.0, int64(2 << 30), int64(4 << 30), int64(3)},
+		{2, "v3", "qwen3:8b", "", 0.95, start, end, 0, 0.0, 0.0, int64(0), int64(0), int64(0)},
+	}}
+	got, err := SQLStore{Query: q}.EvalRuns(context.Background(), "v3", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("runs = %d", len(got))
+	}
+	if !got[0].StartedAt.Equal(start) || !got[0].CreatedAt.Equal(end) {
+		t.Fatalf("window = %v..%v", got[0].StartedAt, got[0].CreatedAt)
+	}
+	if got[0].GPU == nil || got[0].GPU.Samples != 41 || got[0].GPU.Swaps != 3 ||
+		got[0].GPU.UtilMean != 63 || got[0].GPU.MemPeakBytes != 2<<30 {
+		t.Fatalf("gpu = %+v", got[0].GPU)
+	}
+	if got[1].GPU != nil {
+		t.Fatalf("a run with no samples must not carry a summary: %+v", got[1].GPU)
+	}
+}
+
 // TestSQLStoreGPUSamplesMapsEveryColumn: a fake store cannot catch a Scan that
 // silently leaves mem_used, power_w or the swap counter at zero.
 func TestSQLStoreGPUSamplesMapsEveryColumn(t *testing.T) {

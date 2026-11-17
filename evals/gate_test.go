@@ -8,6 +8,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 type gateRows struct {
@@ -32,6 +33,8 @@ func (r *gateRows) Scan(dest ...any) error {
 			*d = row[i].(string)
 		case *float64:
 			*d = row[i].(float64)
+		case *time.Time:
+			*d = row[i].(time.Time)
 		default:
 			return errGateScan
 		}
@@ -55,7 +58,28 @@ func (d *gateDB) Query(ctx context.Context, sql string, args ...any) (Rows, erro
 	return d.rows, nil
 }
 
-func greenRun(id int) []any { return []any{id, "qwen3:8b", 0.95} }
+func greenRun(id int) []any {
+	start := time.Date(2026, 11, 16, 10, id, 0, 0, time.UTC)
+	return []any{id, "qwen3:8b", 0.95, start, start.Add(4 * time.Minute)}
+}
+
+// TestGateRunCarriesItsWindow: the gate report is only half useful without the
+// window each run occupied - that window is what lets the caller ask the GPU
+// store what the card was doing during it.
+func TestGateRunCarriesItsWindow(t *testing.T) {
+	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(1)}}}
+	res, err := ReleaseGate(context.Background(), db, "v3", 1, 0.7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Runs) != 1 {
+		t.Fatalf("runs = %+v", res.Runs)
+	}
+	r := res.Runs[0]
+	if r.StartedAt.IsZero() || r.FinishedAt.IsZero() || !r.FinishedAt.After(r.StartedAt) {
+		t.Fatalf("window = %v .. %v", r.StartedAt, r.FinishedAt)
+	}
+}
 
 func TestReleaseGatePass(t *testing.T) {
 	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), greenRun(1)}}}
@@ -72,7 +96,7 @@ func TestReleaseGatePass(t *testing.T) {
 }
 
 func TestReleaseGateFailsBelowThreshold(t *testing.T) {
-	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), {2, "qwen3:8b", 0.41}, greenRun(1)}}}
+	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), {2, "qwen3:8b", 0.41, time.Date(2026, 11, 16, 10, 2, 0, 0, time.UTC), time.Date(2026, 11, 16, 10, 6, 0, 0, time.UTC)}, greenRun(1)}}}
 	res, err := ReleaseGate(context.Background(), db, "v3", 3, 0.7)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +121,7 @@ func TestReleaseGateNeedsKRuns(t *testing.T) {
 }
 
 func TestReleaseGateJudgeChangedInvalidates(t *testing.T) {
-	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), {1, "other-judge", 0.95}}}}
+	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), {1, "other-judge", 0.95, time.Date(2026, 11, 16, 10, 1, 0, 0, time.UTC), time.Date(2026, 11, 16, 10, 5, 0, 0, time.UTC)}}}}
 	res, err := ReleaseGate(context.Background(), db, "v3", 3, 0.7)
 	if err != nil {
 		t.Fatal(err)

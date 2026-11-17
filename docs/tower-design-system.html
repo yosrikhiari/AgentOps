@@ -273,6 +273,15 @@
               <div class="tower-steps"><span class="tower-pill healthy" title="4 chunks retrieved">researcher</span><span class="tower-pill healthy" title="3 claims">drafter ×2</span><span class="tower-pill degraded">reviewer</span></div>
               <div class="tower-panel-sub" style="margin-top:10px">done → healthy · running → degraded · anything else → critical</div></div>
           </div>
+          <div class="ds-frame"><div class="ds-frame-label">Eval runs with the card's story — one chip for mean utilisation and one for model swaps, both from the run's own window; a run with no samples shows “-”, never 0%. Used in pageEvals()</div>
+            <table class="tower-table">
+              <thead><tr><th>run</th><th>when</th><th>judge</th><th>score</th><th>gpu</th></tr></thead>
+              <tbody>
+                <tr><td class="tower-mono">7</td><td class="tower-mono">17/11/2026, 09:04</td><td><span class="tower-chip">qwen3:8b</span></td><td><span class="tower-pill healthy">0.972</span></td><td><span class="tower-chip">GPU 41%</span> <span class="tower-chip">3 swaps</span></td></tr>
+                <tr><td class="tower-mono">6</td><td class="tower-mono">16/11/2026, 22:10</td><td><span class="tower-chip">qwen3:8b</span></td><td><span class="tower-pill healthy">0.986</span></td><td><span class="tower-chip">GPU 12%</span></td></tr>
+                <tr><td class="tower-mono">5</td><td class="tower-mono">16/11/2026, 18:00</td><td><span class="tower-chip">qwen3:8b</span></td><td><span class="tower-pill critical">0.690</span></td><td><span class="tower-muted">-</span></td></tr>
+              </tbody>
+            </table></div>
           <div class="ds-frame"><div class="ds-frame-label">Panel — surface, border-soft, hover to border; head with h3 + sub + optional action slot. panel(title, sub, body, actions)</div>
             <section class="tower-panel"><div class="tower-panel-head"><div><h3>Score history <span class="tower-mono">v3</span></h3><div class="tower-panel-sub">Every run of golden v3; dashed line = alert threshold</div></div><button class="tower-btn primary">Run eval suite</button></div><div class="tower-empty">No runs yet — start one.</div></section></div>
         </div>

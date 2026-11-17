@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 type driftMemDB struct {
@@ -151,7 +152,7 @@ func TestRecordAndDriftReport(t *testing.T) {
 		{Question: "q2", Faithfulness: 0.9, Precision: 1, Recall: 1},
 		{Question: "q-miss", Precision: 0, Recall: 0, RetrievalMiss: true},
 	}
-	id, err := RecordRun(ctx, db, db, "v1", "test-judge", "test-model", 0.55, pairs)
+	id, err := RecordRun(ctx, db, db, "v1", "test-judge", "test-model", 0.55, time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC), pairs)
 	if err != nil {
 		t.Fatal(err)
 	}

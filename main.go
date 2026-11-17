@@ -236,15 +236,42 @@ func runDrift(dsn, goldenVersion string, threshold float64) {
 // Anything else prints the reason and exits 1 (log.Fatal) — no tag.
 func runReleaseGate(dsn, golden string, k int, threshold float64) {
 	var res evals.GateResult
-	err := withConn(dsn, 15*time.Second, func(ctx context.Context, conn *pgx.Conn) error {
+	var gpuLines []string
+	err := withConn(dsn, 20*time.Second, func(ctx context.Context, conn *pgx.Conn) error {
 		var err error
 		res, err = evals.ReleaseGate(ctx, pgAdapter{conn}, golden, k, threshold)
-		return err
+		if err != nil {
+			return err
+		}
+		// What the card was doing during each run in the window. Evidence about
+		// comparability, not a gate: a swap-heavy run next to a quiet one is the
+		// most common way a green window still means nothing.
+		gs := gpu.SQLStore{Query: gpuAdapter{pgAdapter{conn}}}
+		for _, r := range res.Runs {
+			sum, serr := gs.Summary(ctx, r.StartedAt, r.FinishedAt)
+			switch {
+			case serr != nil:
+				gpuLines = append(gpuLines, fmt.Sprintf("  run %d gpu: unavailable (%v)", r.ID, serr))
+			case sum.Samples == 0:
+				gpuLines = append(gpuLines, fmt.Sprintf("  run %d gpu: no samples (prober off) - comparability unknown", r.ID))
+			default:
+				line := fmt.Sprintf("  run %d gpu: mean %.0f%% util, peak %.1f of %.1f GB, %d model swap(s)",
+					r.ID, sum.UtilMean, float64(sum.MemPeakBytes)/(1<<30), float64(sum.MemTotalBytes)/(1<<30), sum.Swaps)
+				if sum.Swaps > 0 {
+					line += " - swaps make this run not directly comparable with a quiet one"
+				}
+				gpuLines = append(gpuLines, line)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("release gate %s (k=%d):\n%s", golden, k, res.Report)
+	for _, line := range gpuLines {
+		log.Printf("%s", line)
+	}
 	if !res.Pass {
 		log.Fatalf("release gate %s: not releasable", golden)
 	}
@@ -782,7 +809,7 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		return fmt.Errorf("begin: %w", err)
 	}
 	saver := pgAdapter{tx}
-	runID, err := evals.RecordRun(ctx, saver, saver, goldenVersion, judgeName, scoreModel, avgF, results)
+	runID, err := evals.RecordRun(ctx, saver, saver, goldenVersion, judgeName, scoreModel, avgF, runStart, results)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("record run: %w", err)

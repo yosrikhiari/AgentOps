@@ -464,8 +464,16 @@
           h('td', { class: 'tower-mono' }, fmt.score(wc.recall))))))
         : h('div', { class: 'tower-empty' }, 'Nothing scored yet'));
     const table = panel('Runs', null, h('table', { class: 'tower-table' },
-      h('thead', null, h('tr', null, ...['run', 'when', 'judge', 'score'].map(t => h('th', null, t)))),
-      h('tbody', null, runs.map(r => h('tr', null, h('td', { class: 'tower-mono' }, r.id), h('td', { class: 'tower-mono' }, fmt.date(r.created_at)), h('td', null, chip(r.judge_model)), h('td', null, r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score))))))));
+      h('thead', null, h('tr', null, ...['run', 'when', 'judge', 'score', 'gpu'].map(t => h('th', null, t)))),
+      h('tbody', null, runs.map(r => h('tr', null,
+        h('td', { class: 'tower-mono' }, r.id),
+        h('td', { class: 'tower-mono' }, fmt.date(r.created_at)),
+        h('td', null, chip(r.judge_model)),
+        h('td', null, r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score))),
+        h('td', null, r.gpu
+          ? [chip('GPU ' + Math.round(r.gpu.util_mean_pct) + '%'),
+             r.gpu.swaps > 0 ? chip(r.gpu.swaps + ' swap' + (r.gpu.swaps === 1 ? '' : 's')) : null]
+          : h('span', { class: 'tower-muted' }, '-')))))));
     content.replaceChildren(metrics, h('div', { class: 'tower-grid-2' }, history, worstPanel), table);
     if (status.running) pollTimer = setTimeout(() => { if (location.hash.startsWith('#/evals')) pageEvals(signal); }, 5000);
   }

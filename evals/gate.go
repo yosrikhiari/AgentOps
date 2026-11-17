@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Track T — release gate. A version tag requires k consecutive green runs on
@@ -20,9 +21,11 @@ import (
 //   - Local pre-tag step: CI has neither the GPU nor the eval Postgres, so
 //     the gate runs on the operator's box, not in the release job.
 type GateRun struct {
-	ID    int
-	Judge string
-	Score float64
+	ID         int
+	Judge      string
+	Score      float64
+	StartedAt  time.Time
+	FinishedAt time.Time
 }
 
 type GateResult struct {
@@ -37,7 +40,7 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 		k = 3
 	}
 	rows, err := db.Query(ctx,
-		`SELECT id, judge_model, score FROM eval_runs WHERE golden_version = $1 AND model = '' ORDER BY created_at DESC, id DESC LIMIT $2`,
+		`SELECT id, judge_model, score, started_at, created_at FROM eval_runs WHERE golden_version = $1 AND model = '' ORDER BY created_at DESC, id DESC LIMIT $2`,
 		golden, k)
 	if err != nil {
 		return res, err
@@ -45,7 +48,7 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 	defer rows.Close()
 	for rows.Next() {
 		var r GateRun
-		if err := rows.Scan(&r.ID, &r.Judge, &r.Score); err != nil {
+		if err := rows.Scan(&r.ID, &r.Judge, &r.Score, &r.StartedAt, &r.FinishedAt); err != nil {
 			return res, err
 		}
 		res.Runs = append(res.Runs, r)

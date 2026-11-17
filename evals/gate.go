@@ -23,6 +23,7 @@ import (
 type GateRun struct {
 	ID         int
 	Judge      string
+	Prompt     string
 	Score      float64
 	StartedAt  time.Time
 	FinishedAt time.Time
@@ -40,7 +41,7 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 		k = 3
 	}
 	rows, err := db.Query(ctx,
-		`SELECT id, judge_model, score, started_at, created_at FROM eval_runs
+		`SELECT id, judge_model, judge_prompt, score, started_at, created_at FROM eval_runs
 		 WHERE golden_version = $1 AND model = ''
 		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
 		 ORDER BY created_at DESC, id DESC LIMIT $2`,
@@ -51,7 +52,7 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 	defer rows.Close()
 	for rows.Next() {
 		var r GateRun
-		if err := rows.Scan(&r.ID, &r.Judge, &r.Score, &r.StartedAt, &r.FinishedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Judge, &r.Prompt, &r.Score, &r.StartedAt, &r.FinishedAt); err != nil {
 			return res, err
 		}
 		res.Runs = append(res.Runs, r)
@@ -62,7 +63,7 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "release gate %s k=%d threshold=%.2f: %d/%d runs\n", golden, k, threshold, len(res.Runs), k)
 	for _, r := range res.Runs {
-		fmt.Fprintf(&sb, "  run %d judge=%s score=%.3f\n", r.ID, r.Judge, r.Score)
+		fmt.Fprintf(&sb, "  run %d judge=%s prompt=%s score=%.3f\n", r.ID, r.Judge, r.Prompt, r.Score)
 	}
 	if len(res.Runs) < k {
 		fmt.Fprintf(&sb, "FAIL: need %d runs, have %d — run the suite %d more time(s)", k, len(res.Runs), k-len(res.Runs))
@@ -73,6 +74,16 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 	for _, r := range res.Runs[1:] {
 		if r.Judge != judge {
 			fmt.Fprintf(&sb, "FAIL: judge changed across the window (%s vs %s) — run the suite %d more time(s) on the new judge to re-baseline", judge, r.Judge, k)
+			res.Report = sb.String()
+			return res, nil
+		}
+	}
+	// Same model, different prompt is still a different judge: the verdict boundary
+	// moved, so a window that straddles the change is not evidence about this tree.
+	prompt := res.Runs[0].Prompt
+	for _, r := range res.Runs[1:] {
+		if r.Prompt != prompt {
+			fmt.Fprintf(&sb, "FAIL: judge prompt changed across the window (%s vs %s) — run the suite %d more time(s) on the new prompt to re-baseline", promptLabel(prompt), promptLabel(r.Prompt), k)
 			res.Report = sb.String()
 			return res, nil
 		}
@@ -92,4 +103,13 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 	res.Report = sb.String()
 	res.Pass = true
 	return res, nil
+}
+
+// promptLabel names an empty prompt version honestly: runs recorded before the column
+// existed have no version, which is not "v1" and must not equal a real one.
+func promptLabel(v string) string {
+	if v == "" {
+		return "unknown-prompt"
+	}
+	return v
 }

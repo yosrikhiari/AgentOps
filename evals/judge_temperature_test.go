@@ -17,9 +17,9 @@ func TestOllamaJudgeSendsTemperatureZero(t *testing.T) {
 	}))
 	defer srv.Close()
 	j := NewOllamaJudge(srv.URL, "m")
-	ok, _, err := j.JudgeClaim(context.Background(), "claim text here", "context")
-	if err != nil || !ok {
-		t.Fatalf("ok=%v err=%v", ok, err)
+	label, _, err := j.JudgeClaim(context.Background(), "claim text here", "context")
+	if err != nil || label != Entailed {
+		t.Fatalf("label=%v err=%v", label, err)
 	}
 	opts, _ := got["options"].(map[string]any)
 	if temp, _ := opts["temperature"].(float64); temp != 0 || opts == nil {

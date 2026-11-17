@@ -47,11 +47,15 @@ type Overview struct {
 }
 
 type EvalRun struct {
-	ID     int     `json:"id"`
-	Golden string  `json:"golden_version"`
-	Judge  string  `json:"judge_model"`
-	Model  string  `json:"model"`
-	Score  float64 `json:"score"`
+	ID     int    `json:"id"`
+	Golden string `json:"golden_version"`
+	Judge  string `json:"judge_model"`
+	// JudgePrompt is the prompt version that produced the scores ("" for runs recorded
+	// before it was stored). Two runs on the same model but different prompt versions
+	// are not comparable, which is why drift reports it separately.
+	JudgePrompt string  `json:"judge_prompt"`
+	Model       string  `json:"model"`
+	Score       float64 `json:"score"`
 	// Judged is how many pairs the judge actually scored. A run with zero judged pairs
 	// (every pair a retrieval miss) has no faithfulness measurement; the page must say
 	// "unmeasured", not paint a 0.000 red.
@@ -282,7 +286,7 @@ func (s SQLStore) Overview(ctx context.Context) (Overview, error) {
 // page does not issue one query per run to answer "was the card busy?".
 func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]EvalRun, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT r.id, r.golden_version, r.judge_model, r.model, r.score, r.started_at, r.created_at,
+		`SELECT r.id, r.golden_version, r.judge_model, r.judge_prompt, r.model, r.score, r.started_at, r.created_at,
 		        (SELECT count(*) FROM eval_pair_scores p
 		          WHERE p.run_id = r.id AND p.faithfulness IS NOT NULL)::int AS judged,
 		        g.samples, coalesce(g.util_mean,0), coalesce(g.util_peak,0),
@@ -310,7 +314,7 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 		var memPeak, memTotal, swaps int64
 		var maxTemp float64
 		var throttled int
-		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt,
+		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.JudgePrompt, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt,
 			&r.Judged, &samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps, &maxTemp, &throttled); err != nil {
 			return nil, err
 		}

@@ -64,8 +64,11 @@ func PrecisionRecall(retrieved []string, relevant []string, k int) (precision, r
 }
 
 type ClaimResult struct {
-	Claim         string `json:"claim"`
+	Claim string `json:"claim"`
+	// Supported is kept for the binary consumers (faithfulness, the console, old
+	// rows); Label says why: entailed, contradicted or baseless.
 	Supported     bool   `json:"supported"`
+	Label         string `json:"label"`
 	Justification string `json:"justification"`
 }
 
@@ -162,6 +165,14 @@ func ScoreGeneratedPair(ctx context.Context, p Pair, search Searcher, judge Judg
 	return res, nil
 }
 
+// Unsolvable reports a pair no router could have rescued: retrieval found nothing to
+// judge, or every claim the answer made was refuted. It is the per-pair unit of the
+// ceiling that multi-model routing is capped by, and it must not be averaged into
+// faithfulness - a pair the judge never saw is not a pair that passed.
+func Unsolvable(res PairResult) bool {
+	return res.RetrievalMiss || (len(res.Claims) > 0 && res.Faithfulness == 0)
+}
+
 func splitRetrieved(chunks []Chunk) (retrieved, ctxParts []string) {
 	for _, c := range chunks {
 		ctxParts = append(ctxParts, c.Text)
@@ -175,12 +186,12 @@ func judgeAnswer(ctx context.Context, question, answer string, retrieved []strin
 	res := PairResult{Question: question, Retrieved: retrieved, Precision: precision, Recall: recall}
 	supported := 0
 	for _, cl := range claims {
-		ok, just, err := judge.JudgeClaim(ctx, cl, contextText)
+		label, just, err := judge.JudgeClaim(ctx, cl, contextText)
 		if err != nil {
 			return res, err
 		}
-		res.Claims = append(res.Claims, ClaimResult{Claim: cl, Supported: ok, Justification: just})
-		if ok {
+		res.Claims = append(res.Claims, ClaimResult{Claim: cl, Supported: label.Supported(), Label: label.String(), Justification: just})
+		if label.Supported() {
 			supported++
 		}
 	}

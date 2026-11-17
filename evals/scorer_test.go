@@ -52,9 +52,12 @@ type fakeJudge struct {
 	calls     int
 }
 
-func (f *fakeJudge) JudgeClaim(ctx context.Context, claim, contextText string) (bool, string, error) {
+func (f *fakeJudge) JudgeClaim(ctx context.Context, claim, contextText string) (Label, string, error) {
 	f.calls++
-	return f.supported, "test justification", nil
+	if f.supported {
+		return Entailed, "test justification", nil
+	}
+	return Baseless, "test justification", nil
 }
 
 func TestScorePair(t *testing.T) {
@@ -161,25 +164,38 @@ func TestWithRetryNeverRetries4xx(t *testing.T) {
 }
 
 func TestParseVerdict(t *testing.T) {
-	ok, _ := parseVerdict("Evidence here.\nVERDICT: SUPPORTED")
-	if !ok {
-		t.Fatal("want supported")
+	cases := []struct {
+		raw  string
+		want Label
+	}{
+		{"Evidence here.\nVERDICT: ENTAILED", Entailed},
+		{"Evidence here.\nVERDICT: CONTRADICTED", Contradicted},
+		{"Evidence here.\nVERDICT: BASELESS", Baseless},
+		// The explanation after the label must not be read as the label: this line
+		// contains the word "contradicts" after "BASELESS".
+		{"Evidence.\nVERDICT: BASELESS - the context neither supports nor contradicts it", Baseless},
+		{"Evidence.\n**VERDICT: ENTAILED**", Entailed},
+		{"Evidence.\nVERDICT: NOT SUPPORTED", Baseless},
+		{"Evidence.\nVERDICT: UNSUPPORTED", Baseless},
+		{"Evidence.\nverdict: refuted", Baseless},
+		{"Evidence.\nVERDICT: SUPPORTED", Entailed},
+		{"no verdict line at all", Baseless},
+		{"", Baseless},
 	}
-	ok, _ = parseVerdict("Nope.\nverdict: refuted")
-	if ok {
-		t.Fatal("want refuted")
+	for _, c := range cases {
+		got, just := parseVerdict(c.raw)
+		if got != c.want {
+			t.Fatalf("%q: label = %v, want %v (justification %q)", c.raw, got, c.want, just)
+		}
 	}
-	ok, _ = parseVerdict("no verdict line at all")
-	if ok {
-		t.Fatal("missing verdict must default refuted")
+	if _, just := parseVerdict("Evidence line.\nVERDICT: ENTAILED"); !strings.Contains(just, "Evidence line.") {
+		t.Fatalf("justification not split off the verdict: %q", just)
 	}
-	ok, _ = parseVerdict("Context says 3B.\nVERDICT: NOT SUPPORTED")
-	if ok {
-		t.Fatal("NOT SUPPORTED must be refuted")
+	if got := Label(0).String(); got != "entailed" {
+		t.Fatalf("Entailed label string = %q", got)
 	}
-	ok, _ = parseVerdict("VERDICT: UNSUPPORTED")
-	if ok {
-		t.Fatal("UNSUPPORTED must be refuted")
+	if Contradicted.Supported() || Baseless.Supported() || !Entailed.Supported() {
+		t.Fatal("only entailed may count as supported")
 	}
 }
 
@@ -218,5 +234,27 @@ func TestRecallCountsUniqueDocs(t *testing.T) {
 	}
 	if r != 1.0 {
 		t.Fatalf("recall %v, want 1.0 (one relevant doc, found)", r)
+	}
+}
+
+// TestUnsolvableIsMissOrFullyRefuted: the ceiling metric counts a pair only when no
+// router could have rescued it - retrieval found nothing, or every claim was refuted.
+// A partially supported answer is solvable; a missing retrieval is not a failed judge.
+func TestUnsolvableIsMissOrFullyRefuted(t *testing.T) {
+	cases := []struct {
+		name string
+		res  PairResult
+		want bool
+	}{
+		{"retrieval miss", PairResult{RetrievalMiss: true}, true},
+		{"all claims refuted", PairResult{Claims: []ClaimResult{{Claim: "a"}, {Claim: "b"}}, Faithfulness: 0}, true},
+		{"one claim supported", PairResult{Claims: []ClaimResult{{Claim: "a"}, {Claim: "b"}}, Faithfulness: 0.5}, false},
+		{"fully supported", PairResult{Claims: []ClaimResult{{Claim: "a"}}, Faithfulness: 1}, false},
+		{"no claims at all", PairResult{}, false},
+	}
+	for _, c := range cases {
+		if got := Unsolvable(c.res); got != c.want {
+			t.Fatalf("%s: Unsolvable = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

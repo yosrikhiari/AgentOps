@@ -13,7 +13,34 @@ import (
 	"time"
 )
 
-const JudgePromptVersion = "faithfulness-v1"
+const JudgePromptVersion = "faithfulness-v2"
+
+// Label is the judge's verdict on one claim. Three labels, not two: "the context says
+// the opposite" and "the context does not mention it" are different failures with
+// different fixes (wrong retrieval vs missing knowledge), and collapsing them was the
+// reason a 0.00 score could not be explained.
+type Label int
+
+const (
+	Entailed Label = iota
+	Contradicted
+	Baseless
+)
+
+func (l Label) String() string {
+	switch l {
+	case Entailed:
+		return "entailed"
+	case Contradicted:
+		return "contradicted"
+	default:
+		return "baseless"
+	}
+}
+
+// Supported is the boundary the scorer and the existing binary metrics use: only an
+// entailed claim counts toward faithfulness. Both negative labels fail closed.
+func (l Label) Supported() bool { return l == Entailed }
 
 type RateLimitError struct {
 	After time.Duration
@@ -74,13 +101,16 @@ func WithRetry(ctx context.Context, attempts int, base time.Duration, fn func() 
 }
 
 type Judge interface {
-	JudgeClaim(ctx context.Context, claim, contextText string) (supported bool, justification string, err error)
+	JudgeClaim(ctx context.Context, claim, contextText string) (Label, string, error)
 }
 
 func faithfulnessPrompt(claim, contextText string) string {
-	return fmt.Sprintf(`Decide if the CLAIM is fully supported by the CONTEXT. Ignore answer length and style.
+	return fmt.Sprintf(`Decide how the CLAIM relates to the CONTEXT. Judge only the context, not what you know.
 First write 1-2 sentences of evidence-based justification quoting the context.
-Then on the last line write exactly: VERDICT: SUPPORTED or VERDICT: REFUTED.
+Then on the last line write exactly one of:
+VERDICT: ENTAILED (the context states it or directly implies it)
+VERDICT: CONTRADICTED (the context states the opposite)
+VERDICT: BASELESS (the context neither supports nor contradicts it)
 
 CONTEXT:
 %s
@@ -89,23 +119,39 @@ CLAIM:
 %s`, contextText, claim)
 }
 
-func parseVerdict(raw string) (bool, string) {
+// parseVerdict reads the label after the last VERDICT: marker. Only the first token after
+// the marker counts: a label followed by an explanation ("BASELESS - the context neither
+// supports nor contradicts it") must not be read as the words inside the explanation.
+// A missing or unrecognised verdict is Baseless - fail closed, as before.
+func parseVerdict(raw string) (Label, string) {
 	upper := strings.ToUpper(raw)
 	idx := strings.LastIndex(upper, "VERDICT:")
 	just := strings.TrimSpace(raw)
-	if idx >= 0 {
-		just = strings.TrimSpace(raw[:idx])
-		rest := upper[idx:]
-		// Judges paraphrase: "REFUTED", "NOT SUPPORTED", "UNSUPPORTED" all mean no.
-		if strings.Contains(rest, "REFUTED") || strings.Contains(rest, "NOT SUPPORTED") || strings.Contains(rest, "UNSUPPORTED") {
-			return false, just
-		}
-		if strings.Contains(rest, "SUPPORTED") {
-			return true, just
-		}
-		return false, just
+	if idx < 0 {
+		return Baseless, just
 	}
-	return false, just
+	just = strings.TrimSpace(raw[:idx])
+	rest := strings.TrimSpace(upper[idx+len("VERDICT:"):])
+	if i := strings.IndexAny(rest, "\r\n"); i >= 0 {
+		rest = rest[:i]
+	}
+	rest = strings.TrimLeft(strings.TrimSpace(rest), "*-: ")
+	switch {
+	case strings.HasPrefix(rest, "ENTAILED"):
+		return Entailed, just
+	case strings.HasPrefix(rest, "CONTRADICT"):
+		return Contradicted, just
+	case strings.HasPrefix(rest, "BASELESS"), strings.HasPrefix(rest, "NOT IN CONTEXT"):
+		return Baseless, just
+	case strings.HasPrefix(rest, "NOT SUPPORTED"), strings.HasPrefix(rest, "UNSUPPORTED"), strings.HasPrefix(rest, "REFUTED"):
+		// v1 asked for SUPPORTED/REFUTED, a vocabulary that cannot tell a contradiction
+		// from an absence. Read it as baseless: unsupported without inventing a stronger
+		// claim than the judge made.
+		return Baseless, just
+	case strings.HasPrefix(rest, "SUPPORTED"):
+		return Entailed, just
+	}
+	return Baseless, just
 }
 
 type OllamaJudge struct {
@@ -121,7 +167,7 @@ func NewOllamaJudge(baseURL, model string) *OllamaJudge {
 	return &OllamaJudge{Model: model, Gen: gen}
 }
 
-func (j *OllamaJudge) JudgeClaim(ctx context.Context, claim, contextText string) (bool, string, error) {
+func (j *OllamaJudge) JudgeClaim(ctx context.Context, claim, contextText string) (Label, string, error) {
 	var raw string
 	err := WithRetry(ctx, 3, time.Second, func() error {
 		r, err := j.Gen.Complete(faithfulnessPrompt(claim, contextText))
@@ -132,10 +178,10 @@ func (j *OllamaJudge) JudgeClaim(ctx context.Context, claim, contextText string)
 		return nil
 	})
 	if err != nil {
-		return false, "", err
+		return Baseless, "", err
 	}
-	ok, just := parseVerdict(raw)
-	return ok, just, nil
+	label, just := parseVerdict(raw)
+	return label, just, nil
 }
 
 type GroqJudge struct {
@@ -148,7 +194,7 @@ func NewGroqJudge(model, apiKey string) *GroqJudge {
 	return &GroqJudge{Model: model, APIKey: apiKey, Client: &http.Client{Timeout: 120 * time.Second}}
 }
 
-func (j *GroqJudge) JudgeClaim(ctx context.Context, claim, contextText string) (bool, string, error) {
+func (j *GroqJudge) JudgeClaim(ctx context.Context, claim, contextText string) (Label, string, error) {
 	var raw string
 	err := WithRetry(ctx, 4, 2*time.Second, func() error {
 		r, err := j.complete(ctx, claim, contextText)
@@ -159,10 +205,10 @@ func (j *GroqJudge) JudgeClaim(ctx context.Context, claim, contextText string) (
 		return nil
 	})
 	if err != nil {
-		return false, "", err
+		return Baseless, "", err
 	}
-	ok, just := parseVerdict(raw)
-	return ok, just, nil
+	label, just := parseVerdict(raw)
+	return label, just, nil
 }
 
 func (j *GroqJudge) complete(ctx context.Context, claim, contextText string) (string, error) {

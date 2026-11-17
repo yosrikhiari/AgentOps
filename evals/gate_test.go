@@ -60,7 +60,13 @@ func (d *gateDB) Query(ctx context.Context, sql string, args ...any) (Rows, erro
 
 func greenRun(id int) []any {
 	start := time.Date(2026, 11, 16, 10, id, 0, 0, time.UTC)
-	return []any{id, "qwen3:8b", 0.95, start, start.Add(4 * time.Minute)}
+	return []any{id, "qwen3:8b", "faithfulness-v2", 0.95, start, start.Add(4 * time.Minute)}
+}
+
+// runWithPrompt builds one gate row with an explicit judge prompt version.
+func runWithPrompt(id int, prompt string) []any {
+	start := time.Date(2026, 11, 16, 10, id, 0, 0, time.UTC)
+	return []any{id, "qwen3:8b", prompt, 0.95, start, start.Add(4 * time.Minute)}
 }
 
 // TestGateRunCarriesItsWindow: the gate report is only half useful without the
@@ -96,7 +102,7 @@ func TestReleaseGatePass(t *testing.T) {
 }
 
 func TestReleaseGateFailsBelowThreshold(t *testing.T) {
-	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), {2, "qwen3:8b", 0.41, time.Date(2026, 11, 16, 10, 2, 0, 0, time.UTC), time.Date(2026, 11, 16, 10, 6, 0, 0, time.UTC)}, greenRun(1)}}}
+	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), {2, "qwen3:8b", "faithfulness-v2", 0.41, time.Date(2026, 11, 16, 10, 2, 0, 0, time.UTC), time.Date(2026, 11, 16, 10, 6, 0, 0, time.UTC)}, greenRun(1)}}}
 	res, err := ReleaseGate(context.Background(), db, "v3", 3, 0.7)
 	if err != nil {
 		t.Fatal(err)
@@ -121,13 +127,41 @@ func TestReleaseGateNeedsKRuns(t *testing.T) {
 }
 
 func TestReleaseGateJudgeChangedInvalidates(t *testing.T) {
-	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), {1, "other-judge", 0.95, time.Date(2026, 11, 16, 10, 1, 0, 0, time.UTC), time.Date(2026, 11, 16, 10, 5, 0, 0, time.UTC)}}}}
+	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), {1, "other-judge", "faithfulness-v2", 0.95, time.Date(2026, 11, 16, 10, 1, 0, 0, time.UTC), time.Date(2026, 11, 16, 10, 5, 0, 0, time.UTC)}}}}
 	res, err := ReleaseGate(context.Background(), db, "v3", 3, 0.7)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Pass {
 		t.Fatal("mixed judges must invalidate the window")
+	}
+}
+
+// TestReleaseGatePromptChangedInvalidates: the same model asked a different question is a
+// different judge. A window that straddles a prompt change cannot say anything about the
+// tree under test, and the report must name the versions instead of failing silently.
+func TestReleaseGatePromptChangedInvalidates(t *testing.T) {
+	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), runWithPrompt(1, "faithfulness-v1")}}}
+	res, err := ReleaseGate(context.Background(), db, "v3", 3, 0.7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Pass {
+		t.Fatal("a prompt change across the window must invalidate it")
+	}
+	if !strings.Contains(res.Report, "prompt changed") ||
+		!strings.Contains(res.Report, "faithfulness-v1") {
+		t.Fatalf("report does not name the prompt change: %q", res.Report)
+	}
+	// An empty version (a run recorded before the column existed) is its own value: it
+	// must not compare equal to a real version.
+	db = &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), runWithPrompt(1, "")}}}
+	res, err = ReleaseGate(context.Background(), db, "v3", 3, 0.7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Pass || !strings.Contains(res.Report, "unknown-prompt") {
+		t.Fatalf("unknown prompt must not match a version: %+v", res)
 	}
 }
 

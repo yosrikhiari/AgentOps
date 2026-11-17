@@ -16,21 +16,40 @@ type scriptJudge struct {
 	calls   int
 }
 
-func (s *scriptJudge) JudgeClaim(_ context.Context, claim, _ string) (bool, string, error) {
+func (s *scriptJudge) JudgeClaim(_ context.Context, claim, _ string) (Label, string, error) {
 	s.calls++
 	if s.errOn[claim] {
-		return false, "", errors.New("judge down")
+		return Baseless, "", errors.New("judge down")
 	}
-	return s.verdict[claim], "because", nil
+	if s.verdict[claim] {
+		return Entailed, "because", nil
+	}
+	return Baseless, "because", nil
 }
 
 // markJudge answers from the first line of the context, so reversing the context
 // changes the verdict - exactly the instability the flip probe is meant to catch.
 type markJudge struct{}
 
-func (markJudge) JudgeClaim(_ context.Context, _ /*claim*/, contextText string) (bool, string, error) {
+func (markJudge) JudgeClaim(_ context.Context, _ /*claim*/, contextText string) (Label, string, error) {
 	first, _, _ := strings.Cut(contextText, "\n")
-	return strings.Contains(first, "MARK"), "first line decides", nil
+	if strings.Contains(first, "MARK") {
+		return Entailed, "first line decides", nil
+	}
+	return Contradicted, "first line decides", nil
+}
+
+// labelOnlyJudge moves between the two negative labels when the context is reversed:
+// the supported/unsupported decision never changes, so only the label-flip counter may
+// record it.
+type labelOnlyJudge struct{}
+
+func (labelOnlyJudge) JudgeClaim(_ context.Context, _ /*claim*/, contextText string) (Label, string, error) {
+	first, _, _ := strings.Cut(contextText, "\n")
+	if strings.Contains(first, "MARK") {
+		return Baseless, "absent", nil
+	}
+	return Contradicted, "opposite", nil
 }
 
 func TestLoadAuditParsesItems(t *testing.T) {
@@ -131,8 +150,19 @@ func TestAuditFlipProbe(t *testing.T) {
 	if run.Flips != 1 || run.FlipComparable != 1 {
 		t.Fatalf("flips = %d/%d, want 1 comparable flip", run.Flips, run.FlipComparable)
 	}
+	if run.DecisionFlips != 1 {
+		t.Fatalf("entailed vs contradicted crosses the supported boundary: %+v", run)
+	}
 	if run.FlipErrors != 0 {
 		t.Fatalf("flip errors = %d", run.FlipErrors)
+	}
+	// A label-only flip (baseless vs contradicted) is instability but not a different
+	// decision: it must be reported, and must not fail the decision-flip floor.
+	labelOnly := RunAudit(context.Background(), []AuditItem{{ID: "x", Claim: "c", Context: "MARK\nd", Supported: false}},
+		[]NamedJudge{{Name: "lo", Judge: labelOnlyJudge{}}}, true)
+	lo := labelOnly.Judges[0]
+	if lo.Flips != 1 || lo.DecisionFlips != 0 {
+		t.Fatalf("label-only flip = %+v", lo)
 	}
 	// Without the probe nothing is claimed.
 	plain := RunAudit(context.Background(), items, []NamedJudge{{Name: "m", Judge: markJudge{}}}, false)
@@ -161,21 +191,27 @@ func TestAuditCountsErrorsNotVerdicts(t *testing.T) {
 
 func TestAuditVerdictThresholds(t *testing.T) {
 	good := AuditReport{Judges: []JudgeRun{{Judge: "a", Confusion: Confusion{TP: 8, TN: 6, FP: 0, FN: 0}}}}
-	if v := AuditVerdict(good, 0.8, 0.2); !v.Pass {
+	if v := AuditVerdict(good, 0.8, 0.2, 0.1); !v.Pass {
 		t.Fatalf("good run failed: %+v", v)
 	}
 	missed := AuditReport{Judges: []JudgeRun{{Judge: "a", Confusion: Confusion{TP: 5, TN: 6, FP: 0, FN: 3}}}}
-	v := AuditVerdict(missed, 0.8, 0.2)
+	v := AuditVerdict(missed, 0.8, 0.2, 0.1)
 	if v.Pass || !strings.Contains(strings.Join(v.Reasons, " "), "recall") {
 		t.Fatalf("low recall passed: %+v", v)
 	}
 	alarm := AuditReport{Judges: []JudgeRun{{Judge: "a", Confusion: Confusion{TP: 8, TN: 4, FP: 2, FN: 0}}}}
-	v = AuditVerdict(alarm, 0.8, 0.2)
+	v = AuditVerdict(alarm, 0.8, 0.2, 0.1)
 	if v.Pass || !strings.Contains(strings.Join(v.Reasons, " "), "false alarm") {
 		t.Fatalf("false alarms passed: %+v", v)
 	}
+	flaky := AuditReport{Judges: []JudgeRun{{Judge: "a", Confusion: Confusion{TP: 8, TN: 6},
+		DecisionFlips: 2, FlipComparable: 10}}}
+	v = AuditVerdict(flaky, 0.8, 0.2, 0.1)
+	if v.Pass || !strings.Contains(strings.Join(v.Reasons, " "), "decision flips") {
+		t.Fatalf("decision flips passed: %+v", v)
+	}
 	empty := AuditReport{Judges: []JudgeRun{{Judge: "a", Confusion: Confusion{Errors: 14}}}}
-	if v := AuditVerdict(empty, 0.8, 0.2); v.Pass {
+	if v := AuditVerdict(empty, 0.8, 0.2, 0.1); v.Pass {
 		t.Fatalf("an audit with no verdicts passed: %+v", v)
 	}
 }

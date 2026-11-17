@@ -62,8 +62,9 @@ func (d *driftMemDB) QueryRow(ctx context.Context, sql string, args ...any) Row 
 	golden, _ := args[0].(string)
 	judge, _ := args[1].(string)
 	model, _ := args[2].(string)
-	score, _ := args[3].(float64)
-	d.runs = append([]runRow{{id: d.nextID, golden: golden, judge: judge, model: model, score: score}}, d.runs...)
+	prompt, _ := args[3].(string)
+	score, _ := args[4].(float64)
+	d.runs = append([]runRow{{id: d.nextID, golden: golden, judge: judge, prompt: prompt, model: model, score: score}}, d.runs...)
 	return driftRow{id: d.nextID}
 }
 
@@ -116,7 +117,7 @@ func (d *driftMemDB) Query(ctx context.Context, sql string, args ...any) (Rows, 
 				if i >= 2 {
 					break
 				}
-				rows = append(rows, []any{r.id, r.golden, r.judge, r.score})
+				rows = append(rows, []any{r.id, r.golden, r.judge, r.prompt, r.score})
 			}
 			return &driftRows{rows: rows}, nil
 		}
@@ -152,7 +153,7 @@ func TestRecordAndDriftReport(t *testing.T) {
 		{Question: "q2", Faithfulness: 0.9, Precision: 1, Recall: 1},
 		{Question: "q-miss", Precision: 0, Recall: 0, RetrievalMiss: true},
 	}
-	id, err := RecordRun(ctx, db, db, "v1", "test-judge", "test-model", 0.55, time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC), pairs)
+	id, err := RecordRun(ctx, db, db, "v1", "test-judge", "test-model", "faithfulness-v2", 0.55, time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC), pairs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +163,10 @@ func TestRecordAndDriftReport(t *testing.T) {
 	if db.runs[0].model != "test-model" {
 		t.Fatalf("model under test not recorded: %+v", db.runs[0])
 	}
-	db.runs = append(db.runs, runRow{id: 99, golden: "v1", judge: "old", score: 0.95})
+	if db.runs[0].prompt != "faithfulness-v2" {
+		t.Fatalf("judge prompt version not recorded: %+v", db.runs[0])
+	}
+	db.runs = append(db.runs, runRow{id: 99, golden: "v1", judge: "old", prompt: "faithfulness-v1", score: 0.95})
 	rep, err := DriftReportFor(ctx, db, "v1", 0.7)
 	if err != nil {
 		t.Fatal(err)
@@ -181,6 +185,9 @@ func TestRecordAndDriftReport(t *testing.T) {
 	}
 	if rep.JudgeNow != "test-judge" || rep.JudgeThen != "old" || !rep.JudgeChanged {
 		t.Fatalf("judge provenance missing: %+v", rep)
+	}
+	if !rep.PromptChanged || rep.PromptNow != "faithfulness-v2" || rep.PromptThen != "faithfulness-v1" {
+		t.Fatalf("prompt change not flagged as a judge change: %+v", rep)
 	}
 	if len(rep.WorstCases) != 3 {
 		t.Fatalf("want 3 worst cases, got %+v", rep.WorstCases)

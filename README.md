@@ -100,10 +100,10 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--trace <id>` | print redacted spans for a chat or workflow |
 | `--advise` | print the static model advisor report (Track K: per-model size/VRAM fit, presence, co-residency verdict) and exit |
 | `--draft-golden` → review → `--freeze-golden` | build a golden set (`--golden-version vN`): LLM drafts, human reviews, validator rejects unscorable answers, hash frozen |
-| `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show) |
+| `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show); the suite line also reports `misses`, `refuted`, `no-claims` and `unsolvable` — the share of the set no router could rescue |
 | `--score-model NAME` | with `--score`: generate each answer with MODEL (temperature 0, 256 tokens) instead of scoring frozen answers; tags the run for Track L model comparison |
 | `--release-gate` (`--golden-version vN`, `--gate-k 3`) | pre-tag check (Track T): exit 0 only if the last k golden-answer runs clear today's `EVAL_THRESHOLD` on one judge; run locally before tagging, CI has no GPU/Postgres |
-| `--judge-audit` (`--audit-file`, `--judge-model`, `--judge2-model`) | measure the judge itself against a hand-labelled claim/context set: precision, recall and false-alarm rate for "unsupported", plus Cohen's κ between two judges and a context-order flip probe; exit 1 below recall 0.80 / false alarm 0.20, 2 when nothing could be judged |
+| `--judge-audit` (`--audit-file`, `--judge-model`, `--judge2-model`) | measure the judge itself against a hand-labelled claim/context set: precision, recall and false-alarm rate for "unsupported", Cohen's κ between two judges, and a context-order flip probe that separates label flips from decision flips; exit 1 below recall 0.80 / false alarm 0.20 / decision flips 0.10, 2 when nothing could be judged |
 | `--route-replay` (`--route-window 720h`) | print the intent/tier decision mix recorded in `route_decisions` and the baselines a learned router must beat; no quality number until shadow outcomes exist |
 | `--version` | print version, commit and build date |
 | `--version-json` | the same as one line of JSON (`version`, `commit`, `date`, `go`, `module`) for scripts and the release checklist |

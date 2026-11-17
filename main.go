@@ -374,16 +374,23 @@ func runJudgeAudit(ollamaURL, model, model2, path string) {
 	}
 	rep := evals.RunAudit(context.Background(), items, judges, true)
 	log.Printf("judge audit: %d labelled items, prompt=%s (positive class = unsupported)", rep.Items, evals.JudgePromptVersion)
-	log.Printf("  %-24s %3s %3s %3s %3s %5s %6s %10s %7s", "judge", "tp", "fp", "fn", "tn", "prec", "recall", "false-alrm", "flips")
+	log.Printf("  %-24s %3s %3s %3s %3s %5s %6s %10s %7s %7s", "judge", "tp", "fp", "fn", "tn", "prec", "recall", "false-alrm", "lflip", "dflip")
 	for _, j := range rep.Judges {
 		flips := "n/a"
 		if j.FlipComparable > 0 {
 			flips = fmt.Sprintf("%d/%d", j.Flips, j.FlipComparable)
 		}
-		log.Printf("  %-24s %3d %3d %3d %3d %5.2f %6.2f %10.2f %7s",
-			j.Judge, j.TP, j.FP, j.FN, j.TN, j.Precision(), j.Recall(), j.FalseAlarmRate(), flips)
+		dflips := "n/a"
+		if j.FlipComparable > 0 {
+			dflips = fmt.Sprintf("%d/%d", j.DecisionFlips, j.FlipComparable)
+		}
+		log.Printf("  %-24s %3d %3d %3d %3d %5.2f %6.2f %10.2f %7s %7s",
+			j.Judge, j.TP, j.FP, j.FN, j.TN, j.Precision(), j.Recall(), j.FalseAlarmRate(), flips, dflips)
 		if j.Errors > 0 {
 			log.Printf("  %-24s %d call(s) returned no verdict (counted as errors, not agreement)", j.Judge, j.Errors)
+		}
+		if len(j.FlipIDs) > 0 {
+			log.Printf("  %-24s moved on reorder: %s", j.Judge, strings.Join(j.FlipIDs, ", "))
 		}
 	}
 	if rep.Agreement != nil {
@@ -399,11 +406,11 @@ func runJudgeAudit(ollamaURL, model, model2, path string) {
 		log.Printf("judge audit: no verdicts at all - is %q pulled and Ollama reachable at %s?", model, ollamaURL)
 		os.Exit(2)
 	}
-	if v := evals.AuditVerdict(rep, 0.80, 0.20); !v.Pass {
+	if v := evals.AuditVerdict(rep, 0.80, 0.20, 0.10); !v.Pass {
 		log.Printf("FAIL: %s", strings.Join(v.Reasons, "; "))
 		os.Exit(1)
 	}
-	log.Printf("PASS: recall >= 0.80 and false-alarm <= 0.20 over %d items. n is small - read the table, not just the verdict.", rep.Items)
+	log.Printf("PASS: recall >= 0.80, false-alarm <= 0.20, decision flips <= 0.10 over %d items. n is small - read the table, not just the verdict.", rep.Items)
 }
 
 func latestEvalScore(db pgDB, goldenVersion string) (float64, bool) {
@@ -940,7 +947,7 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	}
 	topK := 5
 	var sumF, sumP, sumR float64
-	var scored, misses int
+	var scored, misses, refuted, noClaims, unsolvable int
 	var results []evals.PairResult
 	auditLog := audit.SQLStore{Exec: pgAdapter{conn}, Query: pgAdapter{conn}}
 	if err := auditLog.Append(ctx, audit.EvalStarted(goldenVersion, scoreModel, len(pairs))); err != nil {
@@ -978,6 +985,14 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		} else {
 			sumF += res.Faithfulness
 			scored++
+			if len(res.Claims) == 0 {
+				noClaims++ // the answer was too short to split into claims: unaffected by the judge
+			} else if res.Faithfulness == 0 {
+				refuted++
+			}
+		}
+		if evals.Unsolvable(res) {
+			unsolvable++
 		}
 		sumP += res.Precision
 		sumR += res.Recall
@@ -995,14 +1010,17 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		// truth is "nothing was asked of the judge".
 		log.Printf("warning: no judged pairs - all %d were retrieval misses; is the corpus ingested? run --ingest. This run is evidence about retrieval, not a faithfulness score", misses)
 	}
-	log.Printf("suite n=%d scored=%d misses=%d judge=%s prompt=%s faith=%.3f precision=%.3f recall=%.3f",
-		len(pairs), scored, misses, judgeName, evals.JudgePromptVersion, avgF, sumP/n, sumR/n)
+	// unsolvable = misses + fully refuted: the share of the suite no router could have
+	// rescued, which is the ceiling any routing policy is measured against. It is printed
+	// next to the score so a low faith number is never read as a routing opportunity.
+	log.Printf("suite n=%d scored=%d misses=%d refuted=%d no-claims=%d unsolvable=%d judge=%s prompt=%s faith=%.3f precision=%.3f recall=%.3f",
+		len(pairs), scored, misses, refuted, noClaims, unsolvable, judgeName, evals.JudgePromptVersion, avgF, sumP/n, sumR/n)
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	saver := pgAdapter{tx}
-	runID, err := evals.RecordRun(ctx, saver, saver, goldenVersion, judgeName, scoreModel, avgF, runStart, results)
+	runID, err := evals.RecordRun(ctx, saver, saver, goldenVersion, judgeName, scoreModel, evals.JudgePromptVersion, avgF, runStart, results)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("record run: %w", err)

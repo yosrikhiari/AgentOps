@@ -119,9 +119,17 @@ func (c Confusion) FalseAlarmRate() float64 {
 type JudgeRun struct {
 	Judge string
 	Confusion
+	// Flips counts label changes under the context-order probe; DecisionFlips counts the
+	// subset that changed supported/unsupported. A judge that moves between contradicted
+	// and baseless is unstable; a judge that moves across the supported boundary is
+	// unreliable, and only the second can change a release decision.
 	Flips          int
+	DecisionFlips  int
 	FlipComparable int // items whose reversed context actually differs
 	FlipErrors     int
+	// FlipIDs names the items that moved, so a flip rate is actionable instead of a
+	// number nobody can chase.
+	FlipIDs []string
 }
 
 func (r JudgeRun) FlipRate() float64 {
@@ -129,6 +137,13 @@ func (r JudgeRun) FlipRate() float64 {
 		return 0
 	}
 	return float64(r.Flips) / float64(r.FlipComparable)
+}
+
+func (r JudgeRun) DecisionFlipRate() float64 {
+	if r.FlipComparable == 0 {
+		return 0
+	}
+	return float64(r.DecisionFlips) / float64(r.FlipComparable)
 }
 
 // Agreement is Cohen's kappa between two judges on the items both judged.
@@ -152,18 +167,18 @@ type NamedJudge struct {
 // into a verdict: "the judge was down" and "the judge agreed" must not look alike.
 func RunAudit(ctx context.Context, items []AuditItem, judges []NamedJudge, flip bool) AuditReport {
 	rep := AuditReport{Items: len(items)}
-	verdicts := make([][]*bool, len(judges))
+	verdicts := make([][]*Label, len(judges))
 	for ji, nj := range judges {
 		run := JudgeRun{Judge: nj.Name}
-		verdicts[ji] = make([]*bool, len(items))
+		verdicts[ji] = make([]*Label, len(items))
 		for i, it := range items {
-			ok, _, err := nj.Judge.JudgeClaim(ctx, it.Claim, it.Context)
+			label, _, err := nj.Judge.JudgeClaim(ctx, it.Claim, it.Context)
 			if err != nil {
 				run.Errors++
 				continue
 			}
-			v := ok
-			verdicts[ji][i] = &v
+			ok := label.Supported()
+			verdicts[ji][i] = &label
 			switch {
 			case it.Supported && ok:
 				run.TN++
@@ -182,13 +197,17 @@ func RunAudit(ctx context.Context, items []AuditItem, judges []NamedJudge, flip 
 				continue // one line: there is no order to reverse
 			}
 			run.FlipComparable++
-			ok2, _, err := nj.Judge.JudgeClaim(ctx, it.Claim, flipped)
+			label2, _, err := nj.Judge.JudgeClaim(ctx, it.Claim, flipped)
 			if err != nil {
 				run.FlipErrors++
 				continue
 			}
-			if ok2 != ok {
+			if label2 != label {
 				run.Flips++
+				if label2.Supported() != label.Supported() {
+					run.DecisionFlips++
+				}
+				run.FlipIDs = append(run.FlipIDs, fmt.Sprintf("%s: %s->%s", it.ID, label, label2))
 			}
 		}
 		rep.Judges = append(rep.Judges, run)
@@ -210,20 +229,23 @@ func flipContext(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-func cohenKappa(a, b []*bool) *Agreement {
+// cohenKappa measures agreement on the decision that matters - supported vs not - over
+// the items both judges labelled. Two judges can agree on "not supported" while naming
+// different reasons; that is not a disagreement about whether to block a release.
+func cohenKappa(a, b []*Label) *Agreement {
 	pairs, match, aYes, bYes := 0, 0, 0, 0
 	for i := range a {
 		if i >= len(b) || a[i] == nil || b[i] == nil {
 			continue
 		}
 		pairs++
-		if *a[i] == *b[i] {
+		if a[i].Supported() == b[i].Supported() {
 			match++
 		}
-		if *a[i] {
+		if a[i].Supported() {
 			aYes++
 		}
-		if *b[i] {
+		if b[i].Supported() {
 			bYes++
 		}
 	}
@@ -251,7 +273,7 @@ type Verdict struct {
 	Reasons []string
 }
 
-func AuditVerdict(r AuditReport, minRecall, maxFalseAlarm float64) Verdict {
+func AuditVerdict(r AuditReport, minRecall, maxFalseAlarm, maxDecisionFlip float64) Verdict {
 	v := Verdict{Pass: true}
 	judged := 0
 	for _, j := range r.Judges {
@@ -266,6 +288,10 @@ func AuditVerdict(r AuditReport, minRecall, maxFalseAlarm float64) Verdict {
 		if fa := j.FalseAlarmRate(); fa > maxFalseAlarm {
 			v.Pass = false
 			v.Reasons = append(v.Reasons, fmt.Sprintf("%s false alarm rate %.2f above %.2f", j.Judge, fa, maxFalseAlarm))
+		}
+		if df := j.DecisionFlipRate(); df > maxDecisionFlip {
+			v.Pass = false
+			v.Reasons = append(v.Reasons, fmt.Sprintf("%s decision flips %.2f above %.2f", j.Judge, df, maxDecisionFlip))
 		}
 	}
 	if judged == 0 {

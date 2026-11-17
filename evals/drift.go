@@ -16,13 +16,20 @@ type WorstCase struct {
 }
 
 type DriftReport struct {
-	GoldenVersion string      `json:"golden_version"`
-	Threshold     float64     `json:"threshold"`
-	ScoreThen     float64     `json:"score_then"`
-	ScoreNow      float64     `json:"score_now"`
-	JudgeThen     string      `json:"judge_then"`
-	JudgeNow      string      `json:"judge_now"`
-	JudgeChanged  bool        `json:"judge_changed"`
+	GoldenVersion string  `json:"golden_version"`
+	Threshold     float64 `json:"threshold"`
+	ScoreThen     float64 `json:"score_then"`
+	ScoreNow      float64 `json:"score_now"`
+	JudgeThen     string  `json:"judge_then"`
+	JudgeNow      string  `json:"judge_now"`
+	JudgeChanged  bool    `json:"judge_changed"`
+	// PromptNow/PromptThen are the judge prompt versions. A prompt change moves the
+	// verdict boundary, so it invalidates a comparison exactly like a judge swap; the
+	// empty string is "recorded before the column existed", kept distinct from any
+	// real version rather than guessed at.
+	PromptNow     string      `json:"prompt_now"`
+	PromptThen    string      `json:"prompt_then"`
+	PromptChanged bool        `json:"prompt_changed"`
 	Delta         float64     `json:"delta"`
 	Alert         bool        `json:"alert"`
 	Runs          int         `json:"runs"`
@@ -31,14 +38,14 @@ type DriftReport struct {
 	WorstCases    []WorstCase `json:"worst_cases"`
 }
 
-func RecordRun(ctx context.Context, exec Execer, qr Querier, goldenVersion, judgeModel, model string, score float64, startedAt time.Time, pairs []PairResult) (int, error) {
+func RecordRun(ctx context.Context, exec Execer, qr Querier, goldenVersion, judgeModel, model, judgePrompt string, score float64, startedAt time.Time, pairs []PairResult) (int, error) {
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
 	var id int
 	row := qr.QueryRow(ctx,
-		`INSERT INTO eval_runs (golden_version, judge_model, model, score, started_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		goldenVersion, judgeModel, model, score, startedAt)
+		`INSERT INTO eval_runs (golden_version, judge_model, model, judge_prompt, score, started_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		goldenVersion, judgeModel, model, judgePrompt, score, startedAt)
 	if err := row.Scan(&id); err != nil {
 		return 0, err
 	}
@@ -63,6 +70,7 @@ func RecordRun(ctx context.Context, exec Execer, qr Querier, goldenVersion, judg
 type runRow struct {
 	id     int
 	judge  string
+	prompt string
 	model  string
 	score  float64
 	golden string
@@ -71,7 +79,7 @@ type runRow struct {
 func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, threshold float64) (DriftReport, error) {
 	rep := DriftReport{GoldenVersion: goldenVersion, Threshold: threshold, WorstCases: []WorstCase{}}
 	rows, err := db.Query(ctx,
-		`SELECT id, golden_version, judge_model, score FROM eval_runs
+		`SELECT id, golden_version, judge_model, judge_prompt, score FROM eval_runs
 		 WHERE golden_version = $1
 		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
 		 ORDER BY created_at DESC, id DESC LIMIT 2`,
@@ -83,7 +91,7 @@ func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, thres
 	var runs []runRow
 	for rows.Next() {
 		var r runRow
-		if err := rows.Scan(&r.id, &r.golden, &r.judge, &r.score); err != nil {
+		if err := rows.Scan(&r.id, &r.golden, &r.judge, &r.prompt, &r.score); err != nil {
 			return rep, err
 		}
 		runs = append(runs, r)
@@ -99,13 +107,18 @@ func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, thres
 	rep.ScoreThen = rep.ScoreNow
 	rep.JudgeNow = runs[0].judge
 	rep.JudgeThen = runs[0].judge
+	rep.PromptNow = runs[0].prompt
+	rep.PromptThen = runs[0].prompt
 	if len(runs) == 2 {
 		rep.ScoreThen = finiteOrZero(runs[1].score)
 		rep.JudgeThen = runs[1].judge
+		rep.PromptThen = runs[1].prompt
 	}
 	// A delta measured across two different judges is not drift in the corpus or the
-	// model under test — flag it so the reader does not chase a ghost.
+	// model under test — flag it so the reader does not chase a ghost. A prompt change
+	// is the same kind of break: the judge is the same model with a different question.
 	rep.JudgeChanged = rep.JudgeNow != rep.JudgeThen
+	rep.PromptChanged = rep.PromptNow != rep.PromptThen
 	rep.Delta = rep.ScoreNow - rep.ScoreThen
 	rep.Alert = rep.ScoreNow < threshold
 	wrows, err := db.Query(ctx,

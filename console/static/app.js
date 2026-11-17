@@ -448,7 +448,10 @@
     });
     const metrics = h('div', { class: 'tower-metric-row' },
       metric('Latest faithfulness', drift.runs ? fmt.score(drift.score_now) : '–', drift.alert ? 'ALERT: below ' + drift.threshold : 'threshold ' + (drift.threshold ?? 0.7), drift.alert ? 'down' : 'up'),
-      metric('Delta vs previous', drift.runs > 1 ? (drift.delta >= 0 ? '+' : '') + drift.delta.toFixed(3) : '–', drift.judge_changed ? 'judge changed — not corpus drift' : (drift.judge_now || '')),
+      metric('Delta vs previous', drift.runs > 1 ? (drift.delta >= 0 ? '+' : '') + drift.delta.toFixed(3) : '–',
+        drift.judge_changed ? 'judge changed — not corpus drift'
+          : drift.prompt_changed ? 'judge prompt changed — not corpus drift'
+            : (drift.judge_now || '')),
       metric('Runs (' + data.golden_version + ')', runs.length, runs.length ? 'last ' + fmt.date(runs[0].created_at) : ''),
       metric('Suite status', status.running ? 'running' : (status.error ? 'failed' : 'idle'), status.error || (status.finished_at && status.finished_at !== '0001-01-01T00:00:00Z' ? 'finished ' + fmt.date(status.finished_at) : ''), status.error ? 'down' : ''));
     const history = panel('Score history', 'Every run of golden ' + data.golden_version + '; dashed line = alert threshold',
@@ -468,7 +471,7 @@
       h('tbody', null, runs.map(r => h('tr', null,
         h('td', { class: 'tower-mono' }, r.id),
         h('td', { class: 'tower-mono' }, fmt.date(r.created_at)),
-        h('td', null, chip(r.judge_model)),
+        h('td', null, chip(r.judge_model), r.judge_prompt ? ' ' + chip(r.judge_prompt) : null),
         h('td', null, r.judged === 0 ? chip('unmeasured') : (r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score)))),
         h('td', null, r.gpu
           ? [chip('GPU ' + Math.round(r.gpu.util_mean_pct) + '%'),

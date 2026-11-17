@@ -469,7 +469,7 @@
         h('td', { class: 'tower-mono' }, r.id),
         h('td', { class: 'tower-mono' }, fmt.date(r.created_at)),
         h('td', null, chip(r.judge_model)),
-        h('td', null, r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score))),
+        h('td', null, r.judged === 0 ? chip('unmeasured') : (r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score)))),
         h('td', null, r.gpu
           ? [chip('GPU ' + Math.round(r.gpu.util_mean_pct) + '%'),
              r.gpu.swaps > 0 ? chip(r.gpu.swaps + ' swap' + (r.gpu.swaps === 1 ? '' : 's')) : null]

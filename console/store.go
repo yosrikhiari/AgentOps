@@ -47,11 +47,15 @@ type Overview struct {
 }
 
 type EvalRun struct {
-	ID        int       `json:"id"`
-	Golden    string    `json:"golden_version"`
-	Judge     string    `json:"judge_model"`
-	Model     string    `json:"model"`
-	Score     float64   `json:"score"`
+	ID     int     `json:"id"`
+	Golden string  `json:"golden_version"`
+	Judge  string  `json:"judge_model"`
+	Model  string  `json:"model"`
+	Score  float64 `json:"score"`
+	// Judged is how many pairs the judge actually scored. A run with zero judged pairs
+	// (every pair a retrieval miss) has no faithfulness measurement; the page must say
+	// "unmeasured", not paint a 0.000 red.
+	Judged    int       `json:"judged"`
 	StartedAt time.Time `json:"started_at"`
 	CreatedAt time.Time `json:"created_at"`
 	// GPU is what the card did between StartedAt and CreatedAt. Absent when the
@@ -279,6 +283,8 @@ func (s SQLStore) Overview(ctx context.Context) (Overview, error) {
 func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]EvalRun, error) {
 	rows, err := s.Query.Query(ctx,
 		`SELECT r.id, r.golden_version, r.judge_model, r.model, r.score, r.started_at, r.created_at,
+		        (SELECT count(*) FROM eval_pair_scores p
+		          WHERE p.run_id = r.id AND p.faithfulness IS NOT NULL)::int AS judged,
 		        g.samples, coalesce(g.util_mean,0), coalesce(g.util_peak,0),
 		        coalesce(g.mem_peak,0), coalesce(g.mem_total,0), coalesce(g.swaps,0)
 		 FROM eval_runs r
@@ -301,7 +307,7 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 		var utilMean, utilPeak float64
 		var memPeak, memTotal, swaps int64
 		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt,
-			&samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps); err != nil {
+			&r.Judged, &samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps); err != nil {
 			return nil, err
 		}
 		if samples > 0 {

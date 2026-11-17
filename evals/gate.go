@@ -40,7 +40,10 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 		k = 3
 	}
 	rows, err := db.Query(ctx,
-		`SELECT id, judge_model, score, started_at, created_at FROM eval_runs WHERE golden_version = $1 AND model = '' ORDER BY created_at DESC, id DESC LIMIT $2`,
+		`SELECT id, judge_model, score, started_at, created_at FROM eval_runs
+		 WHERE golden_version = $1 AND model = ''
+		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
+		 ORDER BY created_at DESC, id DESC LIMIT $2`,
 		golden, k)
 	if err != nil {
 		return res, err

@@ -131,6 +131,20 @@ func TestReleaseGateJudgeChangedInvalidates(t *testing.T) {
 	}
 }
 
+// TestReleaseGateIgnoresUnjudgedRuns: a run whose pairs were all retrieval misses has no
+// faithfulness measurement at all. It must never enter the window - otherwise an empty
+// corpus produces a 0.000 "score" that blocks releases and alarms an operator about a
+// model that was never judged.
+func TestReleaseGateIgnoresUnjudgedRuns(t *testing.T) {
+	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(1)}}}
+	if _, err := ReleaseGate(context.Background(), db, "v3", 1, 0.7); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(db.sql, "p.faithfulness IS NOT NULL") {
+		t.Fatalf("the gate must exclude runs with nothing judged: %q", db.sql)
+	}
+}
+
 func TestReleaseGateIgnoresModelRuns(t *testing.T) {
 	db := &gateDB{rows: &gateRows{rows: [][]any{greenRun(3), greenRun(2), greenRun(1)}}}
 	if _, err := ReleaseGate(context.Background(), db, "v3", 3, 0.7); err != nil {

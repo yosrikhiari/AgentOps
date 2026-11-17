@@ -71,7 +71,10 @@ type runRow struct {
 func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, threshold float64) (DriftReport, error) {
 	rep := DriftReport{GoldenVersion: goldenVersion, Threshold: threshold, WorstCases: []WorstCase{}}
 	rows, err := db.Query(ctx,
-		`SELECT id, golden_version, judge_model, score FROM eval_runs WHERE golden_version = $1 ORDER BY created_at DESC, id DESC LIMIT 2`,
+		`SELECT id, golden_version, judge_model, score FROM eval_runs
+		 WHERE golden_version = $1
+		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
+		 ORDER BY created_at DESC, id DESC LIMIT 2`,
 		goldenVersion)
 	if err != nil {
 		return rep, err

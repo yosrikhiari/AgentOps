@@ -927,6 +927,12 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	avgF := 0.0
 	if scored > 0 {
 		avgF = sumF / float64(scored) // faith where retrieved; misses excluded
+	} else {
+		// Nothing was judged, so there is no faithfulness measurement. The run is still
+		// recorded (its miss rows are evidence about retrieval), but drift and the gate
+		// ignore it - a 0.000 here would read as "everything was hallucinated" when the
+		// truth is "nothing was asked of the judge".
+		log.Printf("warning: no judged pairs - all %d were retrieval misses; is the corpus ingested? run --ingest. This run is evidence about retrieval, not a faithfulness score", misses)
 	}
 	log.Printf("suite n=%d scored=%d misses=%d judge=%s prompt=%s faith=%.3f precision=%.3f recall=%.3f",
 		len(pairs), scored, misses, judgeName, evals.JudgePromptVersion, avgF, sumP/n, sumR/n)

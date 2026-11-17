@@ -570,8 +570,8 @@ func TestSQLStoreEvalRunsCarriesGPUWindow(t *testing.T) {
 	start := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	end := start.Add(8 * time.Minute)
 	q := fakeQueryer{rows: [][]any{
-		{1, "v3", "qwen3:8b", "", 0.94, start, end, 41, 63.0, 88.0, int64(2 << 30), int64(4 << 30), int64(3)},
-		{2, "v3", "qwen3:8b", "", 0.95, start, end, 0, 0.0, 0.0, int64(0), int64(0), int64(0)},
+		{1, "v3", "qwen3:8b", "", 0.94, start, end, 72, 41, 63.0, 88.0, int64(2 << 30), int64(4 << 30), int64(3)},
+		{2, "v3", "qwen3:8b", "", 0.95, start, end, 0, 0, 0.0, 0.0, int64(0), int64(0), int64(0)},
 	}}
 	got, err := SQLStore{Query: q}.EvalRuns(context.Background(), "v3", 10)
 	if err != nil {
@@ -586,6 +586,9 @@ func TestSQLStoreEvalRunsCarriesGPUWindow(t *testing.T) {
 	if got[0].GPU == nil || got[0].GPU.Samples != 41 || got[0].GPU.Swaps != 3 ||
 		got[0].GPU.UtilMean != 63 || got[0].GPU.MemPeakBytes != 2<<30 {
 		t.Fatalf("gpu = %+v", got[0].GPU)
+	}
+	if got[0].Judged != 72 || got[1].Judged != 0 {
+		t.Fatalf("judged = %d/%d, want 72/0", got[0].Judged, got[1].Judged)
 	}
 	if got[1].GPU != nil {
 		t.Fatalf("a run with no samples must not carry a summary: %+v", got[1].GPU)

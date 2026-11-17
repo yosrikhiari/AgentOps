@@ -43,21 +43,32 @@ func (o *oneRow) Close()                 {}
 func TestInsertSample(t *testing.T) {
 	ex := &fakeExec{}
 	s := SQLStore{Exec: ex}
+	hot := true
 	if err := s.InsertSample(context.Background(), Sample{
 		At: time.Unix(0, 0).UTC(), Name: "GTX 1650", UtilPct: 39,
 		MemUsedBytes: 77 << 20, MemTotalBytes: 4096 << 20,
-		SwapsTotal: 5,
+		SwapsTotal: 5, Throttled: &hot,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(ex.sql, "INSERT INTO gpu_samples") {
 		t.Fatalf("sql = %s", ex.sql)
 	}
-	if len(ex.args) != 8 {
-		t.Fatalf("args = %d, want 8 (seven readings plus the swap counter)", len(ex.args))
+	if len(ex.args) != 9 {
+		t.Fatalf("args = %d, want 9 (readings, swap counter, throttle flag)", len(ex.args))
 	}
 	if got, _ := ex.args[7].(int64); got != 5 {
 		t.Fatalf("swaps_total = %v, want 5", ex.args[7])
+	}
+	if got, ok := ex.args[8].(*bool); !ok || got == nil || !*got {
+		t.Fatalf("throttle flag not stored as a known-true reading: %v", ex.args[8])
+	}
+	// Unknown must travel as NULL, not as false - that is the whole point of the pointer.
+	if err := s.InsertSample(context.Background(), Sample{At: time.Unix(0, 0).UTC(), Name: "GTX 1650"}); err != nil {
+		t.Fatal(err)
+	}
+	if ex.args[8] != (*bool)(nil) {
+		t.Fatalf("unknown throttle must insert NULL, got %v", ex.args[8])
 	}
 }
 
@@ -71,6 +82,8 @@ func TestSummaryMapsAggregateRow(t *testing.T) {
 		*(dest[3].(*int64)) = 2 << 30
 		*(dest[4].(*int64)) = 4 << 30
 		*(dest[5].(*int64)) = 3
+		*(dest[6].(*float64)) = 84
+		*(dest[7].(*int)) = 4
 		return nil
 	}}}
 	from := time.Unix(1000, 0).UTC()
@@ -84,6 +97,9 @@ func TestSummaryMapsAggregateRow(t *testing.T) {
 	}
 	if sum.MemPeakBytes != 2<<30 || sum.MemTotalBytes != 4<<30 || sum.Swaps != 3 {
 		t.Fatalf("summary = %+v", sum)
+	}
+	if sum.MaxTempC != 84 || sum.ThrottledSamples != 4 {
+		t.Fatalf("thermal summary = %+v", sum)
 	}
 	if !sum.From.Equal(from) || !sum.To.Equal(to) {
 		t.Fatalf("window = %v..%v", sum.From, sum.To)
@@ -101,6 +117,8 @@ func TestSummaryWithoutSamplesIsNotAnError(t *testing.T) {
 		*(dest[3].(*int64)) = 0
 		*(dest[4].(*int64)) = 0
 		*(dest[5].(*int64)) = 0
+		*(dest[6].(*float64)) = 0
+		*(dest[7].(*int)) = 0
 		return nil
 	}}}
 	sum, err := SQLStore{Query: q}.Summary(context.Background(), time.Now().Add(-time.Hour), time.Now())
@@ -124,6 +142,8 @@ func TestSeriesMapsRows(t *testing.T) {
 		*dest[4].(*int64) = 4096 << 20
 		*dest[5].(**float64) = nil
 		*dest[6].(**float64) = nil
+		*dest[7].(*int64) = 2
+		*dest[8].(**bool) = nil
 		return nil
 	}}
 	got, err := SQLStore{Query: &fakeQueryer{rows: rows}}.Series(context.Background(), ts, 100)

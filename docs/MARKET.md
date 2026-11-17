@@ -198,7 +198,8 @@ items that are now worth building first. Detailed steps live in
 ### 9.2 What shipped here since September
 
 GPU telemetry end to end: `gpu` package (nvidia-smi + Ollama `/api/ps`), `gpu_samples`
-history, seven `gpu_*` Prometheus series, `GET /v1/gpu` (the one endpoint that degrades
+history, eight `gpu_*` Prometheus series (the eighth is `gpu_thermal_throttled`, so a hot
+card is a fact rather than an explanation), `GET /v1/gpu` (the one endpoint that degrades
 instead of 502ing when Postgres is down), Tower `#/gpu` with four states, a nearest-sample
 chip on every trace, and `--advise` judging fit against the VRAM the box actually reports
 (`measured: NVIDIA GeForce GTX 1650` vs `docs/VRAM.md`). Also fixed by the same end-to-end

@@ -336,9 +336,11 @@
           </table>
         </section>
         <div class="tower-note">Ollama swapped models 4 times in the last 10 minutes. Every swap unloads one model to load another, so a run that straddles one is not a fair speed comparison — see docs/VRAM.md.</div>
+        <div class="tower-note"><span class="tower-pill degraded">throttled</span> The driver has cut this card's clocks for heat. Answers are unaffected, but work timed now is slower than the same work on a cool card, so do not compare this run with a quiet one.</div>
         <table class="ds-spec">
           <tr><th>piece</th><th>behaviour</th><th>used in</th></tr>
           <tr><td>pageGPU()</td><td>skeleton on first load (not on the 5 s self-poll), one GET /v1/gpu, error state with Retry, refresh only while #/gpu is the route</td><td>console/static/app.js · four states</td></tr>
+          <tr><td>throttled note</td><td>rendered above the charts when the sample's <span class="tower-mono">throttled</span> bit is set — a pill, because it is a state, plus one sentence saying what it costs (latency, not answers). Never a red pill: the card is slow, not broken</td><td>pageGPU() · note + pill</td></tr>
           <tr><td>gpuChart(points, key, max)</td><td>one &lt;path&gt; in a 900×140 viewBox, y clamped to max — 0–100 for utilisation, mem_total_bytes for VRAM — and an empty SVG when there are no points or no max</td><td>Utilisation · VRAM panels</td></tr>
           <tr><td>residentTable(list, err)</td><td>rows from Ollama's /api/ps; an empty list with an error says "Resident models unknown — …" instead of claiming nothing is resident</td><td>Resident models panel</td></tr>
           <tr><td>available:false</td><td>tall empty state only — no charts at all, never a 0% line for a card the driver could not be read</td><td>honesty rule</td></tr>

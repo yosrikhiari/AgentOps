@@ -41,34 +41,43 @@ func TestParseSMIReadsTheThermalThrottleBit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hot.Throttled {
+	if hot.Throttled == nil || !*hot.Throttled {
 		t.Fatalf("SW thermal bit not read: %+v", hot)
 	}
 	cool, err := parseSMI("NVIDIA GeForce GTX 1650, 30, 1024, 4096, 40.0, 62, 0x0000000000000001")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cool.Throttled {
-		t.Fatalf("idle-only mask must not read as throttled: %+v", cool)
+	if cool.Throttled == nil || *cool.Throttled {
+		t.Fatalf("idle-only mask must read as known-cool, not throttled: %+v", cool)
 	}
 	hw, err := parseSMI("NVIDIA GeForce GTX 1650, 90, 4096, 4096, 70.0, 91, 0x0000000000000041")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hw.Throttled {
+	if hw.Throttled == nil || !*hw.Throttled {
 		t.Fatalf("HW thermal bit not read: %+v", hw)
 	}
 }
 
 // TestParseSMILegacyQueryHasNoThrottleField: a driver that does not support
-// clocks_event_reasons.active returns six fields. That is "unknown", not throttled.
+// clocks_event_reasons.active returns six fields. That is "unknown" (nil), not false:
+// an old driver must not be reported as a cool card nobody measured.
 func TestParseSMILegacyQueryHasNoThrottleField(t *testing.T) {
 	s, err := parseSMI("Tesla T4, 0, 0, 15360, 10, 20")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Throttled {
-		t.Fatalf("legacy six-field row must not claim throttling: %+v", s)
+	if s.Throttled != nil {
+		t.Fatalf("legacy six-field row must read as unknown, got %v", *s.Throttled)
+	}
+	// A mask the driver answered but we cannot parse is also unknown, not cool.
+	bad, err := parseSMI("Tesla T4, 0, 0, 15360, 10, 20, [Not Supported]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad.Throttled != nil {
+		t.Fatalf("unparsable mask must read as unknown, got %v", *bad.Throttled)
 	}
 }
 

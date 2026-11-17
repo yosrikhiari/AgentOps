@@ -168,5 +168,15 @@ func (p *Prober) Expose() string {
 	if snap.Sample.TempC != nil {
 		sb.WriteString(fmt.Sprintf("# HELP gpu_temperature_celsius GPU temperature.\n# TYPE gpu_temperature_celsius gauge\ngpu_temperature_celsius %g\n", *snap.Sample.TempC))
 	}
+	// A nil Throttled means the driver does not answer the question. Publishing 0
+	// would be a fabricated "cool card", so the series simply does not exist - the
+	// same way power and temperature vanish when the driver says [N/A].
+	if snap.Sample.Throttled != nil {
+		throttled := 0
+		if *snap.Sample.Throttled {
+			throttled = 1
+		}
+		sb.WriteString(fmt.Sprintf("# HELP gpu_thermal_throttled 1 when the driver has cut clocks for heat.\n# TYPE gpu_thermal_throttled gauge\ngpu_thermal_throttled %d\n", throttled))
+	}
 	return sb.String()
 }

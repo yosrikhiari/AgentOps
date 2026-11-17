@@ -29,9 +29,9 @@ type SQLStore struct {
 
 func (s SQLStore) InsertSample(ctx context.Context, x Sample) error {
 	_, err := s.Exec.Exec(ctx,
-		`INSERT INTO gpu_samples (ts, gpu_name, util_pct, mem_used, mem_total, power_w, temp_c, swaps_total)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		x.At, x.Name, x.UtilPct, x.MemUsedBytes, x.MemTotalBytes, x.PowerW, x.TempC, x.SwapsTotal)
+		`INSERT INTO gpu_samples (ts, gpu_name, util_pct, mem_used, mem_total, power_w, temp_c, swaps_total, throttled)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		x.At, x.Name, x.UtilPct, x.MemUsedBytes, x.MemTotalBytes, x.PowerW, x.TempC, x.SwapsTotal, x.Throttled)
 	return err
 }
 
@@ -41,7 +41,8 @@ func (s SQLStore) Summary(ctx context.Context, from, to time.Time) (Summary, err
 	rows, err := s.Query.Query(ctx,
 		`SELECT count(*), coalesce(avg(util_pct),0), coalesce(max(util_pct),0),
 		        coalesce(max(mem_used),0), coalesce(max(mem_total),0),
-		        coalesce(max(swaps_total),0) - coalesce(min(swaps_total),0)
+		        coalesce(max(swaps_total),0) - coalesce(min(swaps_total),0),
+		        coalesce(max(temp_c),0), count(*) FILTER (WHERE throttled)::int
 		 FROM gpu_samples WHERE ts >= $1 AND ts <= $2`, from, to)
 	if err != nil {
 		return Summary{}, err
@@ -52,7 +53,8 @@ func (s SQLStore) Summary(ctx context.Context, from, to time.Time) (Summary, err
 		return out, rows.Err()
 	}
 	if err := rows.Scan(&out.Samples, &out.UtilMean, &out.UtilPeak,
-		&out.MemPeakBytes, &out.MemTotalBytes, &out.Swaps); err != nil {
+		&out.MemPeakBytes, &out.MemTotalBytes, &out.Swaps,
+		&out.MaxTempC, &out.ThrottledSamples); err != nil {
 		return Summary{}, err
 	}
 	return out, rows.Err()
@@ -62,7 +64,7 @@ func (s SQLStore) Summary(ctx context.Context, from, to time.Time) (Summary, err
 // the rows so a week-long window cannot return five figures to a browser.
 func (s SQLStore) Series(ctx context.Context, since time.Time, limit int) ([]Sample, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT ts, gpu_name, util_pct, mem_used, mem_total, power_w, temp_c, swaps_total
+		`SELECT ts, gpu_name, util_pct, mem_used, mem_total, power_w, temp_c, swaps_total, throttled
 		 FROM gpu_samples WHERE ts >= $1 ORDER BY ts DESC LIMIT $2`, since, limit)
 	if err != nil {
 		return nil, err
@@ -71,7 +73,7 @@ func (s SQLStore) Series(ctx context.Context, since time.Time, limit int) ([]Sam
 	var out []Sample
 	for rows.Next() {
 		var x Sample
-		if err := rows.Scan(&x.At, &x.Name, &x.UtilPct, &x.MemUsedBytes, &x.MemTotalBytes, &x.PowerW, &x.TempC, &x.SwapsTotal); err != nil {
+		if err := rows.Scan(&x.At, &x.Name, &x.UtilPct, &x.MemUsedBytes, &x.MemTotalBytes, &x.PowerW, &x.TempC, &x.SwapsTotal, &x.Throttled); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -84,7 +86,7 @@ func (s SQLStore) Series(ctx context.Context, since time.Time, limit int) ([]Sam
 // per-request measurement that does not exist.
 func (s SQLStore) Nearest(ctx context.Context, at time.Time, tolerance time.Duration) (Sample, bool, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT ts, gpu_name, util_pct, mem_used, mem_total, power_w, temp_c, swaps_total
+		`SELECT ts, gpu_name, util_pct, mem_used, mem_total, power_w, temp_c, swaps_total, throttled
 		 FROM gpu_samples WHERE ts BETWEEN $1 AND $2
 		 ORDER BY abs(extract(epoch FROM ts - $3)) LIMIT 1`,
 		at.Add(-tolerance), at.Add(tolerance), at)
@@ -96,7 +98,7 @@ func (s SQLStore) Nearest(ctx context.Context, at time.Time, tolerance time.Dura
 		return Sample{}, false, rows.Err()
 	}
 	var x Sample
-	if err := rows.Scan(&x.At, &x.Name, &x.UtilPct, &x.MemUsedBytes, &x.MemTotalBytes, &x.PowerW, &x.TempC, &x.SwapsTotal); err != nil {
+	if err := rows.Scan(&x.At, &x.Name, &x.UtilPct, &x.MemUsedBytes, &x.MemTotalBytes, &x.PowerW, &x.TempC, &x.SwapsTotal, &x.Throttled); err != nil {
 		return Sample{}, false, err
 	}
 	return x, true, nil

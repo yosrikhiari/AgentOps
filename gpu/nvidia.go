@@ -82,22 +82,27 @@ func parseSMI(line string) (Sample, error) {
 		MemTotalBytes: int64(totalMiB * (1 << 20)),
 		PowerW:        optionalFloat(f[4]),
 		TempC:         optionalFloat(f[5]),
-		Throttled:     len(f) == 7 && thermalBit(f[6]),
+		Throttled:     thermalBit(f),
 	}, nil
 }
 
 // thermalBit reads the clocks_event_reasons.active mask. Bits 0x20 (SW thermal slowdown)
 // and 0x40 (HW thermal slowdown) are the two that mean "the card cut clocks because it is
-// hot"; bit 0x1 (idle) is why a healthy mask is not zero. An unparsable mask is unknown,
-// not throttled - the sample is still useful.
-func thermalBit(mask string) bool {
-	s := strings.TrimSpace(mask)
+// hot"; bit 0x1 (idle) is why a healthy mask is not zero. It returns nil - not false -
+// when the driver did not answer the question, because "cool" and "never asked" are
+// different facts about a run.
+func thermalBit(f []string) *bool {
+	if len(f) != 7 {
+		return nil
+	}
+	s := strings.TrimSpace(f[6])
 	s = strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
 	v, err := strconv.ParseUint(s, 16, 64)
 	if err != nil {
-		return false
+		return nil
 	}
-	return v&0x20 != 0 || v&0x40 != 0
+	hot := v&0x20 != 0 || v&0x40 != 0
+	return &hot
 }
 
 // optionalFloat returns nil for the driver's "[N/A]" and "[Not Supported]".

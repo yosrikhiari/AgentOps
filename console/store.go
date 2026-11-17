@@ -286,12 +286,14 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 		        (SELECT count(*) FROM eval_pair_scores p
 		          WHERE p.run_id = r.id AND p.faithfulness IS NOT NULL)::int AS judged,
 		        g.samples, coalesce(g.util_mean,0), coalesce(g.util_peak,0),
-		        coalesce(g.mem_peak,0), coalesce(g.mem_total,0), coalesce(g.swaps,0)
+		        coalesce(g.mem_peak,0), coalesce(g.mem_total,0), coalesce(g.swaps,0),
+		        coalesce(g.max_temp,0), coalesce(g.throttled,0)
 		 FROM eval_runs r
 		 LEFT JOIN LATERAL (
 		   SELECT count(*)::int AS samples, avg(util_pct) AS util_mean, max(util_pct) AS util_peak,
 		          max(mem_used) AS mem_peak, max(mem_total) AS mem_total,
-		          max(swaps_total) - min(swaps_total) AS swaps
+		          max(swaps_total) - min(swaps_total) AS swaps,
+		          max(temp_c) AS max_temp, count(*) FILTER (WHERE throttled) AS throttled
 		   FROM gpu_samples WHERE ts >= r.started_at AND ts <= r.created_at
 		 ) g ON true
 		 WHERE r.golden_version = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT $2`,
@@ -306,8 +308,10 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 		var samples int
 		var utilMean, utilPeak float64
 		var memPeak, memTotal, swaps int64
+		var maxTemp float64
+		var throttled int
 		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt,
-			&r.Judged, &samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps); err != nil {
+			&r.Judged, &samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps, &maxTemp, &throttled); err != nil {
 			return nil, err
 		}
 		if samples > 0 {
@@ -315,6 +319,7 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 				From: r.StartedAt, To: r.CreatedAt, Samples: samples,
 				UtilMean: utilMean, UtilPeak: utilPeak,
 				MemPeakBytes: memPeak, MemTotalBytes: memTotal, Swaps: swaps,
+				MaxTempC: maxTemp, ThrottledSamples: throttled,
 			}
 		}
 		out = append(out, r)

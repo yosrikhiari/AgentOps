@@ -1,0 +1,11 @@
+-- Heat, persisted: whether the driver had thermally throttled the card at each sample.
+--
+-- Temperature alone is a reading; the throttle bit is the consequence. A run whose clocks
+-- were cut by the driver is not directly comparable with a quiet run even when the answers
+-- look the same, and that is the only sense in which heat belongs in this project: it
+-- changes latency and timeout risk, never what the model computes.
+--
+-- NULL is deliberate. It means the driver was never asked (a six-column nvidia-smi, or a
+-- mask we could not parse), which is not the same fact as "the card was cool" - the same
+-- distinction gpu_up and the nullable power/temperature columns already make.
+ALTER TABLE gpu_samples ADD COLUMN IF NOT EXISTS throttled boolean;

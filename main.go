@@ -323,10 +323,17 @@ func runReleaseGate(dsn, golden string, k int, threshold float64) {
 			case sum.Samples == 0:
 				gpuLines = append(gpuLines, fmt.Sprintf("  run %d gpu: no samples (prober off) - comparability unknown", r.ID))
 			default:
-				line := fmt.Sprintf("  run %d gpu: mean %.0f%% util, peak %.1f of %.1f GB, %d model swap(s)",
-					r.ID, sum.UtilMean, float64(sum.MemPeakBytes)/(1<<30), float64(sum.MemTotalBytes)/(1<<30), sum.Swaps)
+				line := fmt.Sprintf("  run %d gpu: mean %.0f%% util, peak %.1f of %.1f GB",
+					r.ID, sum.UtilMean, float64(sum.MemPeakBytes)/(1<<30), float64(sum.MemTotalBytes)/(1<<30))
+				if sum.MaxTempC > 0 {
+					line += fmt.Sprintf(", peak %.0fC", sum.MaxTempC)
+				}
+				line += fmt.Sprintf(", %d model swap(s)", sum.Swaps)
 				if sum.Swaps > 0 {
 					line += " - swaps make this run not directly comparable with a quiet one"
+				}
+				if sum.ThrottledSamples > 0 {
+					line += fmt.Sprintf("; thermally throttled in %d/%d samples", sum.ThrottledSamples, sum.Samples)
 				}
 				gpuLines = append(gpuLines, line)
 			}
@@ -977,11 +984,18 @@ func logRunGPU(ctx context.Context, db pgDB, from, to time.Time) {
 		log.Printf("gpu during this run: no samples - the prober was not running, so comparability is unknown")
 		return
 	}
-	msg := fmt.Sprintf("gpu during this run: %d samples, mean %.0f%% util, peak %.1f of %.1f GB VRAM, %d model swap(s)",
+	msg := fmt.Sprintf("gpu during this run: %d samples, mean %.0f%% util, peak %.1f of %.1f GB VRAM",
 		sum.Samples, sum.UtilMean,
-		float64(sum.MemPeakBytes)/(1<<30), float64(sum.MemTotalBytes)/(1<<30), sum.Swaps)
+		float64(sum.MemPeakBytes)/(1<<30), float64(sum.MemTotalBytes)/(1<<30))
+	if sum.MaxTempC > 0 {
+		msg += fmt.Sprintf(", peak %.0fC", sum.MaxTempC)
+	}
+	msg += fmt.Sprintf(", %d model swap(s)", sum.Swaps)
 	if sum.Swaps > 0 {
 		msg += " - a swap unloads one model to load another, so this run is not directly comparable with a quiet one"
+	}
+	if sum.ThrottledSamples > 0 {
+		msg += fmt.Sprintf("; thermally throttled in %d/%d samples - clocks were cut, so latency is not comparable either", sum.ThrottledSamples, sum.Samples)
 	}
 	log.Printf("%s", msg)
 }

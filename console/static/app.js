@@ -472,7 +472,8 @@
         h('td', null, r.judged === 0 ? chip('unmeasured') : (r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score)))),
         h('td', null, r.gpu
           ? [chip('GPU ' + Math.round(r.gpu.util_mean_pct) + '%'),
-             r.gpu.swaps > 0 ? chip(r.gpu.swaps + ' swap' + (r.gpu.swaps === 1 ? '' : 's')) : null]
+             r.gpu.swaps > 0 ? chip(r.gpu.swaps + ' swap' + (r.gpu.swaps === 1 ? '' : 's')) : null,
+             r.gpu.throttled_samples > 0 ? chip('throttled ' + r.gpu.throttled_samples + '/' + r.gpu.samples) : null]
           : h('span', { class: 'tower-muted' }, '-')))))));
     content.replaceChildren(metrics, h('div', { class: 'tower-grid-2' }, history, worstPanel), table);
     if (status.running) pollTimer = setTimeout(() => { if (location.hash.startsWith('#/evals')) pageEvals(signal); }, 5000);
@@ -664,6 +665,14 @@
       if (swaps > 2) {
         nodes.push(h('div', { class: 'tower-note' },
           'Ollama swapped models ' + swaps + ' times in the last 10 minutes. Every swap unloads one model to load another, so a run that straddles one is not a fair speed comparison — see docs/VRAM.md.'));
+      }
+      // Heat is the other thing that changes the clock under a run. The driver's
+      // throttle bit is a state, so it is a pill, and the consequence is spelled out:
+      // a hot card gives the same answers, only later.
+      if (s.throttled) {
+        nodes.splice(1, 0, h('div', { class: 'tower-note' },
+          pill('degraded', 'throttled'),
+          " The driver has cut this card's clocks for heat. Answers are unaffected, but work timed now is slower than the same work on a cool card, so do not compare this run with a quiet one."));
       }
       content.replaceChildren(...nodes);
     }

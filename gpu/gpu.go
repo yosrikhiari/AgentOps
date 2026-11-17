@@ -25,6 +25,12 @@ type Sample struct {
 	// run?") can be answered from history instead of from a process that has
 	// already exited; omitted when zero so an old row reads naturally.
 	SwapsTotal int64 `json:"swaps_total,omitempty"`
+	// Throttled means the driver reported a thermal clock slowdown at this sample.
+	// nil is a third fact, distinct from true and false: the driver does not know
+	// clocks_event_reasons (older nvidia-smi) or answered something unparsable, so
+	// nobody asked. Heat does not change what the model computes, but it changes how
+	// long it takes, which is exactly what eval comparability and timeouts depend on.
+	Throttled *bool `json:"throttled,omitempty"`
 }
 
 // Summary is what a time window did to the card: the aggregate the eval pages and
@@ -40,6 +46,11 @@ type Summary struct {
 	MemPeakBytes  int64     `json:"mem_peak_bytes"`
 	MemTotalBytes int64     `json:"mem_total_bytes"`
 	Swaps         int64     `json:"swaps"`
+	// MaxTempC is the hottest reading in the window; ThrottledSamples counts samples
+	// where the driver had cut clocks for heat. A hot run and a quiet run are not
+	// comparable even when the answers are: the clock changed under them.
+	MaxTempC         float64 `json:"max_temp_c,omitempty"`
+	ThrottledSamples int     `json:"throttled_samples"`
 }
 
 func (s Sample) UsedPercent() float64 {

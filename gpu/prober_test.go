@@ -129,6 +129,29 @@ func TestProberExpose(t *testing.T) {
 	}
 }
 
+// TestProberExposesThermalThrottle: temperature is a reading, the throttle bit is the
+// consequence. A scraper needs the second one to tell "slow because the model is big"
+// from "slow because the driver cut the clocks" - and when the driver never answered
+// the question the series is absent, never a fabricated 0.
+func TestProberExposesThermalThrottle(t *testing.T) {
+	yes, no := true, false
+	hot := NewProber(&fakeReader{samples: []Sample{{Name: "X", UtilPct: 50, Throttled: &yes}}}, nil, nil)
+	hot.ProbeOnce(context.Background())
+	if out := hot.Expose(); !strings.Contains(out, "gpu_thermal_throttled 1") {
+		t.Fatalf("throttled sample not exposed in:\n%s", out)
+	}
+	cool := NewProber(&fakeReader{samples: []Sample{{Name: "X", UtilPct: 50, Throttled: &no}}}, nil, nil)
+	cool.ProbeOnce(context.Background())
+	if out := cool.Expose(); !strings.Contains(out, "gpu_thermal_throttled 0") {
+		t.Fatalf("a measured cool card must read 0, not go missing:\n%s", out)
+	}
+	legacy := NewProber(&fakeReader{samples: []Sample{{Name: "X", UtilPct: 50}}}, nil, nil)
+	legacy.ProbeOnce(context.Background())
+	if out := legacy.Expose(); strings.Contains(out, "gpu_thermal_throttled") {
+		t.Fatalf("unknown must not be published as 0:\n%s", out)
+	}
+}
+
 // TestProberExposeUnavailable: a Prometheus scrape must not read 0 when the
 // truth is "no GPU". Emit a labelled 0 for availability instead.
 func TestProberExposeUnavailable(t *testing.T) {

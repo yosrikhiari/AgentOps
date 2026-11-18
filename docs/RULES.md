@@ -109,11 +109,11 @@ STRIDE-lite, each threat with the control and where it is enforced.
 | Repudiation | `X-Trace-ID` on every response; every request has spans; key name on per-key counters | `TestHandleChatRoutesFast` (header), spans tests |
 | Information disclosure | Prompts never in spans; read paths redact `prompt/input/text/output`; **sensitive requests never reach a cloud backend** | `TestPolicyPromptsNeverReachSpans`, `TestPolicyMCPToolSpansRedacted`, `TestListSpansRedacted`, `TestSensitiveNeverLeavesBox`, `TestPolicySensitiveHasNoCloudCandidate` |
 | Denial of service | Per-key RPM + token budget; `REQUEST_TIMEOUT`; `ReadHeaderTimeout`; bounded span queue; eval single-flight; body size implicitly bounded by Ollama context | `TestAPIKeyRateLimit`, `TestAPIKeyBudget`, `TestEvalRunSingleFlight` |
-| Elevation of privilege | Container runs as `nonroot` on distroless; no admin endpoints; key creation is CLI-only on the box | `Dockerfile`, review |
+| Elevation of privilege | Container runs as `nonroot` on distroless; the console — the only admin surface, and the one that returns prompts — refuses non-loopback peers unless `CONSOLE_REMOTE=true`; key creation is CLI-only on the box | `TestPolicyConsoleIsLocalOnly`, `TestConsoleGuardKeepsRemoteClientsOut`, `Dockerfile` |
 | Supply chain | One direct dependency; Dependabot weekly; `govulncheck` in CI (found and fixed GO-2026-5970 in `x/text` on first run); `staticcheck` in CI; release binaries with `SHA256SUMS` | `TestPolicySingleDirectDependency`, `ci.yml` policy job |
 | Secrets | Env vars only (`GROQ_API_KEY`, `POSTGRES_DSN`); never logged; `.env` git-ignored | review; `.gitignore` |
 
-Known gap, stated: the console and `/metrics` are unauthenticated. They expose routing metadata and step snippets, never prompts. Run them on localhost or behind a proxy. A threat model beyond this table is backlog (§7).
+Known gaps, stated: `/metrics` is unauthenticated (routing metadata and per-key counters, never prompts). The console is loopback-only by default but returns stored prompts to that loopback client, so `CONSOLE_REMOTE=true` is a deliberate opt-out — put an authenticating proxy in front when you use it. A threat model beyond this table is backlog (A7).
 
 ## 10. Guardrails (runtime)
 
@@ -210,5 +210,6 @@ These fail the build when a rule above is broken. Names are the rules.
 | `TestPolicyConsoleColoursAreTokens` | no hex colour in `app.js` / `index.html`, none in `tower.css` outside `:root` — the console uses `--tower-*` tokens |
 | `TestPolicyConsoleClassesExist` | every `tower-*` name the console references is defined in `tower.css` |
 | `TestPolicyAgentFilesPointHere` | `AGENTS.md` cites this document and the design system; every per-tool agent file that exists (Copilot is tracked; `CLAUDE.md`, `GEMINI.md`, `opencode.json`, Cursor are local and git-ignored) points at `AGENTS.md` and carries no rules of its own |
+| `TestPolicyConsoleIsLocalOnly` | the console (prompt history, eval runs, workflows) is mounted behind `consoleGuard`, its routes use the guarded handler, the browser defences are wired around the mux, and the default `ADDR` is `127.0.0.1:8080` |
 
 Adding a rule: write the test first, watch it fail on the current code or a scratch breakage, then add the row here. A rule that cannot be tested gets the word **review** in its enforcement column above and a reviewer, not a wish.

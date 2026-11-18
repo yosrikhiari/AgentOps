@@ -144,7 +144,8 @@ for its models directory).
 | `REQUIRE_API_KEY` | `false` | reject anonymous requests |
 | `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |
 | `SENSITIVE_KEYWORDS` | built-in list | comma-separated override |
-| `ADDR` | `:8080` | listen address |
+| `ADDR` | `127.0.0.1:8080` | listen address. Loopback by default: the gateway is a local appliance, and a fresh install must not be reachable from the LAN. Set `ADDR=0.0.0.0:8080` to publish it |
+| `CONSOLE_REMOTE` | `false` | the console (pages, conversations, workflows, eval runs) answers loopback clients only. `true` allows any client — required when the console is reached through a container port mapping or a reverse proxy. The console is where prompts are readable and GPU work is started, so this is an explicit act |
 | `POSTGRES_DSN` | built from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` (defaults `tower` / `tower` / `localhost` / `5432` / `tower`, the same ones `docker-compose.yml` uses) | spans, traces, evals, workflows, api keys |
 | `GPU_SMI` | `nvidia-smi` | path to the driver CLI the GPU prober shells out to. On a box without a working driver every `gpu_*` series reports `gpu_up 0` and no utilisation is published, rather than a fabricated zero |
 | `GPU_POLL_INTERVAL` | `10s` | how often the driver and Ollama's `/api/ps` are read; clamped to ≥1s, parse errors fall back to the default |

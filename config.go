@@ -19,9 +19,13 @@ func loadConfig() (Config, error) {
 	if ollamaURL == "" {
 		ollamaURL = "http://localhost:11434"
 	}
+	// Loopback by default: the console returns prompt history verbatim and can
+	// start GPU work, so a fresh install must not be reachable from the LAN.
+	// Publishing it is an explicit act: ADDR=0.0.0.0:8080 (and, for the console,
+	// CONSOLE_REMOTE=true).
 	addr := os.Getenv("ADDR")
 	if addr == "" {
-		addr = ":8080"
+		addr = "127.0.0.1:8080"
 	}
 	fast := os.Getenv("FAST_MODEL")
 	if fast == "" {

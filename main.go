@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -1498,6 +1499,69 @@ func runIngest(dsn, ollamaURL string) {
 		n, cache.Hits, cache.New, cache.Corrupt, cache.ModelChanged)
 }
 
+// isLoopbackRemote reports whether a request came from this machine. It parses
+// the peer address rather than trusting a header, because a header is the thing
+// a remote client controls.
+func isLoopbackRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// consoleGuard keeps the operator surface on the machine that runs it. The
+// console returns stored prompts verbatim and can start GPU work, so a peer that
+// is not loopback is refused unless the operator set CONSOLE_REMOTE=true
+// deliberately. The refusal uses the same error envelope as every other gateway
+// error, so a client parses one shape.
+func consoleGuard(allowRemote bool, next http.Handler) http.Handler {
+	if allowRemote {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isLoopbackRemote(r.RemoteAddr) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+			"code":     "console_local_only",
+			"message":  "the console is reachable from this machine only; set CONSOLE_REMOTE=true to allow remote clients",
+			"trace_id": "",
+		}})
+	})
+}
+
+// securityHeaders is the console's browser contract: no framing, no MIME
+// sniffing, no referrer leakage, and no script or style the binary did not ship.
+// The two font hosts are the console's only third-party origins.
+func securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; " +
+		"style-src 'self' https://fonts.googleapis.com; " +
+		"font-src https://fonts.gstatic.com; " +
+		"img-src 'self' data:; " +
+		"connect-src 'self'; " +
+		"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withCrossOriginProtection rejects state-changing browser requests from another
+// origin (Sec-Fetch-Site, falling back to Origin vs Host). Non-browser clients —
+// curl, an SDK, an agent — send neither header and are unaffected.
+func withCrossOriginProtection(next http.Handler) http.Handler {
+	return http.NewCrossOriginProtection().Handler(next)
+}
+
 func main() {
 	mcpMode := flag.Bool("mcp", false, "run as MCP stdio server instead of HTTP router")
 	migrate := flag.Bool("migrate", false, "apply SQL migrations and exit")
@@ -1785,8 +1849,13 @@ func main() {
 			return nil
 		},
 	})
+	// The console reads stored prompts and starts GPU work, so it is local-only
+	// unless the operator opts in. ADDR being loopback makes this a second lock,
+	// not the only one.
+	consoleRemote := strings.EqualFold(os.Getenv("CONSOLE_REMOTE"), "true")
+	consoleUI := consoleGuard(consoleRemote, ui)
 	for _, pattern := range ui.Routes() {
-		mux.Handle(pattern, ui)
+		mux.Handle(pattern, consoleUI)
 	}
 	mux.HandleFunc("GET /v1/drift/report", func(w http.ResponseWriter, r *http.Request) {
 		data, err := queryDrift(pool, *driftGolden, evalThreshold())
@@ -1871,7 +1940,7 @@ func main() {
 	mux.Handle("/", srv)
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mux,
+		Handler:           securityHeaders(withCrossOriginProtection(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	// Graceful shutdown: stop accepting, let in-flight chats finish (up to the request
@@ -1880,7 +1949,11 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()
-	log.Printf("tower %s router on %s fast=%s quality=%s backends=%d auth=%v", version, cfg.Addr, cfg.FastModel, cfg.QualityModel, len(backends), srv.RequireKey)
+	consoleScope := "local-only"
+	if consoleRemote {
+		consoleScope = "remote-allowed"
+	}
+	log.Printf("tower %s router on %s fast=%s quality=%s backends=%d auth=%v console=%s", version, cfg.Addr, cfg.FastModel, cfg.QualityModel, len(backends), srv.RequireKey, consoleScope)
 	select {
 	case err := <-errCh:
 		log.Fatal(err)

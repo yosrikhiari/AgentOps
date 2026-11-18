@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"agentops/audit"
-	"agentops/evals"
-	"agentops/gpu"
+	"tower/audit"
+	"tower/evals"
+	"tower/gpu"
 )
 
 type memStore struct {
@@ -367,7 +367,7 @@ func TestWorkflowActions(t *testing.T) {
 	if rec := do(h, "POST", "/v1/workflows", `{"input":"  "}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty input: %d", rec.Code)
 	}
-	if rec := do(h, "POST", "/v1/workflows", `{"input":"what is agentops?"}`); rec.Code != http.StatusAccepted || startedWith != "what is agentops?" || !strings.Contains(rec.Body.String(), "wf1") {
+	if rec := do(h, "POST", "/v1/workflows", `{"input":"what is tower?"}`); rec.Code != http.StatusAccepted || startedWith != "what is tower?" || !strings.Contains(rec.Body.String(), "wf1") {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := do(h, "POST", "/v1/workflows/missing/resume", ""); rec.Code != http.StatusNotFound {

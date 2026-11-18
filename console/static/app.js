@@ -93,11 +93,11 @@
     document.getElementById('strip-models').textContent = (ov.models || []).length;
     document.getElementById('strip-faith').textContent = ov.drift && ov.drift.runs ? fmt.score(ov.drift.score_now) : '–';
     document.getElementById('strip-p50').textContent = fmt.ms(ov.traffic && ov.traffic.p50_latency_s);
-    document.getElementById('strip-version').textContent = ov.version ? 'agentops ' + ov.version : '';
+    document.getElementById('strip-version').textContent = ov.version ? 'tower ' + ov.version : '';
     const sd = document.getElementById('side-dot');
     if (sd) { sd.style.background = dot.style.background; sd.style.boxShadow = dot.style.boxShadow; }
     const sr = document.getElementById('side-router'); if (sr) sr.textContent = allUp ? 'router live' : 'backend down';
-    const sv = document.getElementById('side-version'); if (sv) sv.textContent = ov.version ? 'agentops ' + ov.version : '';
+    const sv = document.getElementById('side-version'); if (sv) sv.textContent = ov.version ? 'tower ' + ov.version : '';
   }
   const pageTitles = { overview: 'Overview', traces: 'Traces', evals: 'Evals & drift', benchmarks: 'Benchmarks', workflows: 'Workflows', cockpit: 'Cockpit', gpu: 'GPU' };
 
@@ -536,7 +536,7 @@
   }
 
   async function pageWorkflows(signal) {
-    const input = h('input', { class: 'tower-input', placeholder: 'question for the Researcher → Drafter → Reviewer agent', value: 'what does agentops do?' });
+    const input = h('input', { class: 'tower-input', placeholder: 'question for the Researcher → Drafter → Reviewer agent', value: 'what does tower do?' });
     const startBtn = h('button', { class: 'tower-btn primary' }, 'Start workflow');
     const listBody = h('div', null, skeleton(5));
     content.replaceChildren(

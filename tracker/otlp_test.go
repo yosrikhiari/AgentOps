@@ -87,7 +87,7 @@ func TestOTLPPayloadShape(t *testing.T) {
 			Attrs: map[string]any{"model": "m", "latency_s": 0.5}},
 		{TraceID: "aad6e9c4658f7842", SpanID: "b2", ParentID: "a1", Name: "route.decide", At: at,
 			Attrs: map[string]any{"tier": "fast"}},
-	}, "agentops")
+	}, "tower")
 	if err != nil {
 		t.Fatal(err)
 	}

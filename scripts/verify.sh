@@ -11,11 +11,11 @@ set -u
 step() {
   local name="$1"
   shift
-  if "$@" > /tmp/verify-agentops.log 2>&1; then
+  if "$@" > /tmp/verify-tower.log 2>&1; then
     echo "ok   $name"
   else
     echo "FAIL $name"
-    cat /tmp/verify-agentops.log
+    cat /tmp/verify-tower.log
     exit 1
   fi
 }

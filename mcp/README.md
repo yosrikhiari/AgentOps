@@ -1,4 +1,4 @@
-# AgentOps MCP server
+# Tower MCP server
 
 One binary, three ways in. HTTP router by default, MCP stdio server with `--mcp`,
 and MCP over HTTP at `POST /mcp` when the gateway is running. The protocol is
@@ -25,7 +25,7 @@ tracker, not an MCP task. The `Mcp-Method` / `Mcp-Name` headers are ignored —
 dispatch always follows the JSON body, which cannot disagree with itself.
 
 To list this server in the official registry, a `server.json` manifest with
-`name` (reverse-DNS, e.g. `io.github.yosrikhiari/agentops`), `description`,
+`name` (reverse-DNS, e.g. `io.github.yosrikhiari/tower`), `description`,
 `version` and the `--mcp` stdio package is enough; publishing is a manual
 `mcp-publisher publish` step, deliberately not wired into CI.
 
@@ -37,18 +37,18 @@ Cursor / VS Code / Windsurf take the same command + args):
 ```json
 {
   "mcpServers": {
-    "agentops": {
-      "command": "/path/to/agentops",
+    "tower": {
+      "command": "/path/to/tower",
       "args": ["--mcp"],
       "env": {
         "OLLAMA_URL": "http://localhost:11434",
         "FAST_MODEL": "qwen2.5:3b-instruct",
         "QUALITY_MODEL": "qwen2.5:7b-instruct-q4_K_M",
-        "POSTGRES_USER": "agentops",
-        "POSTGRES_PASSWORD": "agentops",
+        "POSTGRES_USER": "tower",
+        "POSTGRES_PASSWORD": "tower",
         "POSTGRES_HOST": "localhost",
         "POSTGRES_PORT": "5432",
-        "POSTGRES_DB": "agentops"
+        "POSTGRES_DB": "tower"
       }
     }
   }
@@ -56,7 +56,7 @@ Cursor / VS Code / Windsurf take the same command + args):
 ```
 
 Dev alternative without building: `command: go`, `args: ["run", ".", "--mcp"]`,
-`cwd: /path/to/AgentOps_Project_Plan`.
+`cwd: /path/to/Tower_Project_Plan`.
 
 Remote agents that cannot pipe stdio use the gateway instead:
 

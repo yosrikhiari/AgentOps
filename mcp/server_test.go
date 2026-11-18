@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"agentops/router"
-	"agentops/tracker"
+	"tower/router"
+	"tower/tracker"
 )
 
 type stubGen struct {

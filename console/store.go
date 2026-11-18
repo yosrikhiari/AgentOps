@@ -10,10 +10,10 @@ import (
 	"sort"
 	"time"
 
-	"agentops/audit"
-	"agentops/evals"
-	"agentops/gpu"
-	"agentops/tracker"
+	"tower/audit"
+	"tower/evals"
+	"tower/gpu"
+	"tower/tracker"
 )
 
 // Request is one router chat as the UI shows it, assembled from its route.decide and

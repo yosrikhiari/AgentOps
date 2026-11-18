@@ -27,14 +27,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"agentops/advisor"
-	"agentops/audit"
-	"agentops/console"
-	"agentops/evals"
-	"agentops/gpu"
-	"agentops/mcp"
-	"agentops/router"
-	"agentops/tracker"
+	"tower/advisor"
+	"tower/audit"
+	"tower/console"
+	"tower/evals"
+	"tower/gpu"
+	"tower/mcp"
+	"tower/router"
+	"tower/tracker"
 )
 
 // version is stamped by the release build (-ldflags "-X main.version=v1.2.3").
@@ -60,7 +60,7 @@ type buildInfo struct {
 // buildInfoOf takes the stamps as arguments instead of reading the package
 // globals, so it is testable without mutating state.
 func buildInfoOf(ver, commitStamp, dateStamp string) buildInfo {
-	bi := buildInfo{Version: ver, Go: runtime.Version(), Module: "agentops"}
+	bi := buildInfo{Version: ver, Go: runtime.Version(), Module: "tower"}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if info.Main.Path != "" {
 			bi.Module = info.Main.Path
@@ -609,7 +609,7 @@ func (e *otlpExporter) flush(batch []tracker.ExportedSpan) {
 	if len(batch) == 0 {
 		return
 	}
-	body, err := tracker.OTLPPayload(batch, "agentops")
+	body, err := tracker.OTLPPayload(batch, "tower")
 	if err != nil {
 		e.dropped.Add(uint64(len(batch)))
 		return
@@ -1413,7 +1413,7 @@ func main() {
 	scheduleEvals := flag.String("schedule-evals", "", "run eval suite every INTERVAL (e.g. 24h) forever; empty disables")
 	runTrackerFlag := flag.Bool("run-tracker", false, "run toy Researcher-Drafter-Reviewer workflow and exit")
 	resumeTracker := flag.String("resume-tracker", "", "resume toy workflow ID and exit")
-	trackerInput := flag.String("tracker-input", "what does agentops do?", "input question for --run-tracker")
+	trackerInput := flag.String("tracker-input", "what does tower do?", "input question for --run-tracker")
 	traceID := flag.String("trace", "", "print redacted spans for TRACE_ID and exit")
 	trajectoryID := flag.String("trajectory", "", "print trajectory metrics (steps, attempts, retries, clean) for WORKFLOW_ID and exit")
 	workflowRepeats := flag.Int("workflow-repeats", 0, "run the toy workflow N times on --tracker-input and print pass^k reliability, then exit")
@@ -1426,7 +1426,7 @@ func main() {
 	flag.Parse()
 	if *showVersion {
 		bi := buildInfoOf(version, commit, buildDate)
-		line := "agentops " + bi.Version
+		line := "tower " + bi.Version
 		if bi.Commit != "" {
 			line += " (" + shortCommit(bi.Commit) + ")"
 		}
@@ -1606,7 +1606,7 @@ func main() {
 		return queryDrift(pool, *driftGolden, evalThreshold())
 	}
 	if *mcpMode {
-		log.Printf("agentops mcp stdio fast=%s quality=%s", cfg.FastModel, cfg.QualityModel)
+		log.Printf("tower mcp stdio fast=%s quality=%s", cfg.FastModel, cfg.QualityModel)
 		if err := mcpSrv.Run(os.Stdin, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
@@ -1765,7 +1765,7 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()
-	log.Printf("agentops %s router on %s fast=%s quality=%s backends=%d auth=%v", version, cfg.Addr, cfg.FastModel, cfg.QualityModel, len(backends), srv.RequireKey)
+	log.Printf("tower %s router on %s fast=%s quality=%s backends=%d auth=%v", version, cfg.Addr, cfg.FastModel, cfg.QualityModel, len(backends), srv.RequireKey)
 	select {
 	case err := <-errCh:
 		log.Fatal(err)

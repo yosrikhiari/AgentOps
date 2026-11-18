@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"agentops/audit"
-	"agentops/gpu"
-	"agentops/router"
+	"tower/audit"
+	"tower/gpu"
+	"tower/router"
 )
 
 //go:embed static

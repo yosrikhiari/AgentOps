@@ -18,9 +18,9 @@ import (
 	"strings"
 	"testing"
 
-	"agentops/mcp"
-	"agentops/router"
-	"agentops/tracker"
+	"tower/mcp"
+	"tower/router"
+	"tower/tracker"
 )
 
 var repo = func() string {

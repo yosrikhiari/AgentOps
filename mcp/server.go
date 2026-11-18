@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"sort"
 
-	"agentops/router"
-	"agentops/tracker"
+	"tower/router"
+	"tower/tracker"
 )
 
 // legacyProtocolVersion is what an initialize with no requested version gets, and
@@ -219,9 +219,9 @@ func (s *Server) handle(req rpcRequest, headerVersion string) *rpcResponse {
 			"supportedVersions": supportedVersions,
 			"capabilities":      map[string]any{"tools": map[string]any{}},
 			"_meta": map[string]any{
-				"io.modelcontextprotocol/serverInfo": map[string]any{"name": "agentops", "version": "0.1.0"},
+				"io.modelcontextprotocol/serverInfo": map[string]any{"name": "tower", "version": "0.1.0"},
 			},
-			"instructions": "AgentOps gateway: list served models and their health, read live stats, test which tier a prompt routes to, inspect a redacted trace, read the eval drift report.",
+			"instructions": "Tower gateway: list served models and their health, read live stats, test which tier a prompt routes to, inspect a redacted trace, read the eval drift report.",
 			"ttlMs":        3600000,
 			"cacheScope":   "public",
 		}}
@@ -238,7 +238,7 @@ func (s *Server) handle(req rpcRequest, headerVersion string) *rpcResponse {
 		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 			"protocolVersion": negotiated,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "agentops", "version": "0.1.0"},
+			"serverInfo":      map[string]any{"name": "tower", "version": "0.1.0"},
 		}}
 	case "notifications/initialized":
 		return nil

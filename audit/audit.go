@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"agentops/evals"
+	"tower/evals"
 )
 
 // Events. Unknown strings are rejected at write time — a typo'd event fails

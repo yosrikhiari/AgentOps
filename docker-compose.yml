@@ -1,17 +1,17 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: agentops-postgres
+    container_name: tower-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-agentops}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentops}
-      POSTGRES_DB: ${POSTGRES_DB:-agentops}
+      POSTGRES_USER: ${POSTGRES_USER:-tower}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tower}
+      POSTGRES_DB: ${POSTGRES_DB:-tower}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - agentops-pgdata:/var/lib/postgresql/data
+      - tower-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-agentops}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-tower}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -22,20 +22,20 @@ services:
   # stack to run.
 
   # docker compose --profile app up -d   → the router in a container, talking to Ollama on the
-  # host and to the postgres service. Run `--migrate` once: docker compose run --rm agentops --migrate
-  agentops:
+  # host and to the postgres service. Run `--migrate` once: docker compose run --rm tower --migrate
+  tower:
     build: .
-    image: agentops:local
+    image: tower:local
     profiles: ["app"]
-    container_name: agentops
+    container_name: tower
     environment:
       OLLAMA_URL: http://host.docker.internal:11434
       # No DSN literal here: the binary assembles it (defaultDSN in config.go) from these
       # parts, which are the same ones the postgres service above is started with.
       POSTGRES_HOST: postgres
-      POSTGRES_USER: ${POSTGRES_USER:-agentops}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentops}
-      POSTGRES_DB: ${POSTGRES_DB:-agentops}
+      POSTGRES_USER: ${POSTGRES_USER:-tower}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tower}
+      POSTGRES_DB: ${POSTGRES_DB:-tower}
       FAST_MODEL: ${FAST_MODEL:-qwen2.5:3b-instruct}
       QUALITY_MODEL: ${QUALITY_MODEL:-qwen2.5:7b-instruct-q4_K_M}
     ports:
@@ -47,4 +47,4 @@ services:
         condition: service_healthy
 
 volumes:
-  agentops-pgdata:
+  tower-pgdata:

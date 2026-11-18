@@ -4,6 +4,8 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- **The product is Tower.** The module, binary, Docker image, CI artifacts, console title, MCP `serverInfo` name, OTLP `service.name`, compose defaults and this box's Postgres role, database and volume all say Tower; `agentops.ai` keeps its name in the market notes because it is a different, funded product. The Go module is now `tower` (imports updated) and `--version` prints a Tower binary. One string keeps the old name on purpose, and `docs/MARKET.md` §9.1(8) says why: the GitHub repository URL, because renaming a remote is a separate step and every doc links to it. Frozen eval data (`evals/golden`, `evals/corpus`, `corpus/`) and the historical `lessons/` pages were deliberately not rewritten: the v3 baseline was measured against that text, and renaming it would invalidate the number.
+
 - **`--route-replay` now prints the ceiling, and stops at "undefined" when it should:** after the decision mix and baselines it reports how much of the latest complete golden run no router could rescue (`8/72 unsolvable (11%) on v3 run 6 — 2 retrieval misses, 6 refuted`), then states the routing-headroom status honestly: this box has **one rung with outcomes** (the frozen golden answers), so β and smallest-tier-optimal are printed as *undefined* rather than derived from a single model. When two or more models have outcomes on the same questions the line says so and names Phase 1 as the place those numbers are computed.
 - **`GET /favicon.ico` answers 204** instead of falling through to the JSON 404: browsers ask for it on every page load, so the console logged a failed resource on a page that was working — the one console error that survived the end-to-end sweep.
 

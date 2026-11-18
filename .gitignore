@@ -6,8 +6,8 @@ evals/corpus/cache/
 *.log
 
 # locally built binary (releases come from CI tags)
-/agentops
-/agentops.exe
+/tower
+/tower.exe
 
 # local env overrides
 .env

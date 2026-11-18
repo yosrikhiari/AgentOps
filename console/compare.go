@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"sort"
 
-	"agentops/evals"
-	"agentops/router"
+	"tower/evals"
+	"tower/router"
 )
 
 // ScoredPair is one judged answer of a model run (misses are counted, never

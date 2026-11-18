@@ -1,4 +1,4 @@
-# AgentOps — instructions for coding agents
+# Tower — instructions for coding agents
 
 Read this before changing anything. It is short on purpose; the detail lives in the documents it points to, and the rules are enforced by tests, not by hoping you read them.
 

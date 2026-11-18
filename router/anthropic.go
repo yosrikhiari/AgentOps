@@ -157,7 +157,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if strings.EqualFold(r.Header.Get("X-AgentOps-Sensitive"), "true") {
+	if strings.EqualFold(r.Header.Get("X-Tower-Sensitive"), "true") {
 		req.Sensitive = true
 	}
 	if v := r.Header.Get("X-Client-Ref"); v != "" {
@@ -263,7 +263,7 @@ func anthropicBody(traceID string, out ChatResponse) map[string]any {
 		"content":     []any{map[string]any{"type": "text", "text": text}},
 		"stop_reason": stopReason(out), "stop_sequence": nil,
 		"usage": map[string]any{"input_tokens": out.Usage.PromptTokens, "output_tokens": out.Usage.CompletionTokens},
-		// AgentOps extensions, same as the OpenAI endpoint's: Anthropic clients
+		// Tower extensions, same as the OpenAI endpoint's: Anthropic clients
 		// ignore unknown fields, and the console's explainability rides along.
 		"reason": out.Reason, "backend": out.Backend, "trace_id": out.TraceID,
 	}

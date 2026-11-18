@@ -71,9 +71,9 @@ func gpuHistoryKeep() time.Duration {
 func defaultDSN() string {
 	u := url.URL{
 		Scheme: "postgres",
-		User:   url.UserPassword(envOr("POSTGRES_USER", "agentops"), envOr("POSTGRES_PASSWORD", "agentops")),
+		User:   url.UserPassword(envOr("POSTGRES_USER", "tower"), envOr("POSTGRES_PASSWORD", "tower")),
 		Host:   envOr("POSTGRES_HOST", "localhost") + ":" + envOr("POSTGRES_PORT", "5432"),
-		Path:   "/" + envOr("POSTGRES_DB", "agentops"),
+		Path:   "/" + envOr("POSTGRES_DB", "tower"),
 	}
 	return u.String()
 }

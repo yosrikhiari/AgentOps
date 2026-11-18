@@ -1,4 +1,4 @@
-module agentops
+module tower
 
 go 1.26.7
 

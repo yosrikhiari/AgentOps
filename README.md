@@ -1,13 +1,13 @@
-# AgentOps
+# Tower
 
 [![ci](https://github.com/yosrikhiari/AgentOps/actions/workflows/ci.yml/badge.svg)](https://github.com/yosrikhiari/AgentOps/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/yosrikhiari/AgentOps?include_prereleases)](https://github.com/yosrikhiari/AgentOps/releases) ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-A self-hosted **LLM operations gateway** in one Go binary: an OpenAI-compatible **router** over local and cloud models, a **durable task tracker**, a **faithfulness eval + drift alert** loop, **OTel-shaped traces**, an **MCP server** for AI assistants, and the **Tower console** for humans.
+A self-hosted **LLM operations gateway** in one Go binary: an OpenAI-compatible **router** over local and cloud models, a **durable task tracker**, a **faithfulness eval + drift alert** loop, **OTel-shaped traces**, an **MCP server** for AI assistants, and an embedded web console.
 
 Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.com) models — informed by how TensorZero, Bifrost, Temporal and Langfuse solve the same problems, but with every core piece written here so it can be explained line by line. Standard library + one dependency (`pgx`).
 
 ```
-                     ┌──────────────────────────── agentops (one binary) ────────────────────────────┐
+                     ┌──────────────────────────── tower (one binary) ────────────────────────────┐
   OpenAI clients ──► │ router: auth (API keys) → Classify → Plan (fail-closed) → Backend            │
   POST /v1/chat      │         Ollama /api/chat (stream) · any OpenAI-style API · health prober      │
                      │         ├─ Prometheus /metrics (hand-written exposition)                       │
@@ -26,7 +26,7 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 
 <sub>Tower, the console embedded in the binary (no build step): the same k6 run seen from the span store — 3,738 requests in the hour, p50 142 ms / p99 261 ms, every request routed with its reason and traceable. The [Evals & drift page](docs/img/tower-evals.png) shows the golden v3 history against the 0.70 alert threshold and the worst-scoring pairs of the latest run.</sub>
 
-![AgentOps Router dashboard in Grafana: requests/s and p99 latency by model, tokens, eval faithfulness 0.972, error rate](docs/img/grafana-router.png)
+![Tower Router dashboard in Grafana: requests/s and p99 latency by model, tokens, eval faithfulness 0.972, error rate](docs/img/grafana-router.png)
 
 <sub>The provisioned Grafana board during a 5-minute k6 run on 2026-09-19 (2 VUs of short prompts routed to `qwen2.5:3b-instruct`, 1 VU of long prompts routed to `qwen3:8b`): 3,737 requests, 1 failure — the quality-tier request that hit the 180 s client timeout, which is the 100 % error step on the yellow line. Faithfulness 0.972 is the golden v3 suite (72 pairs) scored minutes earlier with `--score`.</sub>
 
@@ -63,10 +63,10 @@ Or containerised (21 MB distroless image, talks to Ollama on the host):
 
 ```bash
 docker compose --profile app up -d --build   # gateway on :8080 + postgres
-docker compose run --rm agentops --migrate   # once
+docker compose run --rm tower --migrate   # once
 ```
 
-Releases ship `agentops-vX.Y.Z-{linux,windows,darwin}-amd64` binaries built by CI on every `v*` tag.
+Releases ship `tower-vX.Y.Z-{linux,windows,darwin}-amd64` binaries built by CI on every `v*` tag.
 
 Releasing (Track T checklist — all local, CI has no GPU/Postgres):
 1. `bash scripts/verify.sh` green.
@@ -78,7 +78,7 @@ Then:
 ```bash
 curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}]}'
 # OpenAI shape: {"id":"chatcmpl-…","object":"chat.completion","model":"qwen2.5:3b-instruct","choices":[…],"usage":{…},
-#                "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}   ← AgentOps extensions
+#                "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}   ← Tower extensions
 curl -s -N localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}],"stream":true}'   # SSE
 curl -s localhost:8080/v1/messages -H 'x-api-key: ak_…' -d '{"model":"auto","max_tokens":128,"messages":[{"role":"user","content":"hi"}]}'   # Anthropic shape
 curl -s localhost:8080/v1/models           # served models with tier, backend, health
@@ -124,8 +124,8 @@ cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp 'https://github.com/yosrikhiari/AgentOps/.github/workflows/ci.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS
-gh attestation verify agentops-v1.2.3-linux-amd64 --repo yosrikhiari/AgentOps
-agentops --version-json     # version + the exact commit the signature covers
+gh attestation verify tower-v1.2.3-linux-amd64 --repo yosrikhiari/AgentOps
+tower --version-json     # version + the exact commit the signature covers
 ```
 
 No Python package, no transitive dependency tree: the gateway installs as one static binary

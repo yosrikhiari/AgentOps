@@ -216,7 +216,7 @@ func OTLPPayload(spans []ExportedSpan, service string) ([]byte, error) {
 				{Key: "service.name", Value: anyValue{StringValue: service}},
 			}},
 			"scopeSpans": []any{map[string]any{
-				"scope": map[string]any{"name": "agentops", "version": ScopeVersion},
+				"scope": map[string]any{"name": "tower", "version": ScopeVersion},
 				"spans": out,
 			}},
 		}},

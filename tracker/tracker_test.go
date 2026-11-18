@@ -17,9 +17,9 @@ func TestHappyPath(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()
 	var nR, nD, nV int
-	final, err := RunToy(ctx, store, "wf-happy", "what is agentops?",
-		okFunc(&nR, "ctx: agentops routes requests"),
-		okFunc(&nD, "draft: agentops routes requests fast"),
+	final, err := RunToy(ctx, store, "wf-happy", "what is tower?",
+		okFunc(&nR, "ctx: tower routes requests"),
+		okFunc(&nD, "draft: tower routes requests fast"),
 		okFunc(&nV, "approved: draft looks good"))
 	if err != nil {
 		t.Fatal(err)

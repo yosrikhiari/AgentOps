@@ -100,7 +100,7 @@ metric makes visible.
 **pass^k** (tau-bench's reliability metric) needs repeats:
 
 ```bash
-go run . --workflow-repeats 5 --tracker-input "what does agentops do?"
+go run . --workflow-repeats 5 --tracker-input "what does tower do?"
 ```
 
 With `n` runs and `c` clean ones, `pass^k = C(c,k)/C(n,k)` — the chance that all `k`

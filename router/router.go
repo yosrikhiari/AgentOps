@@ -18,7 +18,7 @@ var complexKeywords = []string{
 }
 
 // DefaultSensitiveKeywords flag a prompt as data that must never leave the box. The list is
-// deliberately small and obvious; the header X-AgentOps-Sensitive is the reliable signal.
+// deliberately small and obvious; the header X-Tower-Sensitive is the reliable signal.
 var DefaultSensitiveKeywords = []string{
 	"password", "mot de passe", "iban", "passport", "passeport", "ssn", "social security",
 	"credit card", "carte bancaire", "confidential", "confidentiel", "secret", "api key", "cin ",

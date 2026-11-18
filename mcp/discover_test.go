@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"agentops/router"
+	"tower/router"
 )
 
 func testServer() *Server {
@@ -44,7 +44,7 @@ func TestDiscoverListsVersionsAndTools(t *testing.T) {
 		t.Fatalf("tools capability missing: %v", res["capabilities"])
 	}
 	meta := res["_meta"].(map[string]any)["io.modelcontextprotocol/serverInfo"].(map[string]any)
-	if meta["name"] != "agentops" {
+	if meta["name"] != "tower" {
 		t.Fatalf("serverInfo = %v", meta)
 	}
 }

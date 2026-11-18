@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tower — Design System for AgentOps</title>
+<title>Tower — Design System for Tower</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <!-- The single source of truth: the CSS the console ships. This page adds only doc chrome. -->
@@ -141,7 +141,7 @@
         <div class="tower-grid-2">
           <div class="ds-frame"><div class="ds-frame-label">≥ 900 px — labelled sidebar</div>
             <div class="ds-shellmini">
-              <nav class="tower-side"><div class="tower-brand"><div class="tower-rail-mark">T</div><div><div class="tower-brand-name">Tower</div><div class="tower-brand-sub">AgentOps console</div></div></div>
+              <nav class="tower-side"><div class="tower-brand"><div class="tower-rail-mark">T</div><div><div class="tower-brand-name">Tower</div><div class="tower-brand-sub">Tower console</div></div></div>
                 <div class="tower-nav-label">Operate</div><button class="tower-nav-btn" data-active="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Overview</span></button><button class="tower-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/></svg><span>Traces</span></button>
                 <div class="tower-nav-label">Quality</div><button class="tower-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg><span>Evals &amp; drift</span></button>
                 <div class="tower-side-foot"><div class="tower-pulse-item"><span class="tower-pulse-dot"></span>router live</div></div></nav>
@@ -359,7 +359,7 @@
             <div class="tower-filters"><button class="tower-chip tower-chip-btn on">All</button><button class="tower-chip tower-chip-btn">Chats</button><button class="tower-chip tower-chip-btn">Workflows</button><button class="tower-chip tower-chip-btn">Errors</button><button class="tower-chip tower-chip-btn">Sensitive</button><button class="tower-chip tower-chip-btn">Fallbacks</button></div>
             <div class="tower-trace-list" style="max-height:none">
               <div class="tower-trace-item selected"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8f2a1c3d</span></span><span class="tower-mono tower-muted">3 min ago</span></div><div class="tower-trace-item-sub">qwen2.5:7b-instruct-q4_K_M · long_prompt</div><div class="tower-trace-item-meta"><span class="tower-mono">890 ms</span></div></div>
-              <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">wf_71ab</span></span><span class="tower-mono tower-muted">8 min ago</span></div><div class="tower-trace-item-sub">what does agentops do?</div><div class="tower-trace-item-meta"><span class="tower-pill degraded">running</span></div></div>
+              <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">wf_71ab</span></span><span class="tower-mono tower-muted">8 min ago</span></div><div class="tower-trace-item-sub">what does tower do?</div><div class="tower-trace-item-meta"><span class="tower-pill degraded">running</span></div></div>
               <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">1d9e44a0</span></span><span class="tower-mono tower-muted">12 min ago</span></div><div class="tower-trace-item-sub">llama-3.1-8b-instant · quality</div><div class="tower-trace-item-meta"><span class="tower-mono">1.21 s</span><span class="tower-pill critical">error</span><span class="tower-chip">fallback</span><span class="tower-chip">writer</span></div></div>
             </div>
           </section>

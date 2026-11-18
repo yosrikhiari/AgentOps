@@ -1,4 +1,4 @@
-# AgentOps — Engineering rules
+# Tower — Engineering rules
 
 The rules this codebase is built and judged by. Each rule says **what**, **why**, and **how it is enforced** — by a test in `policy/` (runs in CI), by a test elsewhere, by a CI tool, or by review. A rule with no enforcement column is not a rule; it is a wish.
 

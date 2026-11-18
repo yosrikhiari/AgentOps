@@ -48,7 +48,7 @@ type Choice struct {
 	FinishReason string  `json:"finish_reason"`
 }
 
-// ChatResponse is an OpenAI chat.completion plus AgentOps extensions (text, reason,
+// ChatResponse is an OpenAI chat.completion plus Tower extensions (text, reason,
 // backend, trace_id, fallback). OpenAI clients ignore the extras; the MVP's clients keep
 // reading text/model/reason/trace_id.
 type ChatResponse struct {
@@ -361,7 +361,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "prompt or messages is required", traceID)
 		return
 	}
-	if strings.EqualFold(r.Header.Get("X-AgentOps-Sensitive"), "true") {
+	if strings.EqualFold(r.Header.Get("X-Tower-Sensitive"), "true") {
 		req.Sensitive = true
 	}
 	if v := r.Header.Get("X-Client-Ref"); v != "" {

@@ -660,7 +660,7 @@
     const cmds = [
       { g: 'Go to', l: 'Overview', k: 'page' }, { g: 'Go to', l: 'Traces', k: 'page' }, { g: 'Go to', l: 'Evals & drift', k: 'page' }, { g: 'Go to', l: 'Workflows', k: 'page' }, { g: 'Go to', l: 'Metrics (Prometheus)', k: 'link' },
       { g: 'Actions', l: 'Run eval suite on v3', k: 'action' }, { g: 'Actions', l: 'Start workflow…', k: 'action' }, { g: 'Actions', l: 'Copy a curl', k: 'action' }, { g: 'Actions', l: 'Toggle compact density', k: 'action' },
-      { g: 'Recent traces', l: '8f2a1c3d · qwen2.5:7b · 890 ms', k: 'chat' }, { g: 'Recent traces', l: 'wf_71ab · what does agentops do?', k: 'workflow' }, { g: 'Recent traces', l: '1d9e44a0 · groq · error', k: 'chat' }];
+      { g: 'Recent traces', l: '8f2a1c3d · qwen2.5:7b · 890 ms', k: 'chat' }, { g: 'Recent traces', l: 'wf_71ab · what does tower do?', k: 'workflow' }, { g: 'Recent traces', l: '1d9e44a0 · groq · error', k: 'chat' }];
     let sel = 0, shown = [];
     function render() {
       const q = inp.value.trim().toLowerCase();
@@ -692,7 +692,7 @@
   // ---- 06 filter counts ----
   (function () {
     const items = [
-      { id: '8f2a1c3d', kind: 'chat', label: 'qwen2.5:7b · long_prompt', lat: 890 }, { id: 'wf_71ab', kind: 'workflow', label: 'what does agentops do?', status: 'running' },
+      { id: '8f2a1c3d', kind: 'chat', label: 'qwen2.5:7b · long_prompt', lat: 890 }, { id: 'wf_71ab', kind: 'workflow', label: 'what does tower do?', status: 'running' },
       { id: '1d9e44a0', kind: 'chat', label: 'groq/llama-3.1-8b · quality', lat: 1210, error: true, fallback: true }, { id: 'c07b91ee', kind: 'chat', label: 'qwen2.5:3b · default_fast', lat: 208, sensitive: true },
       { id: 'wf_20fe', kind: 'workflow', label: 'summarise the RULES doc', status: 'done' }, { id: '77e1b0aa', kind: 'chat', label: 'qwen2.5:3b · default_fast', lat: 190 }];
     const defs = [['all', 'All', () => true], ['chat', 'Chats', i => i.kind === 'chat'], ['workflow', 'Workflows', i => i.kind === 'workflow'], ['error', 'Errors', i => i.error], ['sensitive', 'Sensitive', i => i.sensitive], ['fallback', 'Fallbacks', i => i.fallback]];
@@ -851,7 +851,7 @@
 
   // ---- 18 progress ----
   (function () {
-    const qs = ['what does agentops do?', 'how are spans stored?', 'which models are local?', 'what is the eval threshold?', 'how does fallback work?', 'what is FODEC?'];
+    const qs = ['what does tower do?', 'how are spans stored?', 'which models are local?', 'what is the eval threshold?', 'how does fallback work?', 'what is FODEC?'];
     let done = 0, total = 72, t0, tm, cancelled = false;
     function tick() {
       if (cancelled) return;

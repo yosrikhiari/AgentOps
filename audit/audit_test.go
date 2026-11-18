@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"agentops/evals"
+	"tower/evals"
 )
 
 func TestTrailOrder(t *testing.T) {

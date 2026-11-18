@@ -318,7 +318,7 @@ func TestFallsBackToCloudWhenLocalFails(t *testing.T) {
 // local backend is down and the cloud one is healthy.
 func TestSensitiveNeverLeavesBox(t *testing.T) {
 	for name, hdr := range map[string]map[string]string{
-		"header":  {"X-AgentOps-Sensitive": "true"},
+		"header":  {"X-Tower-Sensitive": "true"},
 		"keyword": nil,
 	} {
 		srv, _, cloud := twoBackends(errors.New("ollama down"))

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"agentops/gpu"
-	"agentops/tracker"
+	"tower/gpu"
+	"tower/tracker"
 )
 
 // TestBuildInfoNamesTheBuild: a release binary must be able to say which commit

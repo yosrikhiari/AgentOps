@@ -192,7 +192,7 @@ func DriftReportFor(ctx context.Context, db Queryer, goldenVersion string, thres
 	rep := DriftReport{GoldenVersion: goldenVersion, Threshold: threshold, WorstCases: []WorstCase{}}
 	rows, err := db.Query(ctx,
 		`SELECT id, golden_version, judge_model, judge_prompt, score FROM eval_runs
-		 WHERE golden_version = $1 AND status = 'complete'
+		 WHERE golden_version = $1 AND status = 'complete' AND model = ''
 		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
 		 ORDER BY created_at DESC, id DESC LIMIT 2`,
 		goldenVersion)

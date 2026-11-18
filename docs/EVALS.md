@@ -127,6 +127,33 @@ With two or more models judged on the same golden questions (`--score --score-mo
 
 Questions a rung did not answer are excluded from both, so the comparison is always like-for-like. With fewer than two rungs the line says `undefined` — never a zero that reads as a measurement.
 
+### Measured on this roster (2026-11-18)
+
+Two Track L runs over v3 (`--score-model`, judge `phi4-mini:3.8b`, prompt v2):
+
+| Rung | Faithfulness | Misses | Fully refuted | No claims |
+|---|---|---|---|---|
+| `phi4-mini:3.8b` | 0.800 | 2 | 9 | 5 |
+| `llama3.2:1b` | 0.710 | 2 | 20 | 0 |
+
+```
+routing headroom: 2 rungs (llama3.2:1b, phi4-mini:3.8b), 72 questions answered by all
+beta (every rung fails): 11% — no single-answer policy can beat 89%
+fast-optimal: 79% — the fast rung is at least as good on this share
+```
+
+**Read this as a roster verdict, not a router result.** The 1B model is already the better or
+equal choice on 79% of questions, and 11% are failed by both. That leaves roughly one question
+in ten where the bigger model is strictly better — the definition of "little to route". It is
+the 2026 finding (`docs/RESEARCH-intent-routing.md` §2.1) reproduced on our own corpus: the
+roster, not the classifier, is the bottleneck. Phase 1 should not be built on this pair.
+
+Two caveats on the runs themselves: they are generation runs under load (87 °C peak, 2 and 141
+model swaps, 45/83 and 15/145 throttled samples), so their *latency* is not comparable with a
+quiet run — the answers are unaffected because sampling is pinned to 0. And the two rungs are
+1B and 3.8B models of different families, not a genuine fast/quality pair; the numbers describe
+what this card can hold, not what a product roster should be.
+
 ## pass^k
 
 **pass^k** (tau-bench's reliability metric) needs repeats:

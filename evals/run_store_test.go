@@ -294,6 +294,11 @@ func TestDriftAndGateIgnoreIncompleteRuns(t *testing.T) {
 			t.Fatalf("query does not exclude incomplete runs: %s", q)
 		}
 	}
+	// Track L runs (model <> '') are a different question: the headline faithfulness is
+	// the frozen golden answers, and a 1B model's run must not become "the number".
+	if !strings.Contains(db.queries[0], "model = ''") {
+		t.Fatalf("drift mixes model runs into the golden window: %s", db.queries[0])
+	}
 }
 
 type sqlCaptureDB struct{ queries []string }

@@ -654,3 +654,41 @@ func TestSQLStoreGPUSamplesMapsEveryColumn(t *testing.T) {
 		t.Fatalf("swaps_total = %d, want 4", s.SwapsTotal)
 	}
 }
+
+// TestSQLStoreWorkflowsAttachesGrade: a graded workflow carries its score, an ungraded one
+// carries nil - "no grade" and "graded 0" must not look alike.
+func TestSQLStoreWorkflowsAttachesGrade(t *testing.T) {
+	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	q := &wfQueryer{rows: map[string][][]any{
+		"FROM workflows":  {{"w1", "toy", "done", "question", now}, {"w2", "toy", "done", "other", now}},
+		"FROM steps":      {{"w1", 0, "researcher", "done", 1, "a"}, {"w1", 1, "drafter", "done", 1, "b"}, {"w1", 2, "reviewer", "done", 1, "c"}},
+		"workflow_grades": {{"w1", "phi4-mini:3.8b", "answer-quality-v1", 4, "good", now}},
+	}}
+	got, err := SQLStore{Query: q}.Workflows(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("workflows = %d", len(got))
+	}
+	if !got[0].Clean || got[0].Retries != 0 {
+		t.Fatalf("trajectory = %+v", got[0])
+	}
+	if got[0].Grade == nil || got[0].Grade.Score != 4 || got[0].Grade.Judge != "phi4-mini:3.8b" {
+		t.Fatalf("grade = %+v", got[0].Grade)
+	}
+	if got[1].Grade != nil {
+		t.Fatalf("ungraded workflow carries a grade: %+v", got[1].Grade)
+	}
+}
+
+type wfQueryer struct{ rows map[string][][]any }
+
+func (q *wfQueryer) Query(_ context.Context, sql string, _ ...any) (evals.Rows, error) {
+	for key, rows := range q.rows {
+		if strings.Contains(sql, key) {
+			return &fakeRows{rows: rows}, nil
+		}
+	}
+	return &fakeRows{}, nil
+}

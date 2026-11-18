@@ -90,6 +90,17 @@ type Workflow struct {
 	// `--trajectory` cannot disagree about what a run did.
 	Retries int  `json:"retries"`
 	Clean   bool `json:"clean"`
+	// Grade is the stored rubric score for the final answer, when one was taken. It is
+	// quality, not faithfulness - see evals/rubric.go.
+	Grade *WorkflowGrade `json:"grade,omitempty"`
+}
+
+type WorkflowGrade struct {
+	Judge    string    `json:"judge"`
+	Prompt   string    `json:"prompt"`
+	Score    int       `json:"score"`
+	Reason   string    `json:"reason"`
+	GradedAt time.Time `json:"graded_at"`
 }
 
 // AnnotateTrajectory fills Retries and Clean. Clean = completed, every step done, no step
@@ -480,6 +491,27 @@ func (s SQLStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) 
 		}
 	}
 	if err := srows.Err(); err != nil {
+		return nil, err
+	}
+	// Grades are optional: a workflow that was never graded has no row, which is not a
+	// zero. The query is separate so the steps join stays unchanged.
+	grows, err := s.Query.Query(ctx,
+		`SELECT workflow_id, judge, prompt, score, reason, graded_at FROM workflow_grades WHERE workflow_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer grows.Close()
+	for grows.Next() {
+		var wid string
+		var g WorkflowGrade
+		if err := grows.Scan(&wid, &g.Judge, &g.Prompt, &g.Score, &g.Reason, &g.GradedAt); err != nil {
+			return nil, err
+		}
+		if i, ok := idx[wid]; ok {
+			out[i].Grade = &g
+		}
+	}
+	if err := grows.Err(); err != nil {
 		return nil, err
 	}
 	for i := range out {

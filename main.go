@@ -857,6 +857,59 @@ func runWorkflowRepeats(dsn, ollamaURL, model, input string, runs int) {
 	}
 }
 
+// runWorkflowGrade scores a workflow's final answer on a rubric and stores it. This is
+// quality, not faithfulness: the workflow does not persist the chunks its researcher
+// retrieved, so there is no source to check the answer against.
+func runWorkflowGrade(dsn, ollamaURL, workflowID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var question string
+	if err := conn.QueryRow(ctx, `SELECT input FROM workflows WHERE id = $1`, workflowID).Scan(&question); err != nil {
+		log.Fatalf("workflow %s: %v", workflowID, err)
+	}
+	var answer string
+	err = conn.QueryRow(ctx,
+		`SELECT output FROM steps WHERE workflow_id = $1 AND status = 'done' ORDER BY seq DESC LIMIT 1`,
+		workflowID).Scan(&answer)
+	if err != nil {
+		log.Fatalf("workflow %s has no completed step to grade: %v", workflowID, err)
+	}
+	model := envOr("JUDGE_MODEL", "qwen3:8b")
+	gen := evals.NewOllamaGenerator(ollamaURL, model)
+	score, err := evals.GradeAnswer(ctx, gen, question, answer)
+	if err != nil {
+		log.Fatalf("grade %s: %v", workflowID, err)
+	}
+	if score.Value == 0 {
+		log.Printf("grade %s: UNSCORED - the judge returned no SCORE: 1-5 line; reason: %s", workflowID, firstLine(score.Reason))
+		os.Exit(2)
+	}
+	if err := evals.SaveWorkflowGrade(ctx, pgAdapter{conn}, evals.WorkflowGrade{
+		WorkflowID: workflowID, Judge: model, Prompt: evals.RubricPromptVersion,
+		Score: score.Value, Reason: score.Reason,
+	}); err != nil {
+		log.Fatalf("store grade: %v", err)
+	}
+	log.Printf("grade %s: %d/5 by %s (%s) - %s", workflowID, score.Value, model, evals.RubricPromptVersion, firstLine(score.Reason))
+}
+
+// firstLine keeps a judge's one-sentence reason on one line in a log.
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if len(s) > 160 {
+		s = s[:160] + "…"
+	}
+	return s
+}
+
 // extraModels is the cleaned OLLAMA_MODELS list: named models a client may
 // address explicitly. Path-like entries are skipped (Ollama itself uses
 // OLLAMA_MODELS for its models directory — Track J).
@@ -1445,6 +1498,7 @@ func main() {
 	traceID := flag.String("trace", "", "print redacted spans for TRACE_ID and exit")
 	trajectoryID := flag.String("trajectory", "", "print trajectory metrics (steps, attempts, retries, clean) for WORKFLOW_ID and exit")
 	workflowRepeats := flag.Int("workflow-repeats", 0, "run the toy workflow N times on --tracker-input and print pass^k reliability, then exit")
+	workflowGrade := flag.String("workflow-grade", "", "grade WORKFLOW_ID's final answer on a 1-5 rubric, store it, and exit")
 	advise := flag.Bool("advise", false, "print the static model advisor report (Track K) and exit")
 	showVersion := flag.Bool("version", false, "print version, commit and build date, then exit")
 	versionJSON := flag.Bool("version-json", false, "print the build info as one line of JSON and exit")
@@ -1549,6 +1603,10 @@ func main() {
 	}
 	if *workflowRepeats > 0 {
 		runWorkflowRepeats(dsn, cfg.OllamaURL, cfg.FastModel, *trackerInput, *workflowRepeats)
+		return
+	}
+	if *workflowGrade != "" {
+		runWorkflowGrade(dsn, cfg.OllamaURL, *workflowGrade)
 		return
 	}
 	if *advise {

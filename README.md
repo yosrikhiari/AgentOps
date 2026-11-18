@@ -100,6 +100,7 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--trace <id>` | print redacted spans for a chat or workflow |
 | `--trajectory <id>` | print one workflow's trajectory: steps, done, attempts, retries, and whether it was clean (completed, every step first-try) |
 | `--workflow-repeats N` (`--tracker-input "…"`) | run the toy workflow N times and print `pass^k` for k=1..N (the chance all k trials succeed). Reliability of the orchestration, not answer quality — the toy workflow has no ground truth for its content |
+| `--workflow-grade <id>` | grade one workflow's final answer on a 1-5 rubric with `JUDGE_MODEL`, store it, and show it as a chip on `#/workflows`. Quality, not groundedness: the workflow does not keep the chunks it retrieved |
 | `--advise` | print the static model advisor report (Track K: per-model size/VRAM fit, presence, co-residency verdict) and exit |
 | `--draft-golden` → review → `--freeze-golden` | build a golden set (`--golden-version vN`): LLM drafts, human reviews, validator rejects unscorable answers, hash frozen |
 | `--score` / `--drift` / `--schedule-evals 24h` | run the faithfulness suite, print the drift report, or loop it (`--golden-version vN`, `--golden path`; `--drift-golden vN` picks the version the report and console show); each pair is stored as it is judged and an interrupted suite resumes on the next run, so a judge that dies at pair 66 does not cost the first 66; the suite line also reports `misses`, `refuted`, `no-claims` and `unsolvable` — the share of the set no router could rescue |

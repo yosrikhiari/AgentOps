@@ -105,6 +105,19 @@ measures orchestration reliability, not answer quality. It is still the property
 workflow actually claims — a retry loop that silently hides a flaky step is exactly what this
 metric makes visible.
 
+## Quality: the other half
+
+A step can land and still be a bad answer. `--workflow-grade <id>` scores the final output on a
+1-5 rubric (`answer-quality-v1`) and stores it in `workflow_grades`; the `#/workflows` table
+shows it as a chip and marks ungraded runs with `—`.
+
+It is deliberately **not** faithfulness: the workflow does not persist the chunks its researcher
+retrieved, so there is no source to check the answer against. Keeping the two numbers apart is
+the point — a grounded eval pair and an ungrounded quality score answer different questions, and
+one must never be quoted as the other.
+
+## pass^k
+
 **pass^k** (tau-bench's reliability metric) needs repeats:
 
 ```bash

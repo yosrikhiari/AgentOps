@@ -542,7 +542,7 @@
     content.replaceChildren(
       panel('Durable workflows', 'Each step is a Postgres row; kill the process mid-step and resume the same id — done steps are never re-run.',
         h('div', { class: 'tower-form-row' }, input, startBtn)),
-      panel('Workflows', 'Newest first, refreshes while something is running. "clean" = every step landed on the first attempt; pass^k over repeats comes from --workflow-repeats.', listBody));
+      panel('Workflows', 'Newest first, refreshes while something is running. "clean" = every step landed on the first attempt; pass^k over repeats comes from --workflow-repeats. Quality is a 1-5 rubric on the final answer (--workflow-grade), not groundedness.', listBody));
 
     async function refresh() {
       let data;
@@ -564,11 +564,13 @@
           h('td', null, w.clean ? pill('healthy', 'clean')
             : w.status === 'done' ? pill('degraded', w.retries + (w.retries === 1 ? ' retry' : ' retries'))
             : chip('—')),
+          h('td', null, w.grade ? chip(w.grade.score + '/5')
+            : h('span', { class: 'tower-muted', title: 'run --workflow-grade ' + w.id }, '—')),
           h('td', null, w.status === 'done' ? pill('healthy', 'done') : pill('degraded', w.status)),
           h('td', null, w.status !== 'done' ? resume : null));
       });
       listBody.replaceChildren(wfs.length ? h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null, ...['when', 'id', 'input', 'steps', 'trajectory', 'status', ''].map(t => h('th', null, t)))),
+        h('thead', null, h('tr', null, ...['when', 'id', 'input', 'steps', 'trajectory', 'quality', 'status', ''].map(t => h('th', null, t)))),
         h('tbody', null, rows)) : h('div', { class: 'tower-empty' }, 'No workflows yet'));
       clearTimeout(pollTimer);
       if (wfs.some(w => w.status === 'running')) pollTimer = setTimeout(() => { if (location.hash.startsWith('#/workflows')) refresh(); }, 4000);

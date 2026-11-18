@@ -22,3 +22,6 @@ evals/corpus/cache/
 
 # working plans stay local (they are scratch, not documentation)
 /docs/plans/
+
+# release build output (kept out so -buildvcs does not see a dirty tree)
+/dist/

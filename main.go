@@ -221,7 +221,7 @@ func withConn(dsn string, timeout time.Duration, fn func(ctx context.Context, co
 // print a quality number: AIQ/PGR need per-(query, model) outcomes, which Phase 1 records
 // in shadow mode. Claiming a router beats random before that data exists is exactly the
 // mistake the 2026 audit found in commercial routers.
-func runRouteReplay(dsn, window string) {
+func runRouteReplay(dsn, window, fastModel string) {
 	d, err := time.ParseDuration(window)
 	if err != nil || d <= 0 {
 		d = 720 * time.Hour
@@ -313,20 +313,49 @@ func runRouteReplay(dsn, window string) {
 		log.Printf("  ceiling: %d/%d unsolvable (%d%%) on %s run %d — %d retrieval misses, %d refuted, %d no-claims. No router can rescue these",
 			unsolvable, pairs, unsolvable*100/maxInt(pairs, 1), golden, runID, misses, refuted, noClaims)
 	}
-	// β (the co-failure rate) and smallest-tier-optimal need outcomes from two or more
-	// models on the same questions. This box has one chat model, so the honest line is
-	// "undefined", not a number derived from the frozen golden answers alone.
-	var modelRuns int
-	if err := conn.QueryRow(ctx,
-		`SELECT count(DISTINCT model)::int FROM eval_runs
-		 WHERE status = 'complete' AND model <> ''
-		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)`).Scan(&modelRuns); err != nil {
-		log.Fatal(err)
-	}
-	if rungs := 1 + modelRuns; rungs < 2 {
-		log.Printf("  routing headroom: undefined — %d rung with outcomes (the frozen golden answers). β and smallest-tier-optimal need ≥2 models judged on the same questions; see docs/EVALS.md", rungs)
-	} else {
-		log.Printf("  routing headroom: %d rungs with outcomes — β and smallest-tier-optimal are Phase 1 work (not computed here yet)", rungs)
+	// β (co-failure) and fast-optimal need per-model outcomes: the latest complete Track L
+	// run for each model. Golden-answer runs are the reference, not a rung.
+	if runID != 0 {
+		crows, err := conn.Query(ctx,
+			`WITH latest AS (
+			   SELECT DISTINCT ON (model) id, model FROM eval_runs
+			   WHERE golden_version = $1 AND model <> '' AND status = 'complete'
+			   ORDER BY model, created_at DESC, id DESC
+			 )
+			 SELECT p.question, l.model, p.retrieval_miss, p.faithfulness
+			 FROM latest l JOIN eval_pair_scores p ON p.run_id = l.id`, golden)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var outcomes []evals.RungOutcome
+		for crows.Next() {
+			var o evals.RungOutcome
+			var f *float64
+			if err := crows.Scan(&o.Question, &o.Model, &o.Miss, &f); err != nil {
+				crows.Close()
+				log.Fatal(err)
+			}
+			if f != nil {
+				o.Faithfulness = *f
+			}
+			outcomes = append(outcomes, o)
+		}
+		crows.Close()
+		if err := crows.Err(); err != nil {
+			log.Fatal(err)
+		}
+		ceil := evals.RouteCeiling(outcomes, fastModel)
+		if len(ceil.Rungs) < 2 || ceil.Questions == 0 {
+			log.Printf("  routing headroom: undefined — %d rung(s) with outcomes; β and fast-optimal need ≥2 models judged on the same questions (see docs/EVALS.md)", len(ceil.Rungs))
+		} else {
+			log.Printf("  routing headroom: %d rungs (%s), %d questions answered by all", len(ceil.Rungs), strings.Join(ceil.Rungs, ", "), ceil.Questions)
+			beta := int(ceil.Beta*100 + 0.5)
+			log.Printf("  beta (every rung fails): %d%% — no single-answer policy can beat %d%%", beta, 100-beta)
+			log.Printf("  fast-optimal: %d%% — the fast rung is at least as good on this share", int(ceil.FastOptimal*100+0.5))
+			for _, m := range ceil.Rungs {
+				log.Printf("    %s mean faithfulness %.3f", m, ceil.MeanFaith[m])
+			}
+		}
 	}
 }
 
@@ -1542,7 +1571,7 @@ func main() {
 		return
 	}
 	if *routeReplay {
-		runRouteReplay(dsn, *routeWindow)
+		runRouteReplay(dsn, *routeWindow, cfg.FastModel)
 		return
 	}
 	if *createKey != "" {

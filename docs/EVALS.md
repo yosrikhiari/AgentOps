@@ -118,6 +118,17 @@ one must never be quoted as the other.
 
 ## pass^k
 
+## Routing ceiling
+
+With two or more models judged on the same golden questions (`--score --score-model NAME`), `--route-replay` reports:
+
+- **β, the co-failure rate** — the share of questions every rung scores below 0.5. Any policy that returns one model's answer is capped at `1-β`, so a high β means the roster is the bottleneck, not the classifier.
+- **fast-optimal** — the share where the cheap rung is at least as good as every other, ties going to the cheaper model. A high number means routing has little left to win.
+
+Questions a rung did not answer are excluded from both, so the comparison is always like-for-like. With fewer than two rungs the line says `undefined` — never a zero that reads as a measurement.
+
+## pass^k
+
 **pass^k** (tau-bench's reliability metric) needs repeats:
 
 ```bash

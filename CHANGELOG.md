@@ -4,6 +4,8 @@ All notable changes. Dates are 2026.
 
 ## Unreleased
 
+- **The project builds with Go 1.26.11, not 1.26.7 — CI found what a local scan hid:** `govulncheck` in Actions reported **13 vulnerabilities from the Go standard library** because `go.mod` pinned the patch and `setup-go` installs exactly that, while the local scan silently ran under a newer toolchain (the scanner itself declares `go 1.26.11`, so `GOTOOLCHAIN=auto` upgraded the run and the stdlib under it). The `go` directive is now `1.26.11`, so dev builds, CI and the release binaries all use the patched standard library; the built binary reports `go1.26.11` in `go version -m`, and the scan is clean.
+
 - **Both Docker base images are pinned by digest as well as tag** (`golang:1.27-alpine@sha256:70bd…`, `distroless/static-debian12:nonroot@sha256:afa5…`): a tag is mutable, and the release story is that a compromised dependency cannot silently change the artefact. Dependabot's docker ecosystem keeps both fresh; the image was rebuilt and `docker run tower:ci --version` checked locally.
 
 - **CodeQL joins the gate, as its own workflow:** `security-extended` queries on Go run weekly and on every change to `main`/PRs, uploading SARIF as a security alert rather than a red build on an unrelated PR — semantic bug classes (injection, path traversal, unsafe deserialisation) that `govulncheck` cannot see because no CVE exists yet.

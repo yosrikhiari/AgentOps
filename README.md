@@ -4,6 +4,8 @@
 
 A self-hosted **LLM operations gateway** in one Go binary: an OpenAI-compatible **router** over local and cloud models, a **durable task tracker**, a **faithfulness eval + drift alert** loop, **OTel-shaped traces**, an **MCP server** for AI assistants, and an embedded web console.
 
+> The repository is still named `AgentOps` so existing links and the release identity keep working; the product is **Tower**. See [`docs/MARKET.md`](docs/MARKET.md) §9.1(8) for the decision.
+
 Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.com) models — informed by how TensorZero, Bifrost, Temporal and Langfuse solve the same problems, but with every core piece written here so it can be explained line by line. Standard library + one dependency (`pgx`).
 
 ```

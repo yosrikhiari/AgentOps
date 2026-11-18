@@ -193,9 +193,10 @@ items that are now worth building first. Detailed steps live in
 8. **The name collided — decided 2026-11-18: the product is Tower.** `agentops.ai` is a funded
    agent-observability product with a recognised brand and the search term. The code, module,
    binary, docs, console, MCP server, OTLP service name, compose defaults and this box's
-   Postgres role/database/volume now all say Tower. One string keeps the old name on purpose:
-   the GitHub repository URL, because renaming a remote is a separate step and every link in
-   these docs points at it.
+   Postgres role/database/volume now all say Tower. **The GitHub repository keeps the name
+   `AgentOps` (decided, not pending):** the URL is the distribution channel, redirects would
+   churn every external link and the cosign identity regexp, and a product name differing from
+   its repository name costs nothing. README says so in one line so a visitor is not confused.
 
 ### 9.2 What shipped here since September
 

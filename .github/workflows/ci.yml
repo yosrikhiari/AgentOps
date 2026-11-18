@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 # One run per ref at a time: a new push cancels the previous run of the same branch/PR, so
 # Dependabot rebases and quick follow-up commits do not pile up in the queue.
@@ -34,6 +35,54 @@ jobs:
       # green — local runs the same file without VERIFY_RACE).
       - name: verify
         run: VERIFY_RACE=1 bash scripts/verify.sh
+      # A tidy module graph is a review artefact: a stray require is either a dependency
+      # decision or an accident, and both deserve to be seen in the diff.
+      - name: go mod tidy
+        run: go mod tidy -diff
+      # The console is hand-written JS with no build step, so nothing else parses it. A
+      # syntax error here ships a blank page and only the browser would notice.
+      - name: console syntax
+        run: node --check console/static/app.js
+
+  # The migrations are only provable against a real Postgres: the policy test checks the
+  # numbering, not the SQL. This job starts an empty pgvector database, applies the whole
+  # chain, and applies it again to prove the runner is idempotent.
+  schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tower
+          POSTGRES_PASSWORD: tower
+          POSTGRES_DB: tower
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tower"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: tower
+      POSTGRES_PASSWORD: tower
+      POSTGRES_DB: tower
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        run: go build -o tower .
+      - name: apply every migration to an empty database
+        run: |
+          set -euo pipefail
+          ./tower --migrate 2>&1 | tee /dev/stderr | grep -Eq 'applied [1-9][0-9]* new file'
+      - name: a second run applies nothing
+        run: ./tower --migrate 2>&1 | grep -q 'applied 0 new file'
 
   # Static analysis + executable policies (docs/RULES.md). Fails the build on a policy break,
   # a staticcheck finding, or a known vulnerability in the module graph.
@@ -48,8 +97,14 @@ jobs:
           cache: true
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+      # Pinned, not @latest: a scanner that changes under the build is a moving gate, and
+      # `@latest` is also a supply-chain surface the rest of this workflow does not have.
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+      # Catch workflow mistakes (unknown keys, bad expressions) before GitHub rejects the
+      # run, or worse, silently skips a step.
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml
       - name: executable policies
         run: go test -count=1 -v ./policy/
 
@@ -65,15 +120,20 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: tower:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # A build that succeeds but produces a binary the distroless entrypoint cannot run is
+      # the failure this step exists for; --version needs no database and no model.
+      - name: smoke-test the image
+        run: docker run --rm tower:ci --version
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [go, policy, docker]
+    needs: [go, policy, docker, schema]
     # Signing and provenance need an OIDC token; the release needs to write.
     # Idempotent re-runs are fine: cosign keyless and attestations are additive.
     permissions:
@@ -100,8 +160,10 @@ jobs:
                 -ldflags="-s -w $stamp" -o "dist/tower-${GITHUB_REF_NAME}-${os}-${arch}${ext}" .
             done
           done
-          (cd dist && sha256sum * > SHA256SUMS)
-      # SBOM per release: what is inside the binary, in a format a scanner reads.
+          # The stamp is a promise; check that the shipped binary carries it before signing.
+          ./dist/tower-${GITHUB_REF_NAME}-linux-amd64 --version-json | grep -q "\"commit\":\"${GITHUB_SHA}\""
+      # SBOM before the checksums: SHA256SUMS must cover every attached file, the SBOM
+      # included, or the signature vouches for a set that is not the set that ships.
       - name: SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
@@ -110,6 +172,12 @@ jobs:
           output-file: dist/tower-${{ github.ref_name }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
+      - name: checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS
+          sha256sum -c SHA256SUMS
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       # Sign the checksums, not each binary: one signature covers every artifact,
       # and the identity ties it to this workflow at this tag.
@@ -117,7 +185,12 @@ jobs:
         run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/tower-*
+          # The binaries, the manifest that lists them, and the bundle that signs the
+          # manifest: a verifier should not have to trust an unprovenanced checksum file.
+          subject-path: |
+            dist/tower-*
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sigstore.json
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*

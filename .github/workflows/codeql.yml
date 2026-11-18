@@ -24,6 +24,13 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A fork PR gets a read-only token and Dependabot's PRs cannot upload SARIF, so the
+    # upload step would fail on changes that have nothing to do with the code. Push to main
+    # and the weekly run still cover those.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       actions: read

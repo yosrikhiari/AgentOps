@@ -407,7 +407,29 @@ func runReleaseGate(dsn, golden string, k int, threshold float64) {
 // runJudgeAudit measures the judge itself. Every score, drift alert and release gate
 // inherits this error, and until this pass nobody had measured it: a faithful
 // paraphrase scoring 0.00 was the symptom, not a bad answer.
-func runJudgeAudit(ollamaURL, model, model2, path string) {
+// defaultGroqModel is the cloud model used when the deployment does not name one. Groq
+// retired llama-3.1-8b-instant in 2026 (404 model_not_found), so the default has to be a
+// model that exists today; CLOUD_MODEL and GROQ_JUDGE_MODEL override it.
+const defaultGroqModel = "openai/gpt-oss-20b"
+
+// auditJudge builds the second judge. A cloud judge is how the audit measures agreement
+// without a bigger card, so the backend is explicit rather than inferred from the name:
+// a model called "llama-3.1-8b-instant" means nothing to Ollama.
+func auditJudge(name, backend, ollamaURL string) (evals.Judge, string, error) {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "", "ollama":
+		return evals.NewOllamaJudge(ollamaURL, name), name, nil
+	case "groq":
+		key := strings.TrimSpace(os.Getenv("GROQ_API_KEY"))
+		if key == "" {
+			return nil, "", errors.New("--judge2-backend groq needs GROQ_API_KEY in the environment")
+		}
+		return evals.NewGroqJudge(name, key), "groq/" + name, nil
+	}
+	return nil, "", fmt.Errorf("unknown judge backend %q (ollama|groq)", backend)
+}
+
+func runJudgeAudit(ollamaURL, model, model2, backend2, path string) {
 	if model == "" {
 		model = envOr("JUDGE_MODEL", "qwen3:8b")
 	}
@@ -422,7 +444,11 @@ func runJudgeAudit(ollamaURL, model, model2, path string) {
 	}
 	judges := []evals.NamedJudge{{Name: model, Judge: evals.NewOllamaJudge(ollamaURL, model)}}
 	if model2 != "" {
-		judges = append(judges, evals.NamedJudge{Name: model2, Judge: evals.NewOllamaJudge(ollamaURL, model2)})
+		judge, name, err := auditJudge(model2, backend2, ollamaURL)
+		if err != nil {
+			log.Fatalf("judge audit: %v", err)
+		}
+		judges = append(judges, evals.NamedJudge{Name: name, Judge: judge})
 	}
 	rep := evals.RunAudit(context.Background(), items, judges, true)
 	log.Printf("judge audit: %d labelled items, prompt=%s (positive class = unsupported)", rep.Items, evals.JudgePromptVersion)
@@ -439,7 +465,7 @@ func runJudgeAudit(ollamaURL, model, model2, path string) {
 		log.Printf("  %-24s %3d %3d %3d %3d %5.2f %6.2f %10.2f %7s %7s",
 			j.Judge, j.TP, j.FP, j.FN, j.TN, j.Precision(), j.Recall(), j.FalseAlarmRate(), flips, dflips)
 		if j.Errors > 0 {
-			log.Printf("  %-24s %d call(s) returned no verdict (counted as errors, not agreement)", j.Judge, j.Errors)
+			log.Printf("  %-24s %d call(s) returned no verdict (counted as errors, not agreement): %s", j.Judge, j.Errors, j.FirstError)
 		}
 		if len(j.FlipIDs) > 0 {
 			log.Printf("  %-24s moved on reorder: %s", j.Judge, strings.Join(j.FlipIDs, ", "))
@@ -1057,7 +1083,7 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 	if key := os.Getenv("GROQ_API_KEY"); key != "" {
 		model := os.Getenv("CLOUD_MODEL")
 		if model == "" {
-			model = "llama-3.1-8b-instant"
+			model = defaultGroqModel
 		}
 		base := os.Getenv("CLOUD_BASE_URL")
 		if base == "" {
@@ -1172,8 +1198,9 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		if key == "" {
 			return errors.New("GROQ_API_KEY is empty")
 		}
-		judge = evals.NewGroqJudge("llama-3.1-8b-instant", key)
-		judgeName = "groq/llama-3.1-8b-instant"
+		model := envOr("GROQ_JUDGE_MODEL", defaultGroqModel)
+		judge = evals.NewGroqJudge(model, key)
+		judgeName = "groq/" + model
 	} else {
 		judge = evals.NewOllamaJudge(ollamaURL, judgeName)
 	}
@@ -1407,6 +1434,7 @@ func main() {
 	auditFile := flag.String("audit-file", "evals/golden/judge-audit.jsonl", "labelled JSONL set for --judge-audit: id, claim, context, supported")
 	judgeModelFlag := flag.String("judge-model", "", "judge model for --judge-audit (default JUDGE_MODEL, else qwen3:8b)")
 	judge2Model := flag.String("judge2-model", "", "second judge for --judge-audit; when set, Cohen's kappa between the two is reported")
+	judge2Backend := flag.String("judge2-backend", "ollama", "backend for --judge2-model: ollama (local) or groq (needs GROQ_API_KEY)")
 	routeReplay := flag.Bool("route-replay", false, "print the routing-decision mix from route_decisions (intent, tier, chosen) and exit")
 	routeWindow := flag.String("route-window", "720h", "how far back --route-replay looks")
 	gateK := flag.Int("gate-k", 3, "consecutive green runs --release-gate requires (fewer runs, mixed judges, or a sub-threshold score all fail)")
@@ -1496,7 +1524,7 @@ func main() {
 		return
 	}
 	if *judgeAudit {
-		runJudgeAudit(cfg.OllamaURL, *judgeModelFlag, *judge2Model, *auditFile)
+		runJudgeAudit(cfg.OllamaURL, *judgeModelFlag, *judge2Model, *judge2Backend, *auditFile)
 		return
 	}
 	if *scheduleEvals != "" {

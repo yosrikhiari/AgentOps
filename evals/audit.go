@@ -130,6 +130,9 @@ type JudgeRun struct {
 	// FlipIDs names the items that moved, so a flip rate is actionable instead of a
 	// number nobody can chase.
 	FlipIDs []string
+	// FirstError is the first judge failure, verbatim. "26 calls returned no verdict" with
+	// no reason is the kind of opaque failure this project keeps removing.
+	FirstError string
 }
 
 func (r JudgeRun) FlipRate() float64 {
@@ -175,6 +178,9 @@ func RunAudit(ctx context.Context, items []AuditItem, judges []NamedJudge, flip 
 			label, _, err := nj.Judge.JudgeClaim(ctx, it.Claim, it.Context)
 			if err != nil {
 				run.Errors++
+				if run.FirstError == "" {
+					run.FirstError = err.Error()
+				}
 				continue
 			}
 			ok := label.Supported()

@@ -122,3 +122,23 @@ func TestTraceJSONOmitsGPUWithoutASample(t *testing.T) {
 		t.Fatal("gpu_ok present without a sample")
 	}
 }
+
+// TestAuditJudgeBackends: the second judge's backend is explicit. A cloud model name is
+// meaningless to Ollama, and a missing key must fail loudly instead of silently judging
+// with the local model twice - which would produce a perfect kappa that means nothing.
+func TestAuditJudgeBackends(t *testing.T) {
+	t.Setenv("GROQ_API_KEY", "")
+	if _, name, err := auditJudge("phi4-mini", "", "http://localhost:11434"); err != nil || name != "phi4-mini" {
+		t.Fatalf("ollama default: name=%q err=%v", name, err)
+	}
+	if _, _, err := auditJudge("llama-3.1-8b-instant", "groq", "http://localhost:11434"); err == nil {
+		t.Fatal("groq without a key must fail")
+	}
+	t.Setenv("GROQ_API_KEY", "test-key")
+	if _, name, err := auditJudge("llama-3.1-8b-instant", "groq", "http://localhost:11434"); err != nil || name != "groq/llama-3.1-8b-instant" {
+		t.Fatalf("groq backend: name=%q err=%v", name, err)
+	}
+	if _, _, err := auditJudge("m", "nope", "http://localhost:11434"); err == nil {
+		t.Fatal("unknown backend must fail")
+	}
+}

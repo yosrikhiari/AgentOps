@@ -40,15 +40,23 @@ measurement.
   **entailed / contradicted / baseless** and only `entailed` counts. `eval_runs.judge_prompt`
   stores the version, drift reports `prompt_changed`, and the release gate refuses a window
   that straddles a change — a different prompt is a different judge.
-- Validity is measured, not assumed: `--judge-audit` runs a hand-labelled 20-item set with
-  retrieval out of the loop. On 2026-11-17 `phi4-mini:3.8b` on v2 scored **11 TP / 0 FN /
-  0 FP / 9 TN**, with **1/12 label flips and 1/12 decision flips** under a context-order
-  probe (item `s5`, the 4xx/429 retry rule, moved entailed→baseless).
+- Validity is measured, not assumed: `--judge-audit` runs a hand-labelled 26-item set with
+  retrieval out of the loop. On 2026-11-18 `phi4-mini:3.8b` scored **15 TP / 0 FN / 0 FP /
+  11 TN**, with **1/16 label flips and 1/16 decision flips** under a context-order probe (item
+  `s5`, the 4xx/429 retry rule, moved entailed→baseless).
+- A **second judge** is available without a bigger card: `--judge2-model openai/gpt-oss-20b
+  --judge2-backend groq` (needs `GROQ_API_KEY`). On the same set it also scored 15/0/0/11 with
+  **κ = 1.00** on the supported/unsupported decision, and its own label flip (`h11`, baseless vs
+  contradicted). Agreement that high on a small, clean set is weak evidence — the two judges can
+  share a bias — but it rules out the opposite failure, a second opinion that disagrees at random.
+- Groq retired `llama-3.1-8b-instant` in 2026, so the Groq judge and cloud defaults are
+  `openai/gpt-oss-20b` (`GROQ_JUDGE_MODEL` overrides the judge; the audit prints the first error
+  verbatim when a judge fails instead of only counting it).
 
-**Read that 20/20 as a ceiling effect, not a verdict.** The seed set is small and its
-contexts are short and clean. The honest claims it supports are narrow: the schema works,
-the parser fails closed, and this judge handled the easy cases. A second judge (κ) and a
-larger, noisier set need a bigger card.
+**Read a perfect audit as a ceiling effect, not a verdict.** The seed set is small and its
+contexts are short and clean. The honest claims it supports are narrow: the schema works, the
+parser fails closed, and both judges handled the easy cases. A larger, noisier set is still the
+next step for validity — not another judge.
 
 ## Run lifecycle
 

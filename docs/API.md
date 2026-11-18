@@ -120,7 +120,7 @@ curl localhost:8080/v1/messages \
 {"object":"list","data":[
   {"id":"qwen2.5:3b-instruct","object":"model","owned_by":"ollama","tier":"fast","local":true,"up":true},
   {"id":"qwen2.5:7b-instruct-q4_K_M","object":"model","owned_by":"ollama","tier":"quality","local":true,"up":true},
-  {"id":"llama-3.1-8b-instant","object":"model","owned_by":"groq","tier":"cloud","local":false,"up":false}
+  {"id":"openai/gpt-oss-20b","object":"model","owned_by":"groq","tier":"cloud","local":false,"up":false}
 ]}
 ```
 
@@ -140,7 +140,7 @@ for its models directory).
 | `FAST_MODEL` / `QUALITY_MODEL` | `qwen2.5:3b-instruct` / `qwen2.5:7b-instruct-q4_K_M` | the auto tiers on Ollama |
 | `OLLAMA_MODELS` | — | comma-separated extra local models (`qwen3:8b,qwen2.5:3b-instruct`) a client may name explicitly; registered with tier `local` on the Ollama backend. A multi-agent client that places roles on different models needs every one of them registered here or the request answers `unknown_model` |
 | `GROQ_API_KEY` | — | when set, registers an OpenAI-compatible cloud backend |
-| `CLOUD_MODEL` / `CLOUD_BASE_URL` / `CLOUD_BACKEND_NAME` | `llama-3.1-8b-instant` / `https://api.groq.com/openai/v1` / `groq` | point the cloud backend at any OpenAI-style API |
+| `CLOUD_MODEL` / `CLOUD_BASE_URL` / `CLOUD_BACKEND_NAME` | `openai/gpt-oss-20b` / `https://api.groq.com/openai/v1` / `groq` | point the cloud backend at any OpenAI-style API. The old default `llama-3.1-8b-instant` was retired by Groq in 2026 and returns `model_not_found` |
 | `REQUIRE_API_KEY` | `false` | reject anonymous requests |
 | `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |
 | `SENSITIVE_KEYWORDS` | built-in list | comma-separated override |
@@ -155,8 +155,9 @@ Evals and corpus (used by `--score`, `--schedule-evals`, the console's *Run eval
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JUDGE_MODEL` | `qwen3:8b` | local Ollama judge (temperature 0) |
-| `JUDGE_BACKEND` + `GROQ_API_KEY` | — | `groq` switches the judge to `llama-3.1-8b-instant` |
+| `JUDGE_MODEL` | `qwen3:8b` | local Ollama judge (temperature 0); ignored when `JUDGE_BACKEND=groq` |
+| `JUDGE_BACKEND` + `GROQ_API_KEY` | — | `groq` switches the judge to a Groq model instead of Ollama; `JUDGE_MODEL` is a local name and is ignored in this mode |
+| `GROQ_JUDGE_MODEL` | `openai/gpt-oss-20b` | Groq model used by `JUDGE_BACKEND=groq`; set it to one your account can reach (`GET /openai/v1/models`). Groq retired the old default `llama-3.1-8b-instant` in 2026 |
 | `EVAL_THRESHOLD` | `0.7` | faithfulness below this raises `alert` in the drift report |
 | `EVAL_TIMEOUT` | `90m` | budget for one suite run (see `docs/VRAM.md` on GPU contention) |
 | `EMBED_MODEL` | `nomic-embed-text` | embeddings for ingest and retrieval (768 dims) |

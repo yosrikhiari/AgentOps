@@ -26,7 +26,10 @@ suite n=72 scored=70 misses=2 refuted=6 no-claims=0 unsolvable=8 judge=phi4-mini
 `unsolvable` = misses + fully refuted. It is the ceiling any routing policy is measured
 against: no router can rescue a pair the corpus never supplied. `no-claims` counts answers
 too short to split into claims — the judge never saw them, so they are reported apart from a
-refuted verdict.
+refuted verdict. `--route-replay` prints this share next to the decision mix, and prints
+**β / smallest-tier-optimal as undefined** until at least two models have outcomes on the same
+questions — one rung cannot support a co-failure rate, and a zero there would read like a
+measurement.
 
 ## The judge, and its own reliability
 

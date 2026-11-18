@@ -63,6 +63,12 @@ func New(deps Deps) *Handler {
 		panic(err)
 	}
 	h.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
+	// Browsers ask for a favicon on every page load. Answering 204 stops the console
+	// logging a 404 on a page that is working - which is exactly how a healthy page
+	// looked buggy during the first end-to-end pass.
+	h.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	h.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, sub, "index.html")
 	})
@@ -90,7 +96,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.Serv
 // Routes lists the paths this handler owns, so main.go can mount them individually
 // next to the router's own /v1 endpoints.
 func (h *Handler) Routes() []string {
-	return []string{"GET /{$}", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks", "GET /v1/activity",
+	return []string{"GET /{$}", "GET /favicon.ico", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks", "GET /v1/activity",
 		"GET /v1/evals/status", "POST /v1/evals/run", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume",
 		"GET /v1/gpu",
 		"GET /v1/conversations", "POST /v1/conversations", "GET /v1/conversations/{id}/messages",

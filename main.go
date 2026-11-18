@@ -283,6 +283,58 @@ func runRouteReplay(dsn, window string) {
 	log.Printf("  outcomes: %d answered after a fallback, %d failed; always-fast %d%%, always-quality %d%%",
 		fellBack, failed, pct(fast), pct(quality))
 	log.Printf("  quality numbers: none yet — AIQ/PGR and the random-at-matched-cost comparison need Phase 1 shadow labels")
+
+	// The ceiling: how much of the suite no router could rescue, and whether the roster
+	// can even answer the routing question. Every line is either measured from a complete
+	// run or says "undefined" - never a zero that reads like a measurement.
+	var golden string
+	var runID int
+	err = conn.QueryRow(ctx,
+		`SELECT id, golden_version FROM eval_runs
+		 WHERE model = '' AND status = 'complete'
+		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
+		 ORDER BY created_at DESC, id DESC LIMIT 1`).Scan(&runID, &golden)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		log.Printf("  ceiling: no complete judged golden run yet — unsolvable share undefined")
+	case err != nil:
+		log.Fatal(err)
+	default:
+		var pairs, misses, noClaims, refuted int
+		if err := conn.QueryRow(ctx,
+			`SELECT count(*)::int,
+			        count(*) FILTER (WHERE retrieval_miss)::int,
+			        count(*) FILTER (WHERE NOT retrieval_miss AND claims = 0)::int,
+			        count(*) FILTER (WHERE NOT retrieval_miss AND claims > 0 AND faithfulness = 0)::int
+			 FROM eval_pair_scores WHERE run_id = $1`, runID).Scan(&pairs, &misses, &noClaims, &refuted); err != nil {
+			log.Fatal(err)
+		}
+		unsolvable := misses + refuted
+		log.Printf("  ceiling: %d/%d unsolvable (%d%%) on %s run %d — %d retrieval misses, %d refuted, %d no-claims. No router can rescue these",
+			unsolvable, pairs, unsolvable*100/maxInt(pairs, 1), golden, runID, misses, refuted, noClaims)
+	}
+	// β (the co-failure rate) and smallest-tier-optimal need outcomes from two or more
+	// models on the same questions. This box has one chat model, so the honest line is
+	// "undefined", not a number derived from the frozen golden answers alone.
+	var modelRuns int
+	if err := conn.QueryRow(ctx,
+		`SELECT count(DISTINCT model)::int FROM eval_runs
+		 WHERE status = 'complete' AND model <> ''
+		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)`).Scan(&modelRuns); err != nil {
+		log.Fatal(err)
+	}
+	if rungs := 1 + modelRuns; rungs < 2 {
+		log.Printf("  routing headroom: undefined — %d rung with outcomes (the frozen golden answers). β and smallest-tier-optimal need ≥2 models judged on the same questions; see docs/EVALS.md", rungs)
+	} else {
+		log.Printf("  routing headroom: %d rungs with outcomes — β and smallest-tier-optimal are Phase 1 work (not computed here yet)", rungs)
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func runDrift(dsn, goldenVersion string, threshold float64) {

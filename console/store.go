@@ -86,6 +86,27 @@ type Workflow struct {
 	Input     string    `json:"input"`
 	CreatedAt time.Time `json:"created_at"`
 	Steps     []Step    `json:"steps"`
+	// Trajectory counters, derived in one place (AnnotateTrajectory) so the page and
+	// `--trajectory` cannot disagree about what a run did.
+	Retries int  `json:"retries"`
+	Clean   bool `json:"clean"`
+}
+
+// AnnotateTrajectory fills Retries and Clean. Clean = completed, every step done, no step
+// retried: orchestration reliability, not answer quality (the toy workflow has no ground
+// truth for its content).
+func AnnotateTrajectory(w *Workflow) {
+	w.Retries = 0
+	allDone := len(w.Steps) > 0
+	for _, s := range w.Steps {
+		if s.Attempts > 1 {
+			w.Retries += s.Attempts - 1
+		}
+		if s.Status != "done" {
+			allDone = false
+		}
+	}
+	w.Clean = w.Status == "done" && allDone && w.Retries == 0
 }
 
 // Store is what the handlers read. SQLStore is the real one over evals.Queryer.
@@ -458,7 +479,13 @@ func (s SQLStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) 
 			out[i].Steps = append(out[i].Steps, st)
 		}
 	}
-	return out, srows.Err()
+	if err := srows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		AnnotateTrajectory(&out[i])
+	}
+	return out, nil
 }
 
 // Conversations lists threads newest-first with their message counts.

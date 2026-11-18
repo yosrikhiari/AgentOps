@@ -378,6 +378,30 @@ func TestWorkflowActions(t *testing.T) {
 	}
 }
 
+func TestAnnotateTrajectory(t *testing.T) {
+	clean := Workflow{Status: "done", Steps: []Step{{Status: "done", Attempts: 1}, {Status: "done", Attempts: 1}}}
+	AnnotateTrajectory(&clean)
+	if !clean.Clean || clean.Retries != 0 {
+		t.Fatalf("clean run = %+v", clean)
+	}
+	retried := Workflow{Status: "done", Steps: []Step{{Status: "done", Attempts: 1}, {Status: "done", Attempts: 3}}}
+	AnnotateTrajectory(&retried)
+	if retried.Clean || retried.Retries != 2 {
+		t.Fatalf("retried run = %+v", retried)
+	}
+	running := Workflow{Status: "running", Steps: []Step{{Status: "done", Attempts: 1}, {Status: "pending"}}}
+	AnnotateTrajectory(&running)
+	if running.Clean {
+		t.Fatalf("unfinished run = %+v", running)
+	}
+	// No steps is not a clean run: an empty trajectory proves nothing.
+	empty := Workflow{Status: "done"}
+	AnnotateTrajectory(&empty)
+	if empty.Clean {
+		t.Fatal("a workflow with no steps must not be clean")
+	}
+}
+
 // ---- SQLStore grouping over fake rows ----
 
 type fakeRows struct {

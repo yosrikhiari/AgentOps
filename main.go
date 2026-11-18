@@ -720,6 +720,65 @@ func runTrace(dsn, traceID string) {
 	log.Printf("trace %s:\n%s", traceID, string(raw))
 }
 
+// runTrajectory prints what one workflow run did: steps, attempts, retries, and whether it
+// was clean. Read-only, so it is safe against a running workflow (it will look unfinished).
+func runTrajectory(dsn, workflowID string) {
+	var t tracker.Trajectory
+	err := withConn(dsn, 15*time.Second, func(ctx context.Context, conn *pgx.Conn) error {
+		var err error
+		t, err = tracker.TrajectoryFor(ctx, trackerAdapter{pgAdapter{conn}}, workflowID)
+		return err
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("trajectory %s", t.Summary())
+}
+
+// runWorkflowRepeats measures reliability, not quality: the same input N times, then pass^k
+// (the chance all k trials succeed, estimated from the clean ones). The toy workflow has no
+// ground truth for its content, so "clean" means every step landed first time - which is the
+// property a durable-workflow pitch actually claims.
+func runWorkflowRepeats(dsn, ollamaURL, model, input string, runs int) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(runs)*10*time.Minute)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		log.Fatalf("postgres dsn: %v", err)
+	}
+	defer pool.Close()
+	store, researcher, drafter, reviewer := toyWorkflow(pool, ollamaURL, model)
+	db := trackerAdapter{pgAdapter{pool}}
+	clean := 0
+	for i := 1; i <= runs; i++ {
+		id := tracker.NewWorkflowID()
+		start := time.Now()
+		if _, err := tracker.RunToy(ctx, store, id, input, researcher, drafter, reviewer); err != nil {
+			log.Printf("run %d/%d %s failed: %v", i, runs, id, err)
+			continue
+		}
+		t, err := tracker.TrajectoryFor(ctx, db, id)
+		if err != nil {
+			log.Printf("run %d/%d %s: trajectory unavailable: %v", i, runs, id, err)
+			continue
+		}
+		if t.Clean {
+			clean++
+		}
+		log.Printf("run %d/%d %s %s (%s)", i, runs, id, t.Summary(), time.Since(start).Round(time.Millisecond))
+	}
+	for k := 1; k <= runs; k++ {
+		v, ok := tracker.PassK(clean, runs, k)
+		if !ok {
+			continue
+		}
+		log.Printf("pass^%d = %.3f (%d/%d runs clean)", k, v, clean, runs)
+	}
+	if clean == 0 {
+		log.Printf("no clean runs: nothing here says the workflow is unreliable, only that none of %d finished first-try - read the per-run lines", runs)
+	}
+}
+
 // extraModels is the cleaned OLLAMA_MODELS list: named models a client may
 // address explicitly. Path-like entries are skipped (Ollama itself uses
 // OLLAMA_MODELS for its models directory — Track J).
@@ -1304,6 +1363,8 @@ func main() {
 	resumeTracker := flag.String("resume-tracker", "", "resume toy workflow ID and exit")
 	trackerInput := flag.String("tracker-input", "what does agentops do?", "input question for --run-tracker")
 	traceID := flag.String("trace", "", "print redacted spans for TRACE_ID and exit")
+	trajectoryID := flag.String("trajectory", "", "print trajectory metrics (steps, attempts, retries, clean) for WORKFLOW_ID and exit")
+	workflowRepeats := flag.Int("workflow-repeats", 0, "run the toy workflow N times on --tracker-input and print pass^k reliability, then exit")
 	advise := flag.Bool("advise", false, "print the static model advisor report (Track K) and exit")
 	showVersion := flag.Bool("version", false, "print version, commit and build date, then exit")
 	versionJSON := flag.Bool("version-json", false, "print the build info as one line of JSON and exit")
@@ -1400,6 +1461,14 @@ func main() {
 	}
 	if *traceID != "" {
 		runTrace(dsn, *traceID)
+		return
+	}
+	if *trajectoryID != "" {
+		runTrajectory(dsn, *trajectoryID)
+		return
+	}
+	if *workflowRepeats > 0 {
+		runWorkflowRepeats(dsn, cfg.OllamaURL, cfg.FastModel, *trackerInput, *workflowRepeats)
 		return
 	}
 	if *advise {

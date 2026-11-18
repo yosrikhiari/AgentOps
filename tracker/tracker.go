@@ -16,6 +16,9 @@ const (
 	StatusPending = "pending"
 	StatusRunning = "running"
 	StatusDone    = "done"
+	// StatusFailed is set when a step returns an error: the run stopped, and a page that
+	// still says "running" would be lying about a workflow nobody is working on.
+	StatusFailed = "failed"
 )
 
 var StepNames = []string{"researcher", "drafter", "reviewer"}
@@ -305,6 +308,11 @@ func RunToy(ctx context.Context, store Store, workflowID, input string, research
 		stepStart := time.Now()
 		out, err := fns[i](ctx, current)
 		if err != nil {
+			// A workflow that stopped is not still running. Leaving the old status made a
+			// failed run indistinguishable from one in progress, and the console offered
+			// Resume on something that had already given up. Resume still works: the
+			// status is set back to running when the next attempt starts.
+			_ = store.SetWorkflowStatus(ctx, workflowID, StatusFailed)
 			return "", err
 		}
 		if err := store.SetDone(ctx, workflowID, st.Seq, out); err != nil {

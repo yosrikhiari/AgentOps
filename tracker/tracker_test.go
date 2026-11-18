@@ -71,6 +71,9 @@ func TestKillResume(t *testing.T) {
 	if steps[1].Status == StatusDone {
 		t.Fatal("drafter should not be done after kill")
 	}
+	if got := store.WorkflowStatus("wf-kill"); got != StatusFailed {
+		t.Fatalf("a stopped workflow must read failed, got %q - the console would show it as running forever", got)
+	}
 	drafterOK := okFunc(&nD, "draft: durable workflows resume")
 	final, err := RunToy(ctx, store, "wf-kill", " durable?", researcher, drafterOK, reviewer)
 	if err != nil {
@@ -78,6 +81,9 @@ func TestKillResume(t *testing.T) {
 	}
 	if final != "approved" {
 		t.Fatalf("bad final %q", final)
+	}
+	if got := store.WorkflowStatus("wf-kill"); got != StatusDone {
+		t.Fatalf("resumed workflow must end done, got %q", got)
 	}
 	if nR != 1 {
 		t.Fatalf("researcher re-ran %d times, want 1 (idempotent resume)", nR)

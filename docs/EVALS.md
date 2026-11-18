@@ -80,6 +80,32 @@ What would move it: a bigger corpus (36 chunks for 72 questions is thin), hybrid
 BM25+vector retrieval (two whole questions are currently unreachable), and the Qwen3-8B
 judge on an 8 GB card.
 
+## Workflow trajectories
+
+Single-shot eval pairs grade an *answer*. A workflow needs its *path* graded: did every step
+land, and did anything have to be retried? `--trajectory <id>` and the `#/workflows` table
+report one run's shape from the `steps` rows — steps, attempts, retries — and mark it
+**clean** when the workflow completed, every step is `done`, and no step took more than one
+attempt.
+
+That predicate is deliberately narrow, and the page says so: the toy
+researcher→drafter→reviewer workflow has **no ground truth for its content**, so "clean"
+measures orchestration reliability, not answer quality. It is still the property a durable
+workflow actually claims — a retry loop that silently hides a flaky step is exactly what this
+metric makes visible.
+
+**pass^k** (tau-bench's reliability metric) needs repeats:
+
+```bash
+go run . --workflow-repeats 5 --tracker-input "what does agentops do?"
+```
+
+With `n` runs and `c` clean ones, `pass^k = C(c,k)/C(n,k)` — the chance that all `k`
+independent trials succeed, estimated without pretending the trials are independent when
+they are not. `k=1` is the plain success rate; `k>n` is undefined and printed as nothing
+rather than a zero. A workflow that is 90% reliable per run is only ~59% reliable across two
+(`0.9²`), which is the number a retry policy has to be argued against.
+
 ## Reproduce
 
 ```bash

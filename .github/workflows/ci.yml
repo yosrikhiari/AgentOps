@@ -161,7 +161,7 @@ jobs:
             done
           done
           # The stamp is a promise; check that the shipped binary carries it before signing.
-          ./dist/tower-${GITHUB_REF_NAME}-linux-amd64 --version-json | grep -q "\"commit\":\"${GITHUB_SHA}\""
+          "./dist/tower-${GITHUB_REF_NAME}-linux-amd64" --version-json | grep -q "\"commit\":\"${GITHUB_SHA}\""
       # SBOM before the checksums: SHA256SUMS must cover every attached file, the SBOM
       # included, or the signature vouches for a set that is not the set that ships.
       - name: SBOM
@@ -178,7 +178,7 @@ jobs:
           cd dist
           # Remove first: on a re-run the old manifest would hash itself and then fail -c.
           rm -f SHA256SUMS SHA256SUMS.sigstore.json
-          sha256sum * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           sha256sum -c SHA256SUMS
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       # Sign the checksums, not each binary: one signature covers every artifact,

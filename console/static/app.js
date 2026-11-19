@@ -58,8 +58,22 @@
   }
 
   // ---------- formatting ----------
+  // One duration formatter for every page: 1.35 s / 828 ms / <1 ms. "point" and
+  // a bare "0 ms" are gone (redesign guide, shared shell).
+  function duration(secs) {
+    if (secs == null) return '–';
+    const s = Number(secs) || 0;
+    if (s >= 1) return s.toFixed(2) + ' s';
+    const ms = Math.round(s * 1000);
+    if (ms >= 1000) return (ms / 1000).toFixed(2) + ' s';
+    if (ms >= 1) return ms + ' ms';
+    return '<1 ms';
+  }
   const fmt = {
-    ms: s => s == null ? '–' : (s < 1 ? Math.round(s * 1000) + ' ms' : s.toFixed(2) + ' s'),
+    ms: duration,
+    dur: duration,
+    tokens: n => Number(n || 0).toLocaleString(),
+    pct: v => v == null ? '–' : (Number(v) * 100).toFixed(1) + '%',
     score: v => v == null ? '–' : Number(v).toFixed(3),
     time: iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); },
     date: iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString(); },
@@ -143,7 +157,7 @@
     if (!reqs.length) return h('div', { class: 'tower-empty' }, 'No requests yet. Send one: curl localhost:8080/v1/chat/completions -d \'{"prompt":"hi"}\'');
     return h('table', { class: 'tower-table' },
       h('thead', null, h('tr', null, ...['time', 'trace', 'model', 'backend', 'reason', 'latency', 'tokens', ''].map(t => h('th', null, t)))),
-      h('tbody', null, reqs.map(r => h('tr', null,
+      h('tbody', null, reqs.map(r => h('tr', { class: 'tower-row-link', onclick: () => { location.hash = '#/traces/' + r.trace_id; } },
         h('td', { class: 'tower-mono' }, fmt.time(r.at)),
         h('td', null, h('a', { class: 'tower-link tower-mono', href: '#/traces/' + r.trace_id }, fmt.short(r.trace_id))),
         h('td', null, r.model || '–'),
@@ -166,39 +180,6 @@
   // (labelled as such — a sample percentile, not a histogram quantile).
   function pct50(sorted) { return sorted.length ? sorted[Math.round(0.5 * (sorted.length - 1))] : null; }
   function pct99(sorted) { return sorted.length ? sorted[Math.round(0.99 * (sorted.length - 1))] : null; }
-
-  function modelsTable(ov, reqs) {
-    const t = ov.traffic || {};
-    const byHour = t.by_model || {};
-    const since = ov.since_start || {};
-    const names = Array.from(new Set([...Object.keys(byHour), ...Object.keys(since)])).sort();
-    if (!names.length) return h('div', { class: 'tower-empty' }, 'No model traffic yet. Send one: curl localhost:8080/v1/chat/completions -d \'{"prompt":"hi"}\'');
-    const latByModel = {};
-    (reqs || []).forEach(r => {
-      if (r.error || !(r.latency_s > 0)) return;
-      (latByModel[r.model || '?'] = latByModel[r.model || '?'] || []).push(r.latency_s);
-    });
-    Object.values(latByModel).forEach(l => l.sort((a, b) => a - b));
-    return h('table', { class: 'tower-table' },
-      h('thead', null, h('tr', null, ...['model', 'last hour', 'since start', 'p50 · last 30', 'p99 · last 30', 'tokens', 'errors'].map(x => h('th', null, x)))),
-      h('tbody', null, names.map(name => {
-        const s = since[name] || { requests: 0, errors: 0, tokens: 0 };
-        const denom = (s.requests || 0) + (s.errors || 0);
-        const rate = denom ? (s.errors || 0) / denom : null;
-        const lat = latByModel[name] || [];
-        return h('tr', null,
-          h('td', null, name),
-          h('td', { class: 'tower-mono' }, byHour[name] || 0),
-          h('td', { class: 'tower-mono' }, s.requests || 0),
-          h('td', { class: 'tower-mono' }, lat.length ? fmt.ms(pct50(lat)) : '–'),
-          h('td', { class: 'tower-mono' }, lat.length ? fmt.ms(pct99(lat)) : '–'),
-          h('td', { class: 'tower-mono' }, s.tokens || 0),
-          h('td', null,
-            (s.errors || 0) === 0 ? pill('healthy', 'clean') :
-              rate !== null && rate < 0.05 ? pill('degraded', (rate * 100).toFixed(1) + '%') :
-                pill('critical', rate !== null ? (rate * 100).toFixed(1) + '%' : String(s.errors))));
-      })));
-  }
 
   // ---------- pages ----------
   async function pageOverview(signal, _sub, polling) {
@@ -223,24 +204,24 @@
     const traffic = panel('Routing traffic — last ' + Math.min(30, reqs.requests.length) + ' requests', 'Bar height = latency; click a bar to open its trace',
       reqs.requests.length ? trafficChart(reqs.requests) : h('div', { class: 'tower-empty' }, 'No traffic in the span store yet'), legend);
     const backends = (ov.backends || []);
-    const health = panel('Backend health', 'Probed every 15 s',
-      backends.length ? h('table', { class: 'tower-table' }, h('tbody', null,
-        backends.map(b => h('tr', null,
-          h('td', { class: 'tower-mono' }, b.name),
-          h('td', null, chip(b.local ? 'local' : 'cloud')),
-          h('td', null, b.up ? pill('healthy', 'healthy') : pill('critical', 'down')),
-          h('td', { class: 'tower-mono', title: b.error || '' }, (b.error || '').slice(0, 40)))),
-        (ov.models || []).map(m => h('tr', null,
-          h('td', { class: 'tower-mono' }, m.model),
-          h('td', null, chip(m.tier)),
-          h('td', null, m.up === false ? pill('critical', 'backend down') : pill('healthy', m.backend)),
-          h('td', null)))))
-        : h('div', { class: 'tower-empty' }, 'No backends registered'));
+    const healthBody = backends.length
+      ? h('table', { class: 'tower-table' },
+          h('tbody', null,
+            backends.map(b => h('tr', null,
+              h('td', { class: 'tower-mono' }, b.name),
+              h('td', null, chip(b.local ? 'local' : 'cloud')),
+              h('td', null, b.up ? pill('healthy', 'healthy') : pill('critical', 'down')),
+              h('td', { class: 'tower-mono', title: b.error || '' }, (b.error || '').slice(0, 40))))))
+      : h('div', { class: 'tower-empty' }, 'No backends registered');
+    const health = panel('Backend health', 'Probed every 15 s - a down local backend makes chat fail over',
+      h('div', null, healthBody,
+        h('div', { class: 'tower-section-head', style: 'margin:10px 0 0' },
+          h('span', { class: 'tower-panel-sub' }, 'Per-model detail lives on Models.'),
+          h('a', { class: 'tower-link', href: '#/models' }, 'Models →'))));
     const typing = document.activeElement && content.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
     if (!typing) {
       content.replaceChildren(metrics, h('div', { class: 'tower-grid-2' }, traffic, health),
-        panel('Models — requests, errors and tokens', 'Last hour from spans · since start from the process counters · p50/p99 from the last 30 requests', modelsTable(ov, reqs.requests || [])),
-        panel('Recent requests', 'Newest first, from the span store', requestsTable(reqs.requests)));
+        panel('Recent requests', 'Newest first - click a row to open its trace', requestsTable(reqs.requests)));
     }
     pollTimer = setTimeout(() => { if (location.hash.startsWith('#/overview') || location.hash === '' || location.hash === '#/') pageOverview(signal, '', true); }, 5000);
   }
@@ -582,22 +563,33 @@
   }
 
   function scoreChart(runs) {
-    const list = runs.slice().reverse();
+    // A run with zero judged pairs has no measurement. Plotting it as 0.0 made
+    // "nothing was asked of the judge" look like a failure (redesign guide).
+    const list = runs.filter(r => r.judged !== 0 && r.status !== 'running' && r.status !== 'failed').slice().reverse();
     const w = 560, hgt = 140, pad = 24;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `0 0 ${w} ${hgt}`); svg.setAttribute('width', '100%'); svg.style.display = 'block';
     const x = i => pad + (list.length === 1 ? (w - 2 * pad) / 2 : i * (w - 2 * pad) / (list.length - 1));
     const y = v => hgt - pad - v * (hgt - 2 * pad);
     const grid = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    [0, 0.5, 0.7, 1].forEach(v => {
+    // Even ticks; the threshold is its own labelled line, not a tick.
+    [0, 0.25, 0.5, 0.75, 1].forEach(v => {
       const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       l.setAttribute('x1', pad); l.setAttribute('x2', w - pad); l.setAttribute('y1', y(v)); l.setAttribute('y2', y(v));
-      l.setAttribute('stroke', v === 0.7 ? 'var(--tower-amber-dim)' : 'var(--tower-border-soft)'); l.setAttribute('stroke-dasharray', v === 0.7 ? '4 3' : '');
+      l.setAttribute('stroke', 'var(--tower-border-soft)');
       grid.append(l);
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('x', 2); t.setAttribute('y', y(v) + 4); t.setAttribute('fill', 'var(--tower-ink-faint)'); t.setAttribute('font-size', '10'); t.textContent = v.toFixed(1);
+      t.setAttribute('x', 2); t.setAttribute('y', y(v) + 4); t.setAttribute('fill', 'var(--tower-ink-faint)'); t.setAttribute('font-size', '10'); t.textContent = v.toFixed(2);
       grid.append(t);
     });
+    const thr = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    thr.setAttribute('x1', pad); thr.setAttribute('x2', w - pad); thr.setAttribute('y1', y(0.7)); thr.setAttribute('y2', y(0.7));
+    thr.setAttribute('stroke', 'var(--tower-amber-dim)'); thr.setAttribute('stroke-dasharray', '4 3');
+    grid.append(thr);
+    const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    lbl.setAttribute('x', w - pad); lbl.setAttribute('y', y(0.7) - 4); lbl.setAttribute('text-anchor', 'end');
+    lbl.setAttribute('fill', 'var(--tower-ink-faint)'); lbl.setAttribute('font-size', '10'); lbl.textContent = 'threshold 0.70';
+    grid.append(lbl);
     svg.append(grid);
     if (list.length > 1) {
       const p = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
@@ -638,24 +630,31 @@
             : (drift.judge_now || '')),
       metric('Runs (' + data.golden_version + ')', runs.length, runs.length ? 'last ' + fmt.date(runs[0].created_at) : ''),
       metric('Suite status', status.running ? 'running' : (status.error ? 'failed' : 'idle'), status.error || (status.finished_at && status.finished_at !== '0001-01-01T00:00:00Z' ? 'finished ' + fmt.date(status.finished_at) : ''), status.error ? 'down' : ''));
-    const history = panel('Score history', 'Every run of golden ' + data.golden_version + '; dashed line = alert threshold',
-      runs.length ? scoreChart(runs) : h('div', { class: 'tower-empty' }, 'No runs yet — start one.'), runBtn);
+    const unmeasured = runs.filter(r => r.judged === 0 || r.status === 'running' || r.status === 'failed').length;
+    const chartable = runs.length - unmeasured;
+    const history = panel('Score history',
+      'Scored runs of golden ' + data.golden_version + '; dashed line = threshold 0.70' + (unmeasured ? ' - ' + unmeasured + ' unmeasured' : ''),
+      chartable > 0 ? scoreChart(runs) : h('div', { class: 'tower-empty' }, runs.length ? 'No scored runs yet - all ' + unmeasured + ' are unmeasured.' : 'No runs yet - start one.'), runBtn);
     const worst = drift.worst_cases || [];
     const misses = drift.misses_now || 0;
     const worstPanel = panel('Worst cases', 'Lowest faithfulness in the latest run' + (misses ? ' · ' + misses + ' retrieval miss(es) excluded from the average' : ''),
-      worst.length ? h('table', { class: 'tower-table' }, h('thead', null, h('tr', null, h('th', null, 'question'), h('th', null, 'faith'), h('th', null, 'P@5'), h('th', null, 'R@5'))),
+      worst.length ? h('table', { class: 'tower-table' }, h('thead', null, h('tr', null, h('th', null, 'question'), h('th', null, 'reason'), h('th', null, 'faith'), h('th', null, 'P@5'), h('th', null, 'R@5'))),
         h('tbody', null, worst.map(wc => h('tr', null,
-          h('td', null, wc.question, wc.retrieval_miss ? ' ' : null, wc.retrieval_miss ? chip('retrieval miss') : null),
+          h('td', null, wc.question),
+          h('td', null, wc.retrieval_miss ? chip('retrieval miss') : (wc.faithfulness === 0 ? chip('refuted') : chip('scored'))),
           h('td', { class: 'tower-mono' }, wc.retrieval_miss || wc.faithfulness == null ? '–' : fmt.score(wc.faithfulness)),
           h('td', { class: 'tower-mono' }, fmt.score(wc.precision)),
           h('td', { class: 'tower-mono' }, fmt.score(wc.recall))))))
         : h('div', { class: 'tower-empty' }, 'Nothing scored yet'));
     const table = panel('Runs', null, h('table', { class: 'tower-table' },
       h('thead', null, h('tr', null, ...['run', 'when', 'judge', 'score', 'gpu'].map(t => h('th', null, t)))),
-      h('tbody', null, runs.map(r => h('tr', null,
+      h('tbody', null, runs.map((r, i) => h('tr', null,
         h('td', { class: 'tower-mono' }, r.id),
         h('td', { class: 'tower-mono' }, fmt.date(r.created_at)),
-        h('td', null, chip(r.judge_model), r.judge_prompt ? ' ' + chip(r.judge_prompt) : null),
+        // A DOM node must never be concatenated into a string: `' ' + chip(x)`
+        // renders "[object HTMLSpanElement]" (redesign guide, Evals).
+        h('td', null, chip(r.judge_model), r.judge_prompt ? chip(r.judge_prompt) : null,
+          runs[i + 1] && runs[i + 1].judge_model !== r.judge_model ? chip('judge changed') : null),
         h('td', null, r.status && r.status !== 'complete' ? chip('incomplete')
           : (r.judged === 0 ? chip('unmeasured') : (r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score))))),
         h('td', null, r.gpu
@@ -1046,15 +1045,8 @@
 
     content.replaceChildren(h('div', { class: 'tower-workbench tower-workbench-full' }, mainc, insp));
 
-    // ---- formatting: one duration formatter everywhere ----
-    function dur(secs) {
-      const s = Number(secs) || 0;
-      if (s >= 1) return s.toFixed(2) + ' s';
-      const ms = Math.round(s * 1000);
-      if (ms >= 1000) return (ms / 1000).toFixed(2) + ' s';
-      if (ms >= 1) return ms + ' ms';
-      return '<1 ms';
-    }
+    // The one shared formatter (see fmt.dur): 1.35 s / 828 ms / <1 ms.
+    const dur = fmt.dur;
 
     const coTraceCache = new Map();
     let inspSeq = 0;

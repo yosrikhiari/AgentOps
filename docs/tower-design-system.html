@@ -59,6 +59,7 @@
     <a class="tower-nav-btn" href="#charts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg><span>Charts</span></a>
     <a class="tower-nav-btn" href="#gpu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h12M6 14h8"/></svg><span>GPU page</span></a>
     <a class="tower-nav-btn" href="#traces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 6h4a4 4 0 0 1 4 4v0M8 18h4a4 4 0 0 0 4-4v0"/></svg><span>Trace inspector</span></a>
+    <a class="tower-nav-btn" href="#observe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg><span>Metrics &amp; models</span></a>
     <div class="tower-nav-label">Rules</div>
     <a class="tower-nav-btn" href="#rules"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span>How to extend</span></a>
     <a class="tower-nav-btn" href="tower-enhancements.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.5 6 6.5.5-5 4.3 1.6 6.4L12 16.8 6.4 20.2 8 13.8 3 9.5l6.5-.5z"/></svg><span>Enhancement study</span></a>
@@ -415,6 +416,36 @@
           <tr><td>#/cockpit</td><td>panel + tower-chat (log, message blocks, composer) + tower-grid-cockpit shell with tower-conv sidebar + shared rail (tower-ticket pinned tower-live-yours)</td><td>pageCockpit() in console/static/app.js; client-held messages[] capped at 4000 est. tokens (counts in tower-chat-hint); threads via GET/POST /v1/conversations (+messages, DELETE) with auto-title from the first user message; own trace pinned via mountRail pin hook; Run-as-workflow posts to POST /v1/workflows</td></tr>
           <tr><td>tower-chat-msg</td><td>user = right-aligned on surface-raised; assistant = left on ground; latest = amber border; pending = dashed with the live dot and the model-loading sentence</td><td>pageCockpit() · every turn</td></tr>
           <tr><td>tower-chat-input</td><td>grows to 160 px, Enter sends, Shift+Enter newlines; disabled while a send is in flight; counts sit left of the buttons</td><td>pageCockpit() · composer</td></tr>
+        </table>
+      </section>
+
+      <!-- ===================== METRICS & MODELS ===================== -->
+      <section class="ds-section" id="observe">
+        <h2>Metrics &amp; models</h2>
+        <p class="ds-lead">Two in-app pages replace the old sidebar links that opened raw <span class="ds-inline">/metrics</span> and <span class="ds-inline">/v1/models</span> in another tab. Both read <span class="ds-inline">GET /v1/overview</span> - traffic from spans, lifetime counters from the process - and render the same four states as every other page. The sidebar entries are <span class="ds-inline">tower-nav-btn</span> buttons with <span class="ds-inline">data-page</span>, so they are keyboard-reachable and share the active state.</p>
+        <div class="ds-frame"><div class="ds-frame-label">Metric row is 4 x 2 (eight cards fills both rows with no gap) - used in pageMetrics() and pageModels()</div>
+          <div class="tower-metric-row">
+            <div class="tower-metric"><div class="tower-metric-label">Requests / last hour</div><div class="tower-metric-value">128</div><div class="tower-metric-delta">3 in the last minute</div></div>
+            <div class="tower-metric"><div class="tower-metric-label">Errors / last hour</div><div class="tower-metric-value">2</div><div class="tower-metric-delta">1.56% of requests</div></div>
+            <div class="tower-metric"><div class="tower-metric-label">p50 latency</div><div class="tower-metric-value">740 ms</div><div class="tower-metric-delta">p99 2.10 s</div></div>
+            <div class="tower-metric"><div class="tower-metric-label">Tokens / last hour</div><div class="tower-metric-value">18,204</div><div class="tower-metric-delta">reported by the backend</div></div>
+          </div>
+          <div class="tower-panel" style="margin-top:14px">
+            <div class="tower-panel-head"><div><h3>Traffic by model - last hour</h3><div class="tower-panel-sub">Counted from spans; share is of every request in the window</div></div></div>
+            <table class="tower-table">
+              <thead><tr><th>Model</th><th>Tier</th><th>Requests</th><th>Share</th></tr></thead>
+              <tbody>
+                <tr><td class="tower-mono">qwen2.5:3b-instruct</td><td><span class="tower-chip">fast</span></td><td class="tower-mono">96</td><td class="tower-mono">75.0%</td></tr>
+                <tr><td class="tower-mono">qwen2.5:7b-instruct-q4_K_M</td><td><span class="tower-chip">quality</span></td><td class="tower-mono">30</td><td class="tower-mono">23.4%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <table class="ds-spec">
+          <tr><th>page</th><th>built from</th><th>used in</th></tr>
+          <tr><td>#/metrics</td><td>metric row (8) + tower-grid-2 of two panels + tower-table; Prometheus text stays one click away in the panel action</td><td>pageMetrics() in console/static/app.js; polls every 5 s with <span class="ds-inline">polling</span> so it does not flash; skeleton / live / empty-with-next-action / error-with-Retry; share is computed from <span class="ds-inline">traffic.by_model</span></td></tr>
+          <tr><td>#/models</td><td>metric row (8) + Served models panel + Backends panel, both tower-table; state is <span class="ds-inline">pill()</span>, facts are <span class="ds-inline">chip()</span> (tier, backend, local/cloud)</td><td>pageModels() in console/static/app.js; joins <span class="ds-inline">models[]</span>, <span class="ds-inline">backends[]</span>, <span class="ds-inline">since_start</span> and <span class="ds-inline">traffic.by_model</span> from GET /v1/overview; empty state names FAST_MODEL / QUALITY_MODEL / OLLAMA_MODELS</td></tr>
+          <tr><td>sidebar</td><td>Observe group: two tower-nav-btn buttons with data-page, not anchors</td><td>console/static/index.html</td></tr>
         </table>
       </section>
 

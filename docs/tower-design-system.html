@@ -158,11 +158,11 @@
         </div>
         <table class="ds-spec">
           <tr><th>class</th><th>role</th><th>notes</th></tr>
-          <tr><td>.tower-shell</td><td>grid 216px 1fr, min-height 100vh</td><td>64px 1fr under 900 px</td></tr>
-          <tr><td>.tower-side</td><td>sticky sidebar, own scroll</td><td>brand → nav-label groups → nav-btn → side-foot (margin-top:auto)</td></tr>
-          <tr><td>.tower-nav-btn</td><td>button or &lt;a&gt; with 17 px icon + label</td><td><span class="tower-mono">data-active="true"</span> = amber-dim / amber. External links use target=_blank rel=noopener</td></tr>
-          <tr><td>.tower-nav-label</td><td>10.5 px uppercase group header</td><td>Operate · Quality · Links</td></tr>
-          <tr><td>.tower-side-foot</td><td>router pulse + version</td><td>mirrors the strip so the state survives collapse</td></tr>
+          <tr><td>.tower-shell</td><td>grid 72px 1fr, min-height 100vh</td><td>64px 1fr under 900 px; the rail never disappears</td></tr>
+          <tr><td>.tower-side</td><td>sticky rail (72 px), own scroll</td><td>brand → nav-label groups → nav-btn → side-foot (margin-top:auto)</td></tr>
+          <tr><td>.tower-nav-btn</td><td>column button: 18 px icon over a 9.5 px visible label</td><td><span class="tower-mono">data-active="true"</span> = amber-dim / amber. External links use target=_blank rel=noopener</td></tr>
+          <tr><td>.tower-nav-label</td><td>hidden in the rail (display:none); destinations carry visible labels instead</td><td>Operate · Quality · Links</td></tr>
+          <tr><td>.tower-side-foot</td><td>router pulse + version, centred; hidden under 900 px</td><td>mirrors the strip so the state survives collapse</td></tr>
           <tr><td>.tower-statusstrip</td><td>sticky header, 92 % ground + blur(6px)</td><td>h1 = page title (set by the router), then pulse items: models · faithfulness · p50 · router live/down</td></tr>
           <tr><td>.tower-pulse-item / -dot</td><td>label + mono value, optional pulsing 7 px dot</td><td>dot colour is set inline by <span class="tower-mono">updateStrip()</span>: green all-up, red otherwise</td></tr>
           <tr><td>.tower-content</td><td>main column, 24/28 px padding, 20 px gap, max-width 1480</td><td><span class="tower-mono">aria-live="polite"</span> in the console</td></tr>
@@ -397,8 +397,8 @@
 
       <section class="ds-section" id="cockpit">
         <h2>Cockpit</h2>
-        <p class="ds-lead">One Track N page merging send and sight: a conversation, not a form. The transcript is one scrollable column of message blocks; the composer grows with the text and sends on Enter. The rail appends redacted spans from <span class="ds-inline">GET /v1/events</span> as they land; your latest send pins amber. (#/try and #/live retired into it.)</p>
-        <div class="ds-frame"><div class="ds-frame-label">Chat — user messages right-aligned on surface-raised, assistant blocks left with an amber border on the latest, metadata (model, backend, reason, tokens, trace) under every answer. Used in pageCockpit()</div>
+        <p class="ds-lead">The workbench: a conversation column (max 780 px) with the composer docked at the bottom, and an inspector on the right that turns the thread's traces into totals, time-by-span bars and one card per run. Threads moved into a popover so the reading column stays the widest thing on screen; redacted live spans from <span class="ds-inline">GET /v1/events</span> sit collapsed under the inspector. Used in pageCockpit().</p>
+        <div class="ds-frame"><div class="ds-frame-label">Conversation + inspector: user turns as warm bubbles, assistant answers as plain text with model/backend/reason/tokens/trace underneath; the docked composer is one rounded control. Inspector: .tower-stat-grid, .tower-span-row bars, .tower-run-card. Used in pageCockpit()</div>
           <div class="tower-chat">
             <div class="tower-chat-log" style="max-height:none">
               <div class="tower-chat-msg user"><div class="tower-chat-role"><span>you</span><span>11:56:31</span></div><div class="tower-chat-body">Clause 7.2 says the supplier may suspend delivery without notice. Is that enforceable?</div><div class="tower-chat-meta"><a class="tower-link tower-mono" href="#">742966fc</a></div></div>
@@ -416,6 +416,9 @@
           <tr><td>#/cockpit</td><td>panel + tower-chat (log, message blocks, composer) + tower-grid-cockpit shell with tower-conv sidebar + shared rail (tower-ticket pinned tower-live-yours)</td><td>pageCockpit() in console/static/app.js; client-held messages[] capped at 4000 est. tokens (counts in tower-chat-hint); threads via GET/POST /v1/conversations (+messages, DELETE) with auto-title from the first user message; own trace pinned via mountRail pin hook; Run-as-workflow posts to POST /v1/workflows</td></tr>
           <tr><td>tower-chat-msg</td><td>user = right-aligned on surface-raised; assistant = left on ground; latest = amber border; pending = dashed with the live dot and the model-loading sentence</td><td>pageCockpit() · every turn</td></tr>
           <tr><td>tower-chat-input</td><td>grows to 160 px, Enter sends, Shift+Enter newlines; disabled while a send is in flight; counts sit left of the buttons</td><td>pageCockpit() · composer</td></tr>
+<tr><td>.tower-workbench</td><td>grid minmax(0,1fr) 340px; one column under 900 px, inspector hidden</td><td>pageCockpit() — the page shell</td></tr>
+<tr><td>.tower-insp / .tower-stat-grid / .tower-span-row / .tower-run-card</td><td>inspector: 2-column stat tiles, span bars scaled to the largest span, run cards jump to their message</td><td>pageCockpit() — renderInspector(), built from GET /v1/traces/{id}</td></tr>
+<tr><td>.tower-thread-pop</td><td>absolute popover under the Threads button; closes on select, outside click or Escape</td><td>pageCockpit() — loadConvs()</td></tr>
         </table>
       </section>
 

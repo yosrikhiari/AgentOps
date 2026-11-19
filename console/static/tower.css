@@ -1,19 +1,25 @@
 :root{
-    --tower-ground:#17151A;
-    --tower-surface:#201D22;
-    --tower-surface-raised:#26222A;
-    --tower-border:#342F36;
-    --tower-border-soft:#2A262C;
-    --tower-ink:#EDE8E2;
-    --tower-ink-muted:#9A9299;
-    --tower-ink-faint:#635C63;
+    /* Warm neutrals: one grey family tinted toward the amber accent, instead of
+       the old cool violet. */
+    --tower-ground:#171615;
+    --tower-surface:#1F1D1B;
+    --tower-surface-raised:#262320;
+    --tower-border:#332F2B;
+    --tower-border-soft:#282522;
+    --tower-ink:#ECE8E1;
+    --tower-ink-muted:#A79E92;
+    /* faint was #635C63 (2.57:1): the smallest labels were the least legible. */
+    --tower-ink-faint:#8D867C;
     --tower-amber:#F2A93B;
-    --tower-amber-dim:#4A3A1F;
-    --tower-green:#5FBE8C;
-    --tower-green-dim:#22352C;
-    --tower-red:#E2596B;
+    --tower-amber-dim:#3C2E1A;
+    --tower-green:#4FBF8F;
+    --tower-green-dim:#1E3329;
+    /* red was #E2596B on #3A2229 = 4.08:1, below AA for the error text and the
+       critical pill. */
+    --tower-red:#F07A88;
     --tower-red-dim:#3A2229;
     --tower-font-display:'Space Grotesk', sans-serif;
+    --tower-font-serif:ui-serif, Georgia, 'Times New Roman', serif;
     --tower-font-body:'Inter', -apple-system, sans-serif;
     --tower-font-mono:'IBM Plex Mono', monospace;
     --tower-radius-sm:4px;
@@ -42,13 +48,14 @@
   *::-webkit-scrollbar-track{ background:transparent; }
   *::-webkit-scrollbar-thumb{ background:var(--tower-border); border-radius:8px; border:2px solid var(--tower-surface); }
   *::-webkit-scrollbar-thumb:hover{ background:var(--tower-ink-faint); }
-  .tower-shell{ display:grid; grid-template-columns:216px 1fr; min-height:100vh; }
+  /* Workbench shell: a slim rail with icon + visible label, not a 216px sidebar. */
+  .tower-shell{ display:grid; grid-template-columns:72px 1fr; min-height:100vh; }
   .tower-side{
     position:sticky; top:0; height:100vh; overflow:auto;
     background:var(--tower-surface); border-right:1px solid var(--tower-border-soft);
-    display:flex; flex-direction:column; padding:18px 12px; gap:2px;
+    display:flex; flex-direction:column; align-items:stretch; padding:14px 8px; gap:4px;
   }
-  .tower-brand{ display:flex; align-items:center; gap:10px; padding:2px 6px 18px; }
+  .tower-brand{ display:flex; justify-content:center; padding:0 0 14px; }
   .tower-rail-mark{
     width:32px;height:32px;border-radius:var(--tower-radius-sm); flex:none;
     background:var(--tower-amber); color:var(--tower-ground);
@@ -57,17 +64,22 @@
   }
   .tower-brand-name{ font-family:var(--tower-font-display); font-weight:600; font-size:14px; line-height:1.2; }
   .tower-brand-sub{ font-size:11px; color:var(--tower-ink-faint); }
-  .tower-nav-label{ font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--tower-ink-faint); padding:14px 10px 6px; }
+  /* The group labels do not fit a 72px rail; every destination keeps a visible
+     name underneath its icon (never display:none — see audit U3). */
+  .tower-nav-label{ display:none; }
   .tower-nav-btn{
-    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
-    padding:8px 10px; border-radius:var(--tower-radius-sm); border:none; background:transparent;
-    color:var(--tower-ink-muted); font:500 13px/1.2 var(--tower-font-body); cursor:pointer; text-decoration:none;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+    width:100%; text-align:center;
+    padding:7px 3px; border-radius:8px; border:none; background:transparent;
+    color:var(--tower-ink-muted); font:500 9.5px/1.15 var(--tower-font-body); letter-spacing:.01em;
+    cursor:pointer; text-decoration:none;
     transition:background .12s ease, color .12s ease;
   }
   .tower-nav-btn:hover{ background:var(--tower-surface-raised); color:var(--tower-ink); }
   .tower-nav-btn[data-active="true"]{ background:var(--tower-amber-dim); color:var(--tower-amber); }
-  .tower-nav-btn svg{ width:17px; height:17px; flex:none; }
-  .tower-side-foot{ margin-top:auto; padding:14px 10px 4px; border-top:1px solid var(--tower-border-soft); display:flex; flex-direction:column; gap:6px; font-size:12px; }
+  .tower-nav-btn svg{ width:18px; height:18px; flex:none; }
+  .tower-nav-btn span{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tower-side-foot{ margin-top:auto; padding:10px 2px 4px; border-top:1px solid var(--tower-border-soft); display:flex; flex-direction:column; align-items:center; gap:4px; font-size:9.5px; text-align:center; }
 
   .tower-main{ display:flex; flex-direction:column; min-width:0; }
 
@@ -78,7 +90,7 @@
     padding:14px 28px; border-bottom:1px solid var(--tower-border-soft);
     background:color-mix(in srgb, var(--tower-ground) 92%, transparent); backdrop-filter:blur(6px);
   }
-  .tower-statusstrip h1{ font-size:16px; margin-right:auto; }
+  .tower-statusstrip h1{ font-family:var(--tower-font-serif); font-weight:500; font-size:21px; letter-spacing:-.01em; margin-right:auto; }
   .tower-pulse-item{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--tower-ink-muted); }
   .tower-pulse-dot{
     width:7px;height:7px;border-radius:50%; background:var(--tower-green);
@@ -213,7 +225,19 @@
   .tower-panel h3 .tower-mono{ color:var(--tower-ink-muted); font-weight:400; font-size:12px; margin-left:8px; }
   .tower-btn:disabled{ opacity:.5; cursor:default; filter:none; }
   .tower-bar:hover{ opacity:.8; }
-  @media (max-width: 900px){ .tower-grid-2{ grid-template-columns:1fr; } .tower-metric-row{ grid-template-columns:repeat(2,1fr); } .tower-statusstrip{ gap:12px; flex-wrap:wrap; } .tower-shell{ grid-template-columns:64px 1fr; } .tower-nav-btn span, .tower-brand div, .tower-nav-label, .tower-side-foot{ display:none; } .tower-nav-btn{ justify-content:center; } }
+  @media (max-width: 900px){
+    .tower-grid-2{ grid-template-columns:1fr; }
+    .tower-metric-row{ grid-template-columns:repeat(2,1fr); }
+    .tower-statusstrip{ gap:12px; flex-wrap:wrap; }
+    .tower-shell{ grid-template-columns:64px 1fr; }
+    /* Labels stay visible: an icon with no name is the failure the audit found. */
+    .tower-nav-btn{ font-size:9px; padding:6px 2px; }
+    .tower-side-foot{ display:none; }
+    .tower-workbench{ grid-template-columns:1fr; }
+    .tower-insp{ display:none; }
+    .tower-chat-panel{ height:auto; min-height:calc(100vh - 150px); }
+    .tower-content{ padding:18px 14px 40px; }
+  }
 
   /* ===== Traces page ===== */
   .tower-grid-traces{ display:grid; grid-template-columns:380px minmax(0,1fr); gap:16px; align-items:start; }
@@ -314,10 +338,60 @@
   .tower-chat-actions{ display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
   .tower-chat-hint{ font-family:var(--tower-font-mono); font-size:10.5px; color:var(--tower-ink-faint); }
   .tower-chat-empty{ padding:34px 16px 26px; text-align:center; }
-  .tower-chat-empty-title{ font-family:var(--tower-font-display); font-weight:600; font-size:17px;
+  .tower-chat-empty-title{ font-family:var(--tower-font-serif); font-weight:400; font-size:30px; line-height:1.2;
     color:var(--tower-ink); margin-bottom:6px; }
   .tower-chat-suggest{ display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:16px; }
   .tower-conv-item.active{ box-shadow:inset 2px 0 0 var(--tower-amber); }
+
+  /* ===== Workbench (Cockpit) =====
+     Conversation column on the left, inspector on the right. Threads live in a
+     popover so the reading column stays the widest thing on screen. */
+  .tower-workbench{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:18px; align-items:start; }
+  .tower-thread-wrap{ position:relative; display:inline-block; }
+  .tower-thread-pop{
+    position:absolute; right:0; top:calc(100% + 6px); width:320px; max-height:60vh; overflow:auto;
+    background:var(--tower-surface-raised); border:1px solid var(--tower-border);
+    border-radius:var(--tower-radius-md); padding:8px; z-index:8; display:none;
+    box-shadow:0 12px 30px rgba(0,0,0,.35);
+  }
+  .tower-thread-pop.open{ display:block; }
+  .tower-stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .tower-stat{ border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-sm); padding:8px 10px; background:var(--tower-ground); }
+  .tower-stat b{ display:block; font-family:var(--tower-font-mono); font-weight:600; font-size:16px; color:var(--tower-ink); }
+  .tower-stat small{ color:var(--tower-ink-muted); font-size:11px; }
+  .tower-insp-label{ font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--tower-ink-faint); margin:16px 0 6px; }
+  .tower-span-row{ display:grid; grid-template-columns:92px 1fr 54px; gap:8px; align-items:center; font-size:11.5px; color:var(--tower-ink-muted); margin:5px 0; }
+  .tower-span-bar{ height:6px; background:var(--tower-border-soft); border-radius:4px; overflow:hidden; }
+  .tower-span-bar i{ display:block; height:100%; background:var(--tower-green); border-radius:4px; transition:width .4s ease; }
+  .tower-run-card{ border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-md); padding:9px 11px; margin:7px 0; background:var(--tower-ground); cursor:pointer; }
+  .tower-run-card:hover{ border-color:var(--tower-border); }
+  .tower-run-card.latest{ border-color:var(--tower-amber); }
+  .tower-run-head{ display:flex; justify-content:space-between; align-items:center; font-family:var(--tower-font-mono); font-size:11px; }
+  .tower-insp .tower-chat-log{ max-height:none; }
+  /* The conversation is the page, not a card: no panel chrome, and a reading
+     column instead of full-bleed text. */
+  .tower-chat-panel{ background:transparent; border:0; padding:0; display:flex; flex-direction:column; height:calc(100vh - 150px); }
+  .tower-chat-panel .tower-panel-head{ padding:0 4px; max-width:780px; margin:0 auto 10px; width:100%; }
+  .tower-chat-panel .tower-chat{ max-width:780px; margin:0 auto; width:100%; flex:1; display:flex; flex-direction:column; }
+  .tower-chat-panel .tower-chat-log{ flex:1; max-height:none; }
+  .tower-chat-panel .tower-chat-msg{ max-width:82%; }
+  .tower-chat-panel .tower-chat-msg.user{ border:0; border-radius:16px 16px 4px 16px; padding:9px 15px; }
+  .tower-chat-panel .tower-chat-msg.assistant{ max-width:100%; }
+  .tower-chat-panel .tower-chat-body{ font-size:15px; line-height:1.65; }
+  .tower-chat-panel .tower-chat-composer{ border:1px solid var(--tower-border); border-radius:16px; padding:12px 14px 10px; background:var(--tower-surface); }
+  .tower-chat-panel .tower-chat-composer:focus-within{ border-color:var(--tower-amber); }
+  .tower-chat-panel .tower-chat-input{ border:0; background:transparent; padding:2px 0; min-height:44px; }
+  .tower-chat-panel .tower-chat-input:focus{ border:0; }
+  .tower-chat-panel .tower-chat-msg.assistant{ background:transparent; border:0; padding-left:0; padding-right:0; }
+  .tower-chat-panel .tower-chat-msg.latest{ border:0; }
+  .tower-chat-empty{ max-width:600px; margin:0 auto; }
+  .tower-chat-empty .tower-panel-sub{ margin-top:2px; }
+  .tower-insp .tower-empty{ padding:14px 6px; }
+  .tower-insp-more{ margin-top:14px; }
+  .tower-insp-more summary{
+    cursor:pointer; font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--tower-ink-faint); margin-bottom:8px;
+  }
 
   /* ===== Polish ===== */
   .tower-panel{ transition:border-color .12s ease; }

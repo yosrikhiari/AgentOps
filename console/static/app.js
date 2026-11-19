@@ -991,21 +991,130 @@
     const errSlot = h('div', null);
     const log = h('div', { class: 'tower-chat-log', 'aria-live': 'polite' });
     const sub = h('div', { class: 'tower-panel-sub' }, '');
+    // Threads live in a popover so the conversation keeps the reading column;
+    // the right pane is the inspector the prototype centres the page on.
     const convList = h('div', { class: 'tower-conv' }, skeleton(2));
-    const newBtn = h('button', { class: 'tower-btn secondary' }, '+ New thread');
+    const threadsBtn = h('button', { class: 'tower-btn ghost', type: 'button', 'aria-haspopup': 'true' }, 'Threads');
+    const pop = h('div', { class: 'tower-thread-pop' }, convList);
+    const threadWrap = h('div', { class: 'tower-thread-wrap' }, threadsBtn, pop);
+    const newBtn = h('button', { class: 'tower-btn secondary', type: 'button' }, '+ New');
     const listBody = h('div', null, skeleton(5));
     const dot = h('span', { class: 'tower-live-dot' });
     const label = h('span', null, '');
+
+    const inspStats = h('div', { class: 'tower-stat-grid' }, skeleton(2));
+    const inspSpans = h('div', null, skeleton(2));
+    const inspRuns = h('div', null, skeleton(2));
+    const insp = h('section', { class: 'tower-panel tower-insp' },
+      h('div', { class: 'tower-panel-head' },
+        h('div', null, h('h3', null, 'Inspector'), h('div', { class: 'tower-panel-sub' }, 'Every run in this thread'))),
+      inspStats,
+      h('div', { class: 'tower-insp-label' }, 'Time by span'),
+      inspSpans,
+      h('div', { class: 'tower-insp-label' }, 'Runs'),
+      inspRuns,
+      h('details', { class: 'tower-insp-more' }, h('summary', null, 'Live spans'),
+        h('div', null,
+          h('div', { class: 'tower-mono tower-muted', style: 'margin-bottom:8px;display:flex;gap:8px;align-items:center' }, dot, label),
+          listBody)));
+
     const chat = panel('Conversation', sub,
       h('div', { class: 'tower-chat' }, log, errSlot,
         h('div', { class: 'tower-chat-composer' }, ta,
           h('div', { class: 'tower-chat-actions' }, hint,
-            h('div', { class: 'tower-form-row' }, wfBtn, sendBtn)))));
-    const side = panel('Threads', 'Stored server-side · 90-day retention',
-      h('div', null, newBtn, h('div', { style: 'margin-top:10px' }, convList)));
-    content.replaceChildren(h('div', { class: 'tower-grid-cockpit' }, side, chat,
-      panel('Rail', 'Your trace pins amber; everything lands live.',
-        h('div', null, h('div', { class: 'tower-mono tower-muted', style: 'margin-bottom:10px;display:flex;gap:8px;align-items:center' }, dot, label), listBody))));
+            h('div', { class: 'tower-form-row' }, wfBtn, sendBtn)))),
+      h('div', { class: 'tower-form-row' }, threadWrap, newBtn));
+    chat.classList.add('tower-chat-panel');
+    content.replaceChildren(h('div', { class: 'tower-workbench' }, chat, insp));
+
+    // ---- inspector: conversation totals, span time, and one card per run ----
+    const coTraceCache = new Map();
+    let inspSeq = 0;
+    function stat(v, caption) {
+      return h('div', { class: 'tower-stat' }, h('b', null, String(v)), h('small', null, caption));
+    }
+    // A span without latency_s is a point in time, not a zero-duration operation:
+    // say "point" instead of inventing 0 ms.
+    function spanRow(name, secs, max) {
+      const timed = secs > 0;
+      return h('div', { class: 'tower-span-row' },
+        h('span', null, name),
+        h('div', { class: 'tower-span-bar' }, h('i', { style: 'width:' + (timed ? Math.max(3, (secs / max) * 100) : 3) + '%' })),
+        h('span', { class: 'tower-mono' }, timed ? fmt.ms(secs) : 'point'));
+    }
+    async function renderInspector() {
+      const me = ++inspSeq;
+      const answers = coHist.map((m, i) => ({ m, i }))
+        .filter(x => x.m.role === 'assistant' && x.m.trace_id);
+      const missing = answers.slice(-8).filter(x => !coTraceCache.has(x.m.trace_id));
+      await Promise.all(missing.map(async x => {
+        try { coTraceCache.set(x.m.trace_id, await api('/v1/traces/' + encodeURIComponent(x.m.trace_id))); }
+        catch (e) { coTraceCache.set(x.m.trace_id, null); }
+      }));
+      if (me !== inspSeq || !insp.isConnected) return;
+
+      const agg = {};
+      const seen = answers.slice(-8);
+      seen.forEach(x => {
+        const t = coTraceCache.get(x.m.trace_id);
+        if (!t) return;
+        buildTimeline(t.spans || []).rows.forEach(r => {
+          const secs = r.dur / 1000;
+          agg[r.span.name] = (agg[r.span.name] || 0) + secs;
+        });
+      });
+      const all = Object.values(agg);
+      const total = all.reduce((a, b) => a + b, 0);
+      // p50 over spans that actually report a duration; points are not 0 ms.
+      const sorted = all.filter(v => v > 0).sort((a, b) => a - b);
+      const p50 = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.5))] : null;
+      const tokens = coHist.reduce((n, m) => n + (Number(m.tokens) || 0), 0);
+
+      inspStats.replaceChildren(
+        stat(coHist.length, 'messages'),
+        stat(tokens ? tokens.toLocaleString() : '-', 'tokens this session'),
+        stat(answers.length, 'runs with a trace'),
+        stat(total ? fmt.ms(total) : '-', 'compute measured'),
+        stat(p50 != null ? fmt.ms(p50) : '-', 'p50 span'),
+        stat(answers.length ? String(Math.max(1, coHist.length - answers.length)) : '-', 'turns'));
+
+      const max = Math.max(0.001, ...all);
+      inspSpans.replaceChildren(...(all.length
+        ? Object.entries(agg).sort((a, b) => b[1] - a[1]).map(([n, s]) => spanRow(n, s, max))
+        : [h('div', { class: 'tower-empty' }, 'No runs yet - send a message and its spans appear here.')]));
+
+      inspRuns.replaceChildren(...(answers.length
+        ? answers.slice().reverse().slice(0, 6).map((x, k) => {
+          const t = coTraceCache.get(x.m.trace_id);
+          const rows = t ? buildTimeline(t.spans || []).rows : [];
+          const rmax = Math.max(0.001, ...rows.map(r => r.dur / 1000));
+          const meta = [x.m.model, x.m.tokens ? x.m.tokens + ' tok' : '', x.m.reason].filter(Boolean).join(' - ');
+          const card = h('div', { class: 'tower-run-card' + (k === 0 ? ' latest' : '') },
+            h('div', { class: 'tower-run-head' }, h('span', { class: 'tower-mono' }, fmt.short(x.m.trace_id)),
+              h('span', { class: 'tower-mono tower-muted' }, fmt.time(x.m.at))),
+            h('div', { class: 'tower-panel-sub' }, meta || 'run'),
+            ...(rows.length
+              ? rows.map(r => spanRow(r.span.name, r.dur / 1000, rmax))
+              : [h('div', { class: 'tower-panel-sub' }, t ? 'No spans recorded' : 'Span detail unavailable')]));
+          card.addEventListener('click', () => {
+            const el = document.getElementById('co-m' + x.i);
+            if (!el) return;
+            el.scrollIntoView({ block: 'center' });
+            el.classList.add('latest');
+            setTimeout(() => el.classList.remove('latest'), 1200);
+          });
+          return card;
+        })
+        : [h('div', { class: 'tower-empty' }, 'Nothing measured yet.')]));
+    }
+
+    threadsBtn.addEventListener('click', e => { e.stopPropagation(); pop.classList.toggle('open'); });
+    const closePop = e => {
+      if (!threadWrap.isConnected) { document.removeEventListener('click', closePop); return; }
+      if (!threadWrap.contains(e.target)) pop.classList.remove('open');
+    };
+    document.addEventListener('click', closePop);
+    pop.addEventListener('keydown', e => { if (e.key === 'Escape') pop.classList.remove('open'); });
 
     function autosize() {
       ta.style.height = 'auto';
@@ -1018,8 +1127,8 @@
         'Draft a release checklist for this week',
       ];
       return h('div', { class: 'tower-chat-empty' },
-        h('div', { class: 'tower-chat-empty-title' }, 'Ask the models on this box'),
-        h('div', null, 'History is resent each turn; prompts are never stored by the gateway.'),
+        h('div', { class: 'tower-chat-empty-title' }, 'What are we working on?'),
+        h('div', { class: 'tower-panel-sub' }, 'Everything you run here is measured in the inspector on the right. History is resent each turn; prompts are never stored.'),
         h('div', { class: 'tower-chat-suggest' }, prompts.map(p => {
           const b = h('button', { class: 'tower-chip tower-chip-btn' }, p);
           b.addEventListener('click', () => { ta.value = p; autosize(); ta.focus(); });
@@ -1035,9 +1144,9 @@
       if (m.trace_id) bits.push(h('a', { class: 'tower-link tower-mono', href: '#/traces/' + m.trace_id }, fmt.short(m.trace_id)));
       return bits.length ? h('div', { class: 'tower-chat-meta' }, ...bits) : null;
     }
-    function msgEl(m, last) {
+    function msgEl(m, i, last) {
       const mine = m.role === 'user';
-      return h('div', { class: 'tower-chat-msg ' + (mine ? 'user' : 'assistant') + (last && !mine ? ' latest' : '') },
+      return h('div', { id: 'co-m' + i, class: 'tower-chat-msg ' + (mine ? 'user' : 'assistant') + (last && !mine ? ' latest' : '') },
         h('div', { class: 'tower-chat-role' }, h('span', null, mine ? 'you' : 'assistant'),
           m.at ? h('span', null, fmt.time(m.at)) : null),
         h('div', { class: 'tower-chat-body' }, m.content),
@@ -1049,7 +1158,7 @@
         h('div', { class: 'tower-chat-body' }, 'Waiting for the model — the first answer loads it into VRAM.'));
     }
     function renderChat() {
-      const nodes = coHist.length ? coHist.map((m, i) => msgEl(m, i === coHist.length - 1)) : [emptyState()];
+      const nodes = coHist.length ? coHist.map((m, i) => msgEl(m, i, i === coHist.length - 1)) : [emptyState()];
       if (coPromise) nodes.push(pendingEl());
       if (coWorkflow) nodes.push(h('div', { class: 'tower-chat-msg assistant' },
         h('div', { class: 'tower-chat-role' }, h('span', null, 'workflow')),
@@ -1063,6 +1172,7 @@
         ? coHist.length + ' msgs · ~' + n + ' tokens' + (coDropped ? ' · ' + coDropped + ' dropped' : '')
         : 'Enter sends · Shift+Enter newline';
       sub.textContent = (coConvId ? (coConvTitle || 'thread') + ' · saved' : 'new conversation · not saved yet');
+      renderInspector();
     }
     function setBusy(busy) {
       sendBtn.disabled = busy; wfBtn.disabled = busy; ta.disabled = busy;
@@ -1152,6 +1262,7 @@
       try { data = await api('/v1/conversations/' + id + '/messages?limit=500'); }
       catch (e) { toast(e.message, true); return; }
       coConvId = id; coConvTitle = title || ''; coDropped = 0; coWorkflow = null;
+      pop.classList.remove('open');
       const msgs = data.messages || [];
       coHist = msgs.map(m => ({
         role: m.role, content: m.content, model: m.model, trace_id: m.trace_id,
@@ -1166,6 +1277,7 @@
     function newThread() {
       if (coPromise) return;
       coConvId = null; coConvTitle = ''; coHist = []; coDropped = 0; coPin = null; coLastInput = ''; coWorkflow = null;
+      pop.classList.remove('open');
       errSlot.replaceChildren(); setBusy(false); renderChat(); loadConvs(); ta.focus();
     }
     async function deleteConv(id) {

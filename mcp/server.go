@@ -108,7 +108,7 @@ func textResult(v any) map[string]any {
 	return map[string]any{"content": []any{map[string]any{"type": "text", "text": string(raw)}}}
 }
 
-func (s *Server) callTool(name string, args map[string]any) (any, *rpcError) {
+func (s *Server) callTool(name string, args map[string]any, usage *int64) (any, *rpcError) {
 	switch name {
 	case "list_models":
 		models := make([]any, 0, len(s.Router.Models))
@@ -146,6 +146,9 @@ func (s *Server) callTool(name string, args map[string]any) (any, *rpcError) {
 		out, err := s.Router.Chat(prompt, 0)
 		if err != nil {
 			return nil, &rpcError{Code: -32000, Message: "model backend unavailable"}
+		}
+		if usage != nil && out.Usage.TotalTokens > 0 {
+			*usage += int64(out.Usage.TotalTokens)
 		}
 		return textResult(map[string]any{
 			"text": out.Text, "model": out.Model, "reason": out.Reason, "trace_id": out.TraceID,
@@ -202,6 +205,13 @@ func newToolTraceID() string {
 }
 
 func (s *Server) handle(req rpcRequest, headerVersion string) *rpcResponse {
+	return s.handleWith(req, headerVersion, nil)
+}
+
+// handleWith is handle plus a token accumulator. A tool that calls a model reports
+// what it consumed here, so the HTTP transport can charge the key that asked for
+// it instead of leaving /mcp as an unmetered side door (audit 2026-11-18 S2).
+func (s *Server) handleWith(req rpcRequest, headerVersion string, usage *int64) *rpcResponse {
 	version := paramsVersion(req.Params)
 	if version == "" {
 		version = headerVersion
@@ -254,7 +264,7 @@ func (s *Server) handle(req rpcRequest, headerVersion string) *rpcResponse {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "bad params"}}
 		}
-		result, rpcErr := s.callTool(params.Name, params.Arguments)
+		result, rpcErr := s.callTool(params.Name, params.Arguments, usage)
 		s.emitToolSpan(params.Name, rpcErr)
 		if rpcErr != nil {
 			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
@@ -312,23 +322,32 @@ func (s *Server) HandleOne(body []byte) ([]byte, int) {
 // HandleOneHTTP is HandleOne plus the MCP-Protocol-Version header the 2026-07-28
 // HTTP transport carries. The body's params._meta wins when both are present.
 func (s *Server) HandleOneHTTP(body []byte, protocolVersion string) ([]byte, int) {
+	raw, status, _ := s.HandleOneHTTPUsage(body, protocolVersion)
+	return raw, status
+}
+
+// HandleOneHTTPUsage is HandleOneHTTP plus the tokens the call consumed, so the
+// caller can charge the key it authenticated. Zero means the request used no
+// model (discovery, tools/list, a read-only tool).
+func (s *Server) HandleOneHTTPUsage(body []byte, protocolVersion string) ([]byte, int, int64) {
 	var req rpcRequest
+	var usage int64
 	if err := json.Unmarshal(body, &req); err != nil {
 		raw, _ := json.Marshal(&rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
-		return raw, http.StatusOK
+		return raw, http.StatusOK, usage
 	}
-	resp := s.handle(req, protocolVersion)
+	resp := s.handleWith(req, protocolVersion, &usage)
 	if resp == nil {
-		return []byte(`{"jsonrpc":"2.0","result":{}}`), http.StatusAccepted
+		return []byte(`{"jsonrpc":"2.0","result":{}}`), http.StatusAccepted, usage
 	}
 	raw, _ := json.Marshal(resp)
 	// An unsupported version is a modern client's cue to retry: the transport
 	// spec pairs it with 400 so a dual-era client can inspect the body and fall
 	// back instead of treating it as a server fault.
 	if resp.Error != nil && resp.Error.Code == -32022 {
-		return raw, http.StatusBadRequest
+		return raw, http.StatusBadRequest, usage
 	}
-	return raw, http.StatusOK
+	return raw, http.StatusOK, usage
 }
 
 func (s *Server) Run(in io.Reader, out io.Writer) error {

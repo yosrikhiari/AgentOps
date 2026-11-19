@@ -1911,37 +1911,46 @@ func main() {
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": msg, "trace_id": traceID}})
 		}
-		if srv.RequireKey {
-			secret := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-			if secret == "" {
-				mcpErr(http.StatusUnauthorized, "missing_api_key", "Authorization: Bearer <api key> is required")
-				return
-			}
-			key, err := srv.Keys.Lookup(r.Context(), router.HashSecret(secret))
-			if err != nil {
-				mcpErr(http.StatusUnauthorized, "invalid_api_key", "api key not recognised")
-				return
-			}
-			if key.Disabled {
-				mcpErr(http.StatusForbidden, "api_key_disabled", "api key disabled")
-				return
-			}
+		// The same gate as the chat path — validity, disabled, budget and RPM —
+		// rather than a weaker copy that only checked that the key existed.
+		key, ok := srv.Authenticate(w, r, traceID)
+		if !ok {
+			return
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
 			mcpErr(http.StatusBadRequest, "bad_request", "unreadable body")
 			return
 		}
-		raw, status := mcpSrv.HandleOneHTTP(body, r.Header.Get("MCP-Protocol-Version"))
+		raw, status, tokens := mcpSrv.HandleOneHTTPUsage(body, r.Header.Get("MCP-Protocol-Version"))
+		// A tool that called a model is charged like a chat call; leaving it out
+		// made /mcp an unmetered door around the budget.
+		if key != nil && srv.Keys != nil && tokens > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := srv.Keys.AddUsage(ctx, key.ID, tokens); err != nil {
+				log.Printf("mcp usage for key %d: %v", key.ID, err)
+			}
+			cancel()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write(raw)
 	})
 	mux.Handle("/", srv)
+	// ReadTimeout closes a slow-trickled body; WriteTimeout is the model budget
+	// plus a margin, so a streaming answer is not cut off mid-flight; IdleTimeout
+	// reaps keep-alive connections that are doing nothing.
+	writeTimeout := srv.RequestTimeout + 30*time.Second
+	if srv.RequestTimeout <= 0 {
+		writeTimeout = 0
+	}
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           securityHeaders(withCrossOriginProtection(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       120 * time.Second,
 	}
 	// Graceful shutdown: stop accepting, let in-flight chats finish (up to the request
 	// timeout), then flush queued spans and close the pool.

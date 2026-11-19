@@ -63,7 +63,9 @@ curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Cont
 
 **Sensitive data (fail-closed)** — mark a request with header `X-Tower-Sensitive: true` or body `"sensitive": true`; a small keyword list (`password`, `iban`, `passport`, `confidentiel`, …; override with `SENSITIVE_KEYWORDS=a,b,c`) also flags it. A sensitive request never reaches a non-local model: every non-local candidate is removed from the chain — the classified tier included — and naming a non-local model explicitly returns `403 sensitive_cloud_blocked`. **Locality is per model, not per backend:** Ollama's hosted models (`name:cloud`) are served through the local API but count as non-local (`GET /v1/models` shows `local:false`). If no local model remains, the request is refused with the same 403 rather than sent anywhere.
 
-Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (every candidate failed), `503 model_not_pulled` (the named or tier model is served on paper but not on disk — `run: ollama pull <model>` in the message; 403 still wins for sensitive-to-cloud), `504 timeout` (`REQUEST_TIMEOUT`, default 300s).
+Other errors: `400 bad_request` / `unknown_model` / `option_out_of_range`, `413 request_too_large`, `502 ollama_unavailable` (every candidate failed), `503 model_not_pulled` (the named or tier model is served on paper but not on disk — `run: ollama pull <model>` in the message; 403 still wins for sensitive-to-cloud), `504 timeout` (`REQUEST_TIMEOUT`, default 300s).
+
+**Limits (both chat ingresses)** — a request body is capped at **4 MiB** (`413 request_too_large`), because the JSON is materialised before any backend is chosen. The resource knobs a client may set are bounded, since they land on the machine that hosts the model: `num_ctx` ≤ 32768, `num_gpu` ≤ 99, `num_predict` ≤ 8192, `num_thread` ≤ 256, `repeat_last_n` ≤ 4096, and `keep_alive` must be between 0 and 1h (`-1`, “never unload”, is refused). An out-of-range value is `400 option_out_of_range` with the option named, never a silent clamp. Unknown option keys pass through: Ollama ignores what it does not know.
 
 **Generation parameters (v1.1, ADR-0009)** — beyond `max_tokens`, the request may carry `temperature`, `top_p`, `seed`, `stop` (string or list) and `response_format` (`{"type":"json_object"}` or `{"type":"json_schema","json_schema":{"schema":{…}}}`) in the OpenAI shape, plus the Ollama-native `format` (`"json"` or a schema), `options` (passthrough: `num_ctx`, `num_gpu`, `repeat_penalty`, …), `keep_alive` and `think` (`false` stops a reasoning model such as qwen3 from spending `num_predict` on chain-of-thought). All are optional; absent means model default. The Ollama backend merges the named parameters into `options` (named ones win over duplicates in the passthrough map) and sends `format` / `keep_alive` as top-level fields; the OpenAI backend forwards `temperature`/`top_p`/`seed`/`stop`/`response_format` and drops the Ollama-only knobs. The `model.generate` span records the values under `params` (kind of format, never the schema itself) and `params_forwarded: true|false` (false for a backend that only implements the v1.0 interface).
 
@@ -206,7 +208,9 @@ Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`
   `MCP-Protocol-Version` header; an unsupported one gets `400` with JSON-RPC error
   `-32022` and the supported list. With `REQUIRE_API_KEY=true` a valid Bearer key
   is required (`401 missing_api_key` / `invalid_api_key`, `403 api_key_disabled`,
-  one error shape); RPM/budget accounting stays on the chat path. Every call emits
+  one error shape); the gate is the chat gate — validity, disabled, budget and RPM —
+  and the tokens a model-calling tool consumed are charged to the key, so `/mcp` is
+  not a way around a quota. Every call emits
   a redacted `mcp.tool` span. Bodies over 1 MB are refused with `400 bad_request`.
 - `GET /v1/events` — redacted spans as server-sent events (`data: {trace_id,
   span_id, parent_id, name, attrs}` + `: ping` heartbeats) for the Tower `#/live`

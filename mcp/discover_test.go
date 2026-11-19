@@ -12,6 +12,23 @@ func testServer() *Server {
 	return NewServer(router.NewServer("fast-m", "quality-m", &stubGen{text: "hi"}))
 }
 
+// TestToolCallReportsUsage: a tool that called a model must say how many tokens it
+// spent, or /mcp over HTTP is a quota bypass (audit 2026-11-18 S2).
+func TestToolCallReportsUsage(t *testing.T) {
+	raw, status, tokens := testServer().HandleOneHTTPUsage(
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"route_test_request","arguments":{"prompt":"hi"}}}`), "")
+	if status != 200 {
+		t.Fatalf("status = %d (%s)", status, raw)
+	}
+	if tokens != 9 {
+		t.Fatalf("tokens = %d, want the backend's 9", tokens)
+	}
+	// A read-only tool must not invent usage.
+	if _, _, none := testServer().HandleOneHTTPUsage([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`), ""); none != 0 {
+		t.Fatalf("tools/list reported %d tokens; only model calls may be charged", none)
+	}
+}
+
 func decode(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
 	var out map[string]any

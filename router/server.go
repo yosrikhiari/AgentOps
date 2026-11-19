@@ -284,6 +284,18 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 // speaks. Both formats share the key resolution and the checks around it.
 type errWriter func(w http.ResponseWriter, status int, code, message, traceID string)
 
+// maxRequestBody bounds a chat body. It is generous for a real prompt and RAG
+// context (4 MiB) and small enough that N parallel requests cannot exhaust the
+// heap before a backend is even chosen.
+const maxRequestBody = 4 << 20
+
+// Authenticate is authenticate for callers outside this package — /mcp over HTTP
+// uses it so key validity, disabled, budget and RPM are decided in one place
+// instead of a second, weaker copy (audit 2026-11-18 S2).
+func (s *Server) Authenticate(w http.ResponseWriter, r *http.Request, traceID string) (*APIKey, bool) {
+	return s.authenticate(w, r, traceID)
+}
+
 // authenticate resolves the API key on a request. ok=false means a response was written.
 func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, traceID string) (*APIKey, bool) {
 	return s.authenticateWith(w, r, traceID, writeError)
@@ -353,7 +365,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ChatRequest
+	// The body is materialised before any backend call, so the cap is on the
+	// reader rather than on Ollama's context window (audit 2026-11-18 S3).
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large",
+				fmt.Sprintf("request body exceeds %d bytes", maxRequestBody), traceID)
+			return
+		}
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body", traceID)
 		return
 	}
@@ -448,7 +469,10 @@ func classifyChatError(err error) (status int, code, msg string) {
 	var unknown ErrUnknownModel
 	var sens ErrSensitiveCloud
 	var notPulled ErrModelNotPulled
+	var badParam ErrParamOutOfRange
 	switch {
+	case errors.As(err, &badParam):
+		return http.StatusBadRequest, "option_out_of_range", err.Error()
 	case errors.As(err, &unknown):
 		return http.StatusBadRequest, "unknown_model", err.Error()
 	case errors.As(err, &sens):
@@ -545,6 +569,9 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		names = append(names, c.Backend.Name()+"/"+c.Model)
 	}
 	params := paramsOf(req)
+	if err := params.Validate(); err != nil {
+		return ChatResponse{TraceID: traceID}, err
+	}
 	// The client's reference rides on every span so a trace can be found from the
 	// client's side (Versatile: "<session>/<turn>/<role>/<n>") and grouped by agent role.
 	ref := func(kv map[string]any) map[string]any {

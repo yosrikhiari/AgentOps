@@ -108,7 +108,7 @@ STRIDE-lite, each threat with the control and where it is enforced.
 | Tampering with keys at rest | Only SHA-256 of the secret stored; secret printed once | `router/keys.go`, review |
 | Repudiation | `X-Trace-ID` on every response; every request has spans; key name on per-key counters | `TestHandleChatRoutesFast` (header), spans tests |
 | Information disclosure | Prompts never in spans; read paths redact `prompt/input/text/output`; **sensitive requests never reach a cloud backend** | `TestPolicyPromptsNeverReachSpans`, `TestPolicyMCPToolSpansRedacted`, `TestListSpansRedacted`, `TestSensitiveNeverLeavesBox`, `TestPolicySensitiveHasNoCloudCandidate` |
-| Denial of service | Per-key RPM + token budget; `REQUEST_TIMEOUT`; `ReadHeaderTimeout`; bounded span queue; eval single-flight; body size implicitly bounded by Ollama context | `TestAPIKeyRateLimit`, `TestAPIKeyBudget`, `TestEvalRunSingleFlight` |
+| Denial of service | Per-key RPM + token budget; `REQUEST_TIMEOUT`; `ReadHeaderTimeout`; bounded span queue; eval single-flight; 4 MiB body cap; `ReadTimeout`/`WriteTimeout`/`IdleTimeout`; client `options` bounded (`num_ctx` ≤ 32768, `num_gpu` ≤ 99, `keep_alive` ≤ 1h) | `TestAPIKeyRateLimit`, `TestAPIKeyBudget`, `TestEvalRunSingleFlight` |
 | Elevation of privilege | Container runs as `nonroot` on distroless; the console — the only admin surface, and the one that returns prompts — refuses non-loopback peers unless `CONSOLE_REMOTE=true`; key creation is CLI-only on the box | `TestPolicyConsoleIsLocalOnly`, `TestConsoleGuardKeepsRemoteClientsOut`, `Dockerfile` |
 | Supply chain | One direct dependency; Dependabot weekly; `govulncheck` in CI (found and fixed GO-2026-5970 in `x/text` on first run); `staticcheck` in CI; release binaries with `SHA256SUMS` | `TestPolicySingleDirectDependency`, `ci.yml` policy job |
 | Secrets | Env vars only (`GROQ_API_KEY`, `POSTGRES_DSN`); never logged; `.env` git-ignored | review; `.gitignore` |
@@ -123,7 +123,9 @@ Known gaps, stated: `/metrics` is unauthenticated (routing metadata and per-key 
 | Unknown model | 400 `unknown_model`, never a silent fallback to "auto" | `TestExplicitModel` |
 | Not on disk | explicit or tier model missing from Ollama → 503 `model_not_pulled` with the pull hint; `/v1/models` shows `up:false` + `reason:not_pulled`; presence refreshed every probe tick, gaps logged | `TestPresenceSkipsUnpulled`, `TestPolicyModelNotPulledIsOneErrorShape` |
 | Backend health | Known-down fallbacks skipped, not tried | `TestHealthProberGaugeAndModels` |
-| Budgets and rates | 403 `budget_exceeded`, 429 `rate_limited` + `Retry-After` | `TestAPIKeyBudget`, `TestAPIKeyRateLimit` |
+| Budgets and rates | 403 `budget_exceeded`, 429 `rate_limited` + `Retry-After`; `/mcp` uses the same gate and charges the tokens a tool consumed | `TestAPIKeyBudget`, `TestAPIKeyRateLimit`, `TestToolCallReportsUsage` |
+| Body size | > 4 MiB → 413 `request_too_large` on both chat ingresses | `TestChatRejectsOversizedBody` |
+| Resource options | `num_ctx`/`num_gpu`/`num_predict`/`num_thread`/`repeat_last_n` above their ceiling, or `keep_alive` negative/over 1h → 400 `option_out_of_range` | `TestParamsRejectResourceOptionsOutOfRange`, `TestChatRejectsUnboundedOption` |
 | One eval at a time | 409 `eval_running` | `TestEvalRunSingleFlight` |
 | Golden hygiene | Freeze rejects empty fields, unknown docs, duplicate questions, zero-claim and subordinate-clause answers | `TestValidateGolden` |
 | Judge determinism | Temperature 0 on every local judge call; judge model + prompt version stored per run; `judge_changed` flag in drift | `TestOllamaJudgeSendsTemperatureZero`, `TestRecordAndDriftReport` |

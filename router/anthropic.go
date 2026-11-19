@@ -143,7 +143,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in anthropicRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeAnthropicError(w, http.StatusRequestEntityTooLarge, "invalid_request_error",
+				fmt.Sprintf("request body exceeds %d bytes", maxRequestBody), traceID)
+			return
+		}
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body", traceID)
 		return
 	}

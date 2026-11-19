@@ -57,6 +57,13 @@ func (m *memStore) GPUSamples(ctx context.Context, since time.Time, limit int) (
 	return m.gpuHist, nil
 }
 
+func (m *memStore) MetricSeries(ctx context.Context, since, until time.Time, step time.Duration) ([]SeriesPoint, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return nil, nil
+}
+
 func (m *memStore) BenchmarkData(ctx context.Context, golden string) (BenchmarkInput, error) {
 	if m.err != nil {
 		return BenchmarkInput{}, m.err

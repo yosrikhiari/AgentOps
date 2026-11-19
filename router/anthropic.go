@@ -273,6 +273,7 @@ func anthropicBody(traceID string, out ChatResponse) map[string]any {
 		// Tower extensions, same as the OpenAI endpoint's: Anthropic clients
 		// ignore unknown fields, and the console's explainability rides along.
 		"reason": out.Reason, "backend": out.Backend, "trace_id": out.TraceID,
+		"tier": out.Tier, "candidates": out.Candidates, "answered_by": out.AnsweredBy,
 	}
 }
 

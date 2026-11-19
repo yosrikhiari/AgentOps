@@ -239,6 +239,50 @@
     });
   }
 
+  // One line chart for every time series on the page: axis with units, time
+  // labels, one or two series, current dot. Same hand-rolled SVG approach as the
+  // GPU charts, tokens only.
+  function seriesChart(points, defs, opts) {
+    opts = opts || {};
+    const fmtV = opts.fmt || (v => String(Math.round(v)));
+    const w = 620, hgt = 150, padL = 54, padR = 10, padT = 12, padB = 24;
+    const NS = 'http://www.w3.org/2000/svg';
+    const el = (t, a) => { const n = document.createElementNS(NS, t); for (const k in a) n.setAttribute(k, a[k]); return n; };
+    const svg = el('svg', { viewBox: '0 0 ' + w + ' ' + hgt, class: 'tower-series' });
+    const dataMax = Math.max(0, ...points.flatMap(p => defs.map(d => Number(p[d.key]) || 0)));
+    const max = Math.max(opts.minMax || 1, dataMax);
+    const x = i => padL + i * (w - padL - padR) / Math.max(1, points.length - 1);
+    const y = v => padT + (1 - Math.min(1, Math.max(0, v / max))) * (hgt - padT - padB);
+    [0, 0.5, 1].forEach(f => {
+      svg.append(el('line', { x1: padL, x2: w - padR, y1: y(max * f), y2: y(max * f), stroke: 'var(--tower-border-soft)' }));
+      const t = el('text', { x: padL - 8, y: y(max * f) + 3, 'text-anchor': 'end', fill: 'var(--tower-ink-faint)', 'font-size': 10 });
+      t.textContent = fmtV(max * f); svg.append(t);
+    });
+    defs.forEach(d => {
+      const pts = points.map((p, i) => x(i).toFixed(1) + ',' + y(Number(p[d.key]) || 0).toFixed(1));
+      svg.append(el('polyline', { points: pts.join(' '), fill: 'none', stroke: d.color, 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }));
+      const last = points.length - 1;
+      svg.append(el('circle', { cx: x(last), cy: y(Number(points[last][d.key]) || 0), r: 3, fill: d.color }));
+    });
+    if (points.length) {
+      const t0 = el('text', { x: padL, y: hgt - 6, fill: 'var(--tower-ink-faint)', 'font-size': 10 });
+      t0.textContent = fmt.time(points[0].at); svg.append(t0);
+      const t1 = el('text', { x: w - padR, y: hgt - 6, 'text-anchor': 'end', fill: 'var(--tower-ink-faint)', 'font-size': 10 });
+      t1.textContent = fmt.time(points[points.length - 1].at); svg.append(t1);
+    }
+    return svg;
+  }
+
+  function chartPanel(title, sub, pts, defs, opts) {
+    opts = opts || {};
+    const legend = defs.length > 1 ? ' · ' + defs.map(d => d.label).join(' / ') : '';
+    return panel(title, sub + legend,
+      pts.length ? seriesChart(pts, defs, opts)
+        : h('div', { class: 'tower-empty' }, 'No traffic in this window.'));
+  }
+
+  const modelTest = { q: '', busy: false, result: null, error: '' };
+
   async function pageModels(signal, _sub, polling) {
     if (!polling) content.replaceChildren(skeleton(5));
     let ov;
@@ -248,34 +292,28 @@
 
     const rows = modelRows(ov);
     const backends = ov.backends || [];
-    const t = ov.traffic || {};
     const localN = rows.filter(r => r.local === true).length;
     const cloudN = rows.filter(r => r.local === false).length;
     const upN = rows.filter(r => r.m.up !== false).length;
-    const totalReq = rows.reduce((n, r) => n + Number(r.s.requests || 0), 0);
-    const totalTok = rows.reduce((n, r) => n + Number(r.s.tokens || 0), 0);
+    const since = ov.since_start || {};
+    const totalReq = Object.values(since).reduce((n, x) => n + (Number(x.requests) || 0), 0);
+    const totalTok = Object.values(since).reduce((n, x) => n + (Number(x.tokens) || 0), 0);
+    const totalErr = Object.values(since).reduce((n, x) => n + (Number(x.errors) || 0), 0);
 
     const metrics = h('div', { class: 'tower-metric-row' },
       metric('Models served', String(rows.length), 'registered with the router'),
       metric('Reachable now', upN + ' / ' + rows.length, upN === rows.length ? 'every backend answered' : 'check Backends below'),
-      metric('Local', String(localN), 'data stays on this machine'),
-      metric('Cloud', String(cloudN), 'fallback only, never for sensitive'),
-      metric('Traffic / last hour', String(t.requests_last_hour || 0), (t.requests_last_minute || 0) + ' in the last minute'),
-      metric('Requests since start', String(totalReq), 'process counters, not the span store'),
-      metric('Tokens since start', totalTok.toLocaleString(), 'in + out, as the backend reported'),
-      metric('p50 / p99', fmt.ms(t.p50_latency_s), 'p99 ' + fmt.ms(t.p99_latency_s)));
+      metric('Local / cloud', localN + ' / ' + cloudN, 'cloud is fallback only'),
+      metric('Since start', String(totalReq), totalTok.toLocaleString() + ' tokens · ' + totalErr + ' errors'));
 
     const served = rows.length
       ? h('table', { class: 'tower-table' },
         h('thead', null, h('tr', null,
-          h('th', null, 'Model'), h('th', null, 'Tier'), h('th', null, 'Backend'),
-          h('th', null, 'Where'), h('th', null, 'Reach'), h('th', null, 'Last hour'),
-          h('th', null, 'Requests'), h('th', null, 'Errors'), h('th', null, 'Tokens'))),
+          ...['model', 'tier', 'backend', 'reach', 'last hour', 'requests', 'errors', 'tokens'].map(t => h('th', null, t)))),
         h('tbody', null, rows.map(r => h('tr', null,
           h('td', { class: 'tower-mono' }, r.m.model),
           h('td', null, chip(r.m.tier || 'unknown')),
-          h('td', null, chip(r.m.backend || 'unknown')),
-          h('td', null, r.local === null ? chip('unknown') : chip(r.local ? 'local' : 'cloud')),
+          h('td', null, chip((r.m.backend || 'unknown') + (r.local === null ? '' : r.local ? ' · local' : ' · cloud'))),
           h('td', null, r.m.up === false ? pill('critical', 'down') : pill('healthy', 'up')),
           h('td', { class: 'tower-mono' }, String(r.lastHour)),
           h('td', { class: 'tower-mono' }, String(r.s.requests || 0)),
@@ -286,8 +324,7 @@
 
     const backendTable = backends.length
       ? h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null,
-          h('th', null, 'Backend'), h('th', null, 'Where'), h('th', null, 'Health'), h('th', null, 'Last error'))),
+        h('thead', null, h('tr', null, h('th', null, 'backend'), h('th', null, 'where'), h('th', null, 'health'), h('th', null, 'last error'))),
         h('tbody', null, backends.map(b => h('tr', null,
           h('td', { class: 'tower-mono' }, b.name),
           h('td', null, chip(b.local ? 'local' : 'cloud')),
@@ -295,105 +332,110 @@
           h('td', { class: 'tower-mono', title: b.error || '' }, (b.error || '').slice(0, 48))))))
       : h('div', { class: 'tower-empty' }, 'No backends registered.');
 
-    content.replaceChildren(metrics,
-      panel('Served models', 'Registered with the router; requests and tokens are lifetime process counters, last hour comes from spans',
-        served),
-      panel('Backends', 'Probed every 15 s; a down local backend makes chat fail over to the next candidate', backendTable));
+    // Route test: one real prompt through the router State lives outside the
+    // render so a 5 s poll cannot wipe the answer, and a poll never replaces the
+    // page while the field is focused or a test is in flight.
+    const rtInput = h('input', {
+      class: 'tower-input', placeholder: 'Route test: type a prompt…',
+      'aria-label': 'Route test prompt', value: modelTest.q,
+    });
+    rtInput.addEventListener('input', () => { modelTest.q = rtInput.value; });
+    const rtOut = h('div', { class: 'tower-panel-sub' }, '');
+    const rtBtn = h('button', { class: 'tower-btn secondary', type: 'button' }, 'Route test…');
+    function showRouteResult() {
+      if (modelTest.error) { rtOut.replaceChildren(errorBox(modelTest.error)); return; }
+      if (!modelTest.result) { rtOut.textContent = 'The answer, the model it picked and why appear here.'; return; }
+      const r = modelTest.result;
+      rtOut.replaceChildren(chip(r.model || '?'), chip(r.backend || '?'), chip(r.reason || '?'),
+        h('span', { class: 'tower-mono' }, fmt.dur(r.ms / 1000)),
+        h('div', { class: 'tower-panel-sub' }, (r.text || '').slice(0, 160)));
+    }
+    rtBtn.disabled = modelTest.busy;
+    rtBtn.addEventListener('click', async () => {
+      const q = rtInput.value.trim();
+      if (!q || modelTest.busy) return;
+      modelTest.busy = true; modelTest.error = ''; rtBtn.disabled = true;
+      rtOut.textContent = 'Routing…';
+      const t0 = performance.now();
+      try {
+        const r = await api('/v1/chat/completions', {
+          method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: q }], max_tokens: 32 }),
+        });
+        modelTest.result = { model: r.model, backend: r.backend, reason: r.reason, text: r.text, ms: performance.now() - t0 };
+      } catch (e) {
+        modelTest.error = 'Route test failed: ' + e.message;
+      }
+      modelTest.busy = false; rtBtn.disabled = false;
+      showRouteResult();
+    });
+    showRouteResult();
+
+    const typing = polling && (modelTest.busy ||
+      (document.activeElement && content.contains(document.activeElement) && document.activeElement.tagName === 'INPUT'));
+    if (!typing) {
+      content.replaceChildren(metrics,
+        panel('Models', 'One row per served model; counters since process start, last hour from spans', served),
+        h('div', { class: 'tower-note' }, chip('cloud'), ' Cloud tiers are fallback only and are never used for sensitive prompts.'),
+        h('div', { class: 'tower-grid-2' },
+          panel('Backends', 'Probed every 15 s', backendTable),
+          panel('Route test', 'Sends one prompt through the router', h('div', null,
+            h('div', { class: 'tower-form-row' }, rtInput, rtBtn), rtOut))));
+      showRouteResult();
+    }
 
     pollTimer = setTimeout(() => { if (location.hash.startsWith('#/models')) pageModels(signal, '', true); }, 5000);
   }
 
-  // ---------- metrics page: the process counters, in one place ----------
+  let metricsRange = '1h';
   async function pageMetrics(signal, _sub, polling) {
     if (!polling) content.replaceChildren(skeleton(5));
-    let ov;
-    try { ov = await api('/v1/overview', null, signal); }
-    catch (e) { if (e.name === 'AbortError') return; if (!polling) content.replaceChildren(errorBox('Could not load metrics: ' + e.message, () => route())); return; }
+    let data, ov;
+    try {
+      [data, ov] = await Promise.all([
+        api('/v1/metrics/series?window=' + metricsRange, null, signal),
+        api('/v1/overview', null, signal),
+      ]);
+    } catch (e) { if (e.name === 'AbortError') return; if (!polling) content.replaceChildren(errorBox('Could not load metrics: ' + e.message, () => route())); return; }
     updateStrip(ov);
 
-    const t = ov.traffic || {};
+    const pts = data.points || [];
+    const label = data.window || metricsRange;
+    const sum = k => pts.reduce((n, p) => n + (Number(p[k]) || 0), 0);
+    const req = sum('requests'), err = sum('errors'), tin = sum('tokens_in'), tout = sum('tokens_out');
+    // The newest bucket is partial (the current minute): show the latest bucket
+    // that actually measured a model call, or the KPI reads '<1 ms' during idle.
+    const last = pts.slice().reverse().find(x => (Number(x.p50_s) || 0) > 0) || (pts.length ? pts[pts.length - 1] : {});
     const since = ov.since_start || {};
-    const byModel = t.by_model || {};
-    const rows = modelRows(ov);
-    const hourReq = Number(t.requests_last_hour || 0);
-    const hourErr = Number(t.errors_last_hour || 0);
-    const hourTok = Number(t.tokens_last_hour || 0);
-    const totalReq = rows.reduce((n, r) => n + Number(r.s.requests || 0), 0);
-    const totalErr = rows.reduce((n, r) => n + Number(r.s.errors || 0), 0);
-    const totalTok = rows.reduce((n, r) => n + Number(r.s.tokens || 0), 0);
-    const rate = hourReq > 0 ? hourErr / hourReq : null;
+    const totalReq = Object.values(since).reduce((n, x) => n + (Number(x.requests) || 0), 0);
+    const rate = req > 0 ? err / req : null;
 
-    const backendsAll = ov.backends || [];
-    const upBackends = backendsAll.filter(b => b.up).length;
-    const allRate = totalReq > 0 ? totalErr / totalReq : null;
     const metrics = h('div', { class: 'tower-metric-row' },
-      metric('Requests / last hour', String(hourReq), (t.requests_last_minute || 0) + ' in the last minute'),
-      metric('Errors / last hour', String(hourErr), rate === null ? 'no traffic yet' : (rate * 100).toFixed(2) + '% of requests'),
-      metric('p50 latency', fmt.ms(t.p50_latency_s), 'p99 ' + fmt.ms(t.p99_latency_s)),
-      metric('Tokens / last hour', hourTok.toLocaleString(), 'reported by the backend'),
-      metric('Requests since start', String(totalReq), 'process counters'),
-      metric('Errors since start', String(totalErr), allRate === null ? 'none yet' : (allRate * 100).toFixed(2) + '% of requests'),
-      metric('Tokens since start', totalTok.toLocaleString(), 'in + out'),
-      metric('Backends up', upBackends + ' / ' + backendsAll.length, upBackends === backendsAll.length ? 'all healthy' : 'one is down'));
+      metric('Requests', String(req), label + ' · ' + totalReq + ' since start'),
+      metric('Error rate', rate === null ? '–' : (rate * 100).toFixed(2) + '%', err + ' errors in ' + label, rate !== null && rate >= 0.05 ? 'down' : ''),
+      metric('p50 / p99', fmt.dur(last.p50_s), 'p99 ' + fmt.dur(last.p99_s) + ' · latest measured bucket'),
+      metric('Tokens', (tin + tout).toLocaleString(), tin.toLocaleString() + ' in · ' + tout.toLocaleString() + ' out'));
 
-    const trafficRows = rows
-      .slice()
-      .sort((a, b) => (byModel[b.m.model] || 0) - (byModel[a.m.model] || 0))
-      .map(r => {
-        const n = Number(byModel[r.m.model] || 0);
-        const share = hourReq > 0 ? (n / hourReq) * 100 : null;
-        return h('tr', null,
-          h('td', { class: 'tower-mono' }, r.m.model),
-          h('td', null, chip(r.m.tier || 'unknown')),
-          h('td', { class: 'tower-mono' }, String(n)),
-          h('td', { class: 'tower-mono' }, share === null ? '-' : share.toFixed(1) + '%'));
-      });
-
-    const traffic = hourReq > 0
-      ? h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null, h('th', null, 'Model'), h('th', null, 'Tier'), h('th', null, 'Requests'), h('th', null, 'Share'))),
-        h('tbody', null, trafficRows))
-      : h('div', { class: 'tower-empty' }, 'No requests in the last hour. Send a chat or run a workflow and this table fills in.');
-
-    const counters = rows.length
-      ? h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null,
-          h('th', null, 'Model'), h('th', null, 'Requests'), h('th', null, 'Errors'),
-          h('th', null, 'Error rate'), h('th', null, 'Tokens'))),
-        h('tbody', null, rows
-          .slice()
-          .sort((a, b) => Number(b.s.requests || 0) - Number(a.s.requests || 0))
-          .map(r => {
-            const req = Number(r.s.requests || 0), err = Number(r.s.errors || 0);
-            const er = req > 0 ? err / req : null;
-            return h('tr', null,
-              h('td', { class: 'tower-mono' }, r.m.model),
-              h('td', { class: 'tower-mono' }, String(req)),
-              h('td', { class: 'tower-mono' }, String(err)),
-              h('td', null, er === null ? '-' : er < 0.05 ? pill('healthy', (er * 100).toFixed(1) + '%') : er < 0.2 ? pill('degraded', (er * 100).toFixed(1) + '%') : pill('critical', (er * 100).toFixed(1) + '%')),
-              h('td', { class: 'tower-mono' }, Number(r.s.tokens || 0).toLocaleString()));
-          })))
-      : h('div', { class: 'tower-empty' }, 'No model counters yet: the process has not served a request since it started.');
-
-    const backends = (ov.backends || []).length
-      ? h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null, h('th', null, 'Backend'), h('th', null, 'Where'), h('th', null, 'Health'))),
-        h('tbody', null, (ov.backends || []).map(b => h('tr', null,
-          h('td', { class: 'tower-mono' }, b.name),
-          h('td', null, chip(b.local ? 'local' : 'cloud')),
-          h('td', null, b.up ? pill('healthy', 'healthy') : pill('critical', 'down'))))))
-      : h('div', { class: 'tower-empty' }, 'No backends registered.');
-
-    const raw = h('a', {
-      class: 'tower-btn secondary', href: '/metrics', target: '_blank', rel: 'noopener',
-    }, 'Open the Prometheus text');
+    const rangeSeg = h('div', { class: 'tower-seg' },
+      ...[['1h', '1 h'], ['6h', '6 h'], ['24h', '24 h']].map(([k, text]) =>
+        h('button', {
+          class: metricsRange === k ? 'on' : '',
+          onclick: () => { if (metricsRange === k) return; metricsRange = k; clearTimeout(pollTimer); pageMetrics(signal, '', true); },
+        }, text)));
+    const prom = h('a', { class: 'tower-btn ghost', href: '/metrics', target: '_blank', rel: 'noopener' }, 'Prometheus text');
 
     content.replaceChildren(metrics,
+      h('div', { class: 'tower-form-row', style: 'justify-content:flex-end' }, prom, rangeSeg),
       h('div', { class: 'tower-grid-2' },
-        panel('Traffic by model - last hour', 'Counted from spans; share is of every request in the window', traffic),
-        panel('Backends', 'Probed every 15 s', backends)),
-      panel('Since the process started', 'Counters reset when the binary restarts; evals and drift are on their own page',
-        counters, raw));
+        chartPanel('Requests', 'per bucket · ' + label, pts,
+          [{ key: 'requests', color: 'var(--tower-ink-muted)' }], { fmt: v => String(Math.round(v)), minMax: 2 }),
+        chartPanel('Latency', 'p50 / p99 per bucket · ' + label, pts,
+          [{ key: 'p50_s', color: 'var(--tower-amber)', label: 'p50' }, { key: 'p99_s', color: 'var(--tower-red)', label: 'p99' }],
+          { fmt: v => v > 0 ? fmt.dur(v) : '0' }),
+        chartPanel('Errors', 'per bucket · ' + label, pts,
+          [{ key: 'errors', color: 'var(--tower-red)' }], { fmt: v => String(Math.round(v)), minMax: 2 }),
+        chartPanel('Tokens', 'in + out per bucket · ' + label, pts,
+          [{ key: 'tokens_in', color: 'var(--tower-ink-faint)', label: 'in' }, { key: 'tokens_out', color: 'var(--tower-amber)', label: 'out' }],
+          { fmt: v => Math.round(v).toLocaleString() })));
 
     pollTimer = setTimeout(() => { if (location.hash.startsWith('#/metrics')) pageMetrics(signal, '', true); }, 5000);
   }

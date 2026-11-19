@@ -46,6 +46,19 @@ type Overview struct {
 	ByModel            map[string]int `json:"by_model"`
 }
 
+// SeriesPoint is one bucket of the Metrics time-series charts. It is a read over
+// the same spans the trace pages use; there is no separate metric store (see
+// docs/CONSOLE-REDESIGN.md and the "wave 4" decision there).
+type SeriesPoint struct {
+	At        time.Time `json:"at"`
+	Requests  int       `json:"requests"`
+	Errors    int       `json:"errors"`
+	P50S      float64   `json:"p50_s"`
+	P99S      float64   `json:"p99_s"`
+	TokensIn  int64     `json:"tokens_in"`
+	TokensOut int64     `json:"tokens_out"`
+}
+
 type EvalRun struct {
 	ID     int    `json:"id"`
 	Golden string `json:"golden_version"`
@@ -144,6 +157,10 @@ type Store interface {
 	// GPUSamples is Track U's history: local GPU utilisation and VRAM,
 	// newest-first. A nil slice (no rows) is not an error.
 	GPUSamples(ctx context.Context, since time.Time, limit int) ([]gpu.Sample, error)
+	// MetricSeries aggregates spans into fixed buckets between since and until:
+	// requests, errors, p50/p99 latency and tokens. Empty buckets are returned
+	// as zeros so a chart has no holes. Read-only; bounded by the caller.
+	MetricSeries(ctx context.Context, since, until time.Time, step time.Duration) ([]SeriesPoint, error)
 }
 
 // Conversation is one stored thread on the cockpit shelf.
@@ -659,4 +676,59 @@ func (s SQLStore) GPUSamples(ctx context.Context, since time.Time, limit int) ([
 		return nil, nil
 	}
 	return gpu.SQLStore{Query: s.GPU}.Series(ctx, since, limit)
+}
+
+// MetricSeries aggregates spans into buckets. Two queries' worth of facts come
+// from one row set: route.decide counts a request, model.generate carries the
+// latency, the error flag and the token counts. percentile_cont gives the tail
+// (p50/p99) rather than a mean, which is what the Tail at Scale argument says a
+// latency chart must show.
+//
+// Buckets with no rows are filled with zeros here, not in SQL, so the chart has
+// no holes and an idle minute is visibly idle.
+func (s SQLStore) MetricSeries(ctx context.Context, since, until time.Time, step time.Duration) ([]SeriesPoint, error) {
+	if step <= 0 {
+		step = time.Minute
+	}
+	if !until.After(since) {
+		return []SeriesPoint{}, nil
+	}
+	rows, err := s.Query.Query(ctx, `
+		SELECT date_bin(make_interval(secs => $1::int), started_at, TIMESTAMPTZ '1970-01-01') AS bucket,
+		       count(*) FILTER (WHERE name = 'route.decide')::int AS requests,
+		       count(*) FILTER (WHERE name = 'model.generate' AND attrs ? 'error')::int AS errors,
+		       coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY nullif((attrs->>'latency_s'), '')::float8), 0) AS p50,
+		       coalesce(percentile_cont(0.99) WITHIN GROUP (ORDER BY nullif((attrs->>'latency_s'), '')::float8), 0) AS p99,
+		       coalesce(sum(CASE WHEN name = 'model.generate' THEN nullif((attrs->>'prompt_tokens'), '')::bigint END), 0) AS tokens_in,
+		       coalesce(sum(CASE WHEN name = 'model.generate' THEN nullif((attrs->>'completion_tokens'), '')::bigint END), 0) AS tokens_out
+		FROM spans
+		WHERE started_at >= $2 AND started_at < $3
+		GROUP BY 1 ORDER BY 1`,
+		int64(step/time.Second), since, until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byBucket := map[int64]SeriesPoint{}
+	for rows.Next() {
+		var p SeriesPoint
+		if err := rows.Scan(&p.At, &p.Requests, &p.Errors, &p.P50S, &p.P99S, &p.TokensIn, &p.TokensOut); err != nil {
+			return nil, err
+		}
+		byBucket[p.At.Unix()] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Align to the same epoch grid date_bin uses, so lookup keys match.
+	start := since.Truncate(step)
+	out := make([]SeriesPoint, 0, int(until.Sub(start)/step)+1)
+	for t := start; !t.After(until); t = t.Add(step) {
+		p, ok := byBucket[t.Unix()]
+		if !ok {
+			p = SeriesPoint{At: t}
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }

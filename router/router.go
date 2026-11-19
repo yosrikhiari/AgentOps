@@ -8,13 +8,66 @@ import (
 const (
 	FastReason    = "short-simple-prompt"
 	QualityReason = "long-or-complex-prompt"
+	// ReasoningReason is a short prompt that asks for reasoning ("why", "explain",
+	// "compare", "reason"). Length is the wrong signal for these: a one-line "why"
+	// is exactly the case where the quality tier earns its cost.
+	ReasoningReason = "reasoning-prompt"
+	// GatewayReason marks a question about this gateway's models or routing. The
+	// router answers it from recorded facts instead of calling a model (router/meta.go).
+	GatewayReason = "gateway-question"
 	// ExplicitReason is used when the client named a model instead of "auto".
 	ExplicitReason = "explicit-model"
+	// ExplicitTierReason is used when the client named a tier ("fast", "quality",
+	// "cloud") rather than a model — what the console's model picker sends.
+	ExplicitTierReason = "explicit-tier"
 )
 
 var complexKeywords = []string{
 	"analyze", "compare", "prove", "contract", "summarize",
 	"analyse", "comparer", "résume", "contrat", "facture",
+}
+
+// reasoningWords are the signals that a prompt asks for judgement rather than a
+// lookup. They are matched as whole words so "showcase" is not "why" and
+// "reasonably" is not "reason".
+var reasoningWords = []string{
+	"why", "explain", "explains", "explaining", "reason", "reasons", "reasoning",
+	"compare", "compares", "comparing", "comparison", "trade-off", "tradeoff",
+	"justify", "analyse", "analyze", "analysis",
+	"pourquoi", "expliquer", "comparer", "raison",
+}
+
+// containsWord reports whether word occurs in s delimited by non-letters. Lowercase
+// both inputs first; the caller already has the lowercased prompt.
+func containsWord(s, word string) bool {
+	for i := 0; ; {
+		j := strings.Index(s[i:], word)
+		if j < 0 {
+			return false
+		}
+		j += i
+		before := j == 0 || !isLetterByte(s[j-1])
+		end := j + len(word)
+		after := end == len(s) || !isLetterByte(s[end])
+		if before && after {
+			return true
+		}
+		i = end
+	}
+}
+
+func isLetterByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= 0x80
+}
+
+// IsTierName reports whether s is a tier the model picker may address by name.
+// "local" is deliberately absent: it labels OLLAMA_MODELS extras, not a choice.
+func IsTierName(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "fast", "quality", "cloud":
+		return true
+	}
+	return false
 }
 
 // DefaultSensitiveKeywords flag a prompt as data that must never leave the box. The list is
@@ -24,9 +77,30 @@ var DefaultSensitiveKeywords = []string{
 	"credit card", "carte bancaire", "confidential", "confidentiel", "secret", "api key", "cin ",
 }
 
+// Classify is ClassifyThread for callers that have only the prompt. It cannot see a
+// follow-up such as "why not another one", which needs the thread to be understood.
 func Classify(prompt string) (tier string, reason string) {
+	return ClassifyThread(prompt, nil)
+}
+
+// ClassifyThread decides the tier for one turn. msgs is the whole conversation as the
+// client sent it (the router's own input convention); it is read only to recognise a
+// short follow-up to an earlier gateway question, and only labels are kept.
+//
+// Order matters: a gateway question is answered by the router rather than a model, so
+// it is named before reasoning; reasoning before length because "why" at 30 characters
+// is still a reasoning prompt.
+func ClassifyThread(prompt string, msgs []Message) (tier string, reason string) {
 	p := strings.TrimSpace(prompt)
 	lower := strings.ToLower(p)
+	if IsGatewayQuestion(p, msgs) {
+		return "quality", GatewayReason
+	}
+	for _, w := range reasoningWords {
+		if containsWord(lower, w) {
+			return "quality", ReasoningReason
+		}
+	}
 	if len(p) > 200 {
 		return "quality", QualityReason
 	}
@@ -128,6 +202,22 @@ func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Ro
 				break
 			}
 		}
+		// A tier name is a request for "the model that serves this tier" — what the
+		// console's picker sends. An exact model name matching a tier string still
+		// wins above, so this cannot shadow a real model called "fast".
+		reason := ExplicitReason
+		if chosen == nil && IsTierName(requested) {
+			for i := range refs {
+				if refs[i].Tier == strings.ToLower(strings.TrimSpace(requested)) {
+					chosen = &refs[i]
+					break
+				}
+			}
+			if chosen == nil {
+				return route, fmt.Errorf("no model serves tier %q", strings.ToLower(strings.TrimSpace(requested)))
+			}
+			reason = ExplicitTierReason
+		}
 		if chosen == nil {
 			return route, ErrUnknownModel{Model: requested}
 		}
@@ -135,11 +225,11 @@ func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Ro
 			return route, ErrSensitiveCloud{Model: requested}
 		}
 		route.Tier = chosen.Tier
-		route.Reason = ExplicitReason
+		route.Reason = reason
 		route.Candidates = []ModelRef{*chosen}
 		return route, nil
 	}
-	route.Tier, route.Reason = Classify(prompt)
+	route.Tier, route.Reason = ClassifyThread(prompt, msgs)
 	// Candidate order: the classified tier, then the other local models, then non-local
 	// ones. A sensitive request then drops every non-local candidate — primary included, so
 	// a quality tier that happens to be a hosted model is skipped, not merely de-prioritised.

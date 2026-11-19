@@ -84,17 +84,32 @@ Workflows:
 - [ ] Resume only on failed rows, as the primary amber action; relative time with a
       full-date tooltip.
 
-## Wave 4 — Metrics and Models (queued, largest)
+## Wave 4 — Metrics and Models (shipped)
 
-- [ ] Metrics becomes the time-series page (requests/min, p50+p99, errors, tokens)
-      with a range switch; remove what duplicates Overview/Models.
-- [ ] KPI strip limited to four cards; “since start” moves into captions.
-- [ ] Models: four registry KPIs; merge the three model tables into one; backend shown
-      inside each row; “Route test…” action; cloud “never for sensitive” note.
-- [ ] Prometheus text link moves to the page header.
-- [?] The time-series charts need historical span aggregation. Either add a
-      `since`/`step` parameter to an existing console endpoint (API addition) or build
-      them from `/v1/requests` only. Decision required before this wave.
+**Decision (market + papers, 2026-11-19): aggregate spans on read; no rollup table,
+no TSDB.** Monarch and Gorilla pre-aggregate because ingestion volume forces it
+(2.2 TB/s, 12 M points/s); Tower writes ~3 spans per request. Dapper's sampling is a
+high-throughput tool, not a need here. So the charts read the existing rows through
+one bounded query. Measured on the local box: **p50 2.5 ms, p95 21 ms** for the 24 h
+window (20 runs), against a recorded rollup trigger of 300 ms. The hand-check matched
+exactly (9 requests in the hour from SQL = 9 from the API).
+
+- [x] `GET /v1/metrics/series?window=1h|6h|24h`: buckets of 1 m / 5 m / 15 m with
+      requests, errors, **p50/p99 (`percentile_cont`, never a mean)**, input/output
+      tokens; closed window set, server-derived step, zeros for empty buckets.
+- [x] Metrics page is the time-series page: requests, latency (p50 amber / p99 red),
+      errors, tokens; 1 h / 6 h / 24 h switch; Prometheus text moved to the header;
+      duplicated Overview/Models tables removed.
+- [x] KPI strip cut to four; “since start” lives in the caption.
+- [x] Models: four registry KPIs; one merged table (model, tier, `backend · local`,
+      reach, last hour, requests, errors, tokens); Backends as a short health list;
+      cloud “never for sensitive prompts” note.
+- [x] “Route test…” sends one prompt through the router and shows the model, backend,
+      reason and latency, surviving a poll re-render.
+
+Verified in Chromium: 4 charts, 3 range buttons, 6 h switch refetches, no duplicate
+tables, 4 KPI cards, 3 route-test chips, prompt/result survive a 5 s poll, zero
+console errors.
 
 ## Deferred or blocked on a decision
 

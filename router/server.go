@@ -49,8 +49,8 @@ type Choice struct {
 }
 
 // ChatResponse is an OpenAI chat.completion plus Tower extensions (text, reason,
-// backend, trace_id, fallback). OpenAI clients ignore the extras; the MVP's clients keep
-// reading text/model/reason/trace_id.
+// backend, trace_id, fallback, tier, candidates, answered_by). OpenAI clients ignore
+// the extras; the MVP's clients keep reading text/model/reason/trace_id.
 type ChatResponse struct {
 	ID       string   `json:"id"`
 	Object   string   `json:"object"`
@@ -63,6 +63,13 @@ type ChatResponse struct {
 	Backend  string   `json:"backend"`
 	TraceID  string   `json:"trace_id"`
 	Fallback string   `json:"fallback,omitempty"`
+	// Tier is the tier this turn was routed to; Candidates is the whole eligible
+	// chain, so the console can show what else was considered without re-deriving it.
+	Tier       string      `json:"tier,omitempty"`
+	Candidates []Candidate `json:"candidates,omitempty"`
+	// AnsweredBy is "router" when no model ran: the router answered from its own
+	// recorded labels (a gateway question). Absent means a model answered.
+	AnsweredBy string `json:"answered_by,omitempty"`
 }
 
 type ErrorBody struct {
@@ -105,6 +112,11 @@ type Server struct {
 	// reappears on disk.
 	missingMu     sync.Mutex
 	missingLogged map[string]bool
+	// lastRoute is the last turn a model answered, for gateway questions
+	// ("why are you using this model"). Labels only, in memory: the gateway has
+	// no store of its own (ADR-0010).
+	lastMu    sync.RWMutex
+	lastRoute *LastRoute
 }
 
 // NewServer builds a gateway with one local backend serving the fast and quality tiers.
@@ -176,10 +188,17 @@ func (s *Server) presentRefs() (present, dropped []ModelRef) {
 	return present, dropped
 }
 
-// droppedTierModel names the missing model for the tier a prompt classifies
-// into, or "" when the tier is still served (or was never configured).
-func droppedTierModel(msgs []Message, dropped []ModelRef) string {
-	tier, _ := Classify(lastUserContent(msgs))
+// droppedTierModel names the missing model for the tier this request needs, or ""
+// when that tier is still served (or was never configured). requested is the client's
+// model field: a tier alias names the tier outright, anything else is classified from
+// the prompt.
+func droppedTierModel(msgs []Message, requested string, dropped []ModelRef) string {
+	tier := ""
+	if IsTierName(requested) {
+		tier = strings.ToLower(strings.TrimSpace(requested))
+	} else {
+		tier, _ = ClassifyThread(lastUserContent(msgs), msgs)
+	}
 	for _, d := range dropped {
 		if d.Tier == tier {
 			return d.Model
@@ -451,6 +470,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		"id": "chatcmpl-" + traceID, "object": "chat.completion.chunk", "created": out.Created, "model": out.Model,
 		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
 		"usage":   out.Usage, "reason": out.Reason, "backend": out.Backend, "trace_id": out.TraceID,
+		"tier": out.Tier, "candidates": out.Candidates, "answered_by": out.AnsweredBy,
 	})
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	if canFlush {
@@ -537,14 +557,17 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 	if len(msgs) == 0 {
 		msgs = []Message{{Role: "user", Content: req.Prompt}}
 	}
+	prompt := lastUserContent(msgs)
 	sensitive := req.Sensitive || IsSensitive(msgs, s.SensitiveKeywords)
-	// Presence first: an explicitly requested model that is known missing from
-	// disk is a 503 naming it (403 still wins for sensitive-to-cloud). An
+	// Presence first: an explicitly requested model or tier that is known missing
+	// from disk is a 503 naming it (403 still wins for sensitive-to-cloud). An
 	// auto-tier whose model is missing is caught after Plan below.
 	present, dropped := s.presentRefs()
 	if req.Model != "" && req.Model != "auto" {
+		tier := strings.ToLower(strings.TrimSpace(req.Model))
 		for _, d := range dropped {
-			if d.Model == req.Model || d.Backend.Name()+"/"+d.Model == req.Model {
+			if d.Model == req.Model || d.Backend.Name()+"/"+d.Model == req.Model ||
+				(IsTierName(req.Model) && d.Tier == tier) {
 				if sensitive && !d.Local() {
 					return ChatResponse{TraceID: traceID}, ErrSensitiveCloud{Model: req.Model}
 				}
@@ -554,8 +577,8 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 	}
 	route, err := Plan(req.Model, msgs, sensitive, present)
 	if err != nil {
-		if req.Model == "" || req.Model == "auto" {
-			if m := droppedTierModel(msgs, dropped); m != "" {
+		if req.Model == "" || req.Model == "auto" || IsTierName(req.Model) {
+			if m := droppedTierModel(msgs, req.Model, dropped); m != "" {
 				return ChatResponse{TraceID: traceID}, ErrModelNotPulled{Model: m}
 			}
 		}
@@ -563,7 +586,7 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 	}
 	decideSpan, genSpan, respondSpan := newTraceID(), newTraceID(), newTraceID()
 	start := time.Now()
-	sig := Analyse(lastUserContent(msgs))
+	sig := Analyse(prompt)
 	names := make([]string, 0, len(route.Candidates))
 	for _, c := range route.Candidates {
 		names = append(names, c.Backend.Name()+"/"+c.Model)
@@ -591,6 +614,14 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		"difficulty": sig.Difficulty, "policy": PolicyHeuristicV0,
 	})))
 
+	// A gateway question is answered from labels the router already has. Calling a
+	// model here would be asking the component under discussion to describe itself
+	// from nothing; the router's answer says plainly that no model ran.
+	if IsGatewayQuestion(prompt, msgs) {
+		return s.answerFromRouter(traceID, decideSpan, respondSpan, route, sig, names, ref)
+	}
+
+	roster := Roster(s.Models)
 	var lastErr error
 	var fallback []string
 	for i, cand := range route.Candidates {
@@ -600,7 +631,11 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		var text string
 		var usage Usage
 		var err error
-		text, usage, err = generateOn(ctx, cand.Backend, cand.Model, msgs, params, emit)
+		// Rebuilt per candidate: a model that answers should be looking at its own
+		// name in the prompt, not the planned one's, so a fallback cannot be told it
+		// is a different model.
+		turn := withSystemPrompt(msgs, SystemPrompt(roster, cand.Model, route.Reason))
+		text, usage, err = generateOn(ctx, cand.Backend, cand.Model, turn, params, emit)
 		if err != nil {
 			lastErr = err
 			s.Metrics.ObserveError(cand.Model)
@@ -628,10 +663,16 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 			ID: "chatcmpl-" + traceID, Object: "chat.completion", Created: time.Now().Unix(), Model: cand.Model,
 			Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
 			Usage:   usage, Text: text, Reason: route.Reason, Backend: cand.Backend.Name(), TraceID: traceID,
+			Tier: route.Tier, Candidates: candidatesOf(route),
 		}
 		if len(fallback) > 0 {
 			out.Fallback = strings.Join(fallback, ",") + "->" + cand.Backend.Name() + "/" + cand.Model
 		}
+		s.rememberRoute(LastRoute{
+			Model: cand.Model, Backend: cand.Backend.Name(), Tier: route.Tier, Reason: route.Reason,
+			LatencyS: latency, PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+			At: time.Now().UTC(),
+		})
 		s.recordDecision(traceID, sig, route, sensitive, names,
 			cand.Backend.Name()+"/"+cand.Model, len(fallback) > 0, false)
 		return out, nil
@@ -640,8 +681,48 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		lastErr = errors.New("no candidate available")
 	}
 	s.emitSpan(traceID, genSpan, decideSpan, "model.generate", spanAttrs(ref(map[string]any{"error": lastErr.Error(), "tried": fallback})))
+	// The router still answered - with an error. Without this span a failed request
+	// and a lost telemetry write looked identical: two spans, no reason.
+	s.emitSpan(traceID, respondSpan, genSpan, "router.respond", spanAttrs(ref(map[string]any{"error": lastErr.Error()})))
 	s.recordDecision(traceID, sig, route, sensitive, names, "", len(fallback) > 0, true)
 	return ChatResponse{TraceID: traceID}, lastErr
+}
+
+// answerFromRouter answers a gateway question from the last model turn and the roster.
+// It emits route.decide -> router.answer -> router.respond: three spans, no
+// model.generate, because no model generated anything.
+func (s *Server) answerFromRouter(traceID, decideSpan, respondSpan string, route Route, sig Signal, names []string, ref func(map[string]any) map[string]any) (ChatResponse, error) {
+	answerSpan := newTraceID()
+	planned := route.Candidates[0]
+	text := MetaAnswer(route.Tier, route.Reason, Roster(s.Models), s.LastTurn())
+	s.emitSpan(traceID, answerSpan, decideSpan, "router.answer", spanAttrs(ref(map[string]any{
+		"model": planned.Model, "tier": route.Tier, "reason": route.Reason,
+		"answered_by": "router", "policy": PolicyHeuristicV0,
+	})))
+	s.emitSpan(traceID, respondSpan, answerSpan, "router.respond", spanAttrs(ref(map[string]any{
+		"model": planned.Model, "answered_by": "router",
+	})))
+	out := ChatResponse{
+		ID: "chatcmpl-" + traceID, Object: "chat.completion", Created: time.Now().Unix(), Model: planned.Model,
+		Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
+		Text:    text, Reason: route.Reason, Backend: planned.Backend.Name(), TraceID: traceID,
+		Tier: route.Tier, Candidates: candidatesOf(route), AnsweredBy: "router",
+	}
+	// Deliberately not rememberRoute: "the last model turn" must stay the last turn a
+	// model answered, so a run of gateway questions keeps reporting the real one
+	// instead of reporting itself with zero latency.
+	s.recordDecision(traceID, sig, route, route.Sensitive, names, planned.Backend.Name()+"/"+planned.Model, false, false)
+	return out, nil
+}
+
+// candidatesOf projects the route chain into the JSON view. It copies, so a caller
+// cannot observe route state being reused.
+func candidatesOf(route Route) []Candidate {
+	out := make([]Candidate, 0, len(route.Candidates))
+	for _, c := range route.Candidates {
+		out = append(out, Candidate{Model: c.Model, Tier: c.Tier, Local: c.Local()})
+	}
+	return out
 }
 
 // recordDecision hands one decision to the sink once the outcome is known, so a replay can

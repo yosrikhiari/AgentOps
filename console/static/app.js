@@ -102,7 +102,13 @@
     document.getElementById('strip-version').textContent = ov.version ? 'tower ' + ov.version : '';
     const sd = document.getElementById('side-dot');
     if (sd) { sd.style.background = dot.style.background; sd.style.boxShadow = dot.style.boxShadow; }
-    const sr = document.getElementById('side-router'); if (sr) sr.textContent = allUp ? 'router live' : 'backend down';
+    const sr = document.getElementById('side-router');
+    if (sr) {
+      sr.textContent = allUp ? 'router live' : 'backend down';
+      // The rail footer is the dot alone; the words live in a tooltip.
+      const item = sr.closest('.tower-pulse-item');
+      if (item) item.title = sr.textContent;
+    }
     const sv = document.getElementById('side-version'); if (sv) sv.textContent = ov.version ? 'tower ' + ov.version : '';
   }
   const pageTitles = { overview: 'Overview', traces: 'Traces', evals: 'Evals & drift', benchmarks: 'Benchmarks', workflows: 'Workflows', cockpit: 'Cockpit', gpu: 'GPU', metrics: 'Metrics', models: 'Models' };
@@ -981,144 +987,207 @@
   let coLastInput = '';
   let coWorkflow = null;  // id of a workflow started from this input
   async function pageCockpit(signal) {
+    content.classList.add('is-cockpit');
+    const mainEl = document.querySelector('.tower-main');
+    if (mainEl) mainEl.classList.add('is-cockpit');
+
+    // ---- conversation column ----
     const ta = h('textarea', {
       class: 'tower-chat-input', rows: '2', 'aria-label': 'Message the router',
       placeholder: 'Ask a question, or paste the clause you are working on…',
     });
-    const sendBtn = h('button', { class: 'tower-btn primary' }, 'Send');
-    const wfBtn = h('button', { class: 'tower-btn secondary' }, 'Run as workflow');
-    const hint = h('div', { class: 'tower-chat-hint' }, '');
+    const sendBtn = h('button', { class: 'tower-send', type: 'button', 'aria-label': 'Send message', disabled: 'disabled' }, '\u2191');
+    const wfBtn = h('button', { class: 'tower-btn ghost', type: 'button' }, 'Run as workflow');
+    const tokensHint = h('span', { class: 'tower-chat-tokens tower-mono' }, '~0 tokens');
     const errSlot = h('div', null);
-    const log = h('div', { class: 'tower-chat-log', 'aria-live': 'polite' });
-    const sub = h('div', { class: 'tower-panel-sub' }, '');
-    // Threads live in a popover so the conversation keeps the reading column;
-    // the right pane is the inspector the prototype centres the page on.
+    const log = h('div', { class: 'tower-chat-log' });
+    const titleEl = h('h2', { class: 'tower-chat-title' }, 'New thread');
+    const savedEl = h('span', { class: 'tower-chat-saved' }, '');
+
     const convList = h('div', { class: 'tower-conv' }, skeleton(2));
-    const threadsBtn = h('button', { class: 'tower-btn ghost', type: 'button', 'aria-haspopup': 'true' }, 'Threads');
-    const pop = h('div', { class: 'tower-thread-pop' }, convList);
+    const threadsBtn = h('button', { class: 'tower-btn ghost', type: 'button', 'aria-haspopup': 'true' }, 'Threads \u25be');
+    const popNew = h('button', { class: 'tower-btn secondary', type: 'button' }, '\uff0b New thread');
+    const pop = h('div', { class: 'tower-thread-pop' }, popNew, convList);
     const threadWrap = h('div', { class: 'tower-thread-wrap' }, threadsBtn, pop);
-    const newBtn = h('button', { class: 'tower-btn secondary', type: 'button' }, '+ New');
+    const newBtn = h('button', { class: 'tower-btn ghost tower-btn-amber', type: 'button' }, '\uff0b New');
+
     const listBody = h('div', null, skeleton(5));
     const dot = h('span', { class: 'tower-live-dot' });
     const label = h('span', null, '');
 
+    const composer = h('div', { class: 'tower-chat-composer' }, ta,
+      h('div', { class: 'tower-chat-actions' }, wfBtn,
+        h('span', { class: 'tower-spacer' }), tokensHint, sendBtn));
+    const head = h('div', { class: 'tower-chat-head' },
+      h('div', { class: 'tower-chat-heading' }, titleEl, savedEl),
+      h('div', { class: 'tower-form-row' }, threadWrap, newBtn));
+    const scroller = h('div', { class: 'tower-chat-scroll' },
+      h('div', { class: 'tower-chat-col' }, log, errSlot));
+    const mainc = h('section', { class: 'tower-cockpit-main' }, head, scroller,
+      h('div', { class: 'tower-chat-dock' }, h('div', { class: 'tower-chat-col' }, composer)));
+
+    // ---- inspector ----
     const inspStats = h('div', { class: 'tower-stat-grid' }, skeleton(2));
     const inspSpans = h('div', null, skeleton(2));
     const inspRuns = h('div', null, skeleton(2));
-    const insp = h('section', { class: 'tower-panel tower-insp' },
-      h('div', { class: 'tower-panel-head' },
-        h('div', null, h('h3', null, 'Inspector'), h('div', { class: 'tower-panel-sub' }, 'Every run in this thread'))),
+    const inspSub = h('div', { class: 'tower-panel-sub' }, 'Every calculation in this thread');
+    const runsLabel = h('div', { class: 'tower-insp-label' }, 'Runs');
+    const insp = h('aside', { class: 'tower-insp' },
+      h('div', { class: 'tower-insp-head' }, h('h3', null, 'Inspector'), inspSub),
       inspStats,
-      h('div', { class: 'tower-insp-label' }, 'Time by span'),
+      h('div', { class: 'tower-insp-label' }, 'Time by span (all runs)'),
       inspSpans,
-      h('div', { class: 'tower-insp-label' }, 'Runs'),
+      runsLabel,
       inspRuns,
       h('details', { class: 'tower-insp-more' }, h('summary', null, 'Live spans'),
         h('div', null,
           h('div', { class: 'tower-mono tower-muted', style: 'margin-bottom:8px;display:flex;gap:8px;align-items:center' }, dot, label),
           listBody)));
 
-    const chat = panel('Conversation', sub,
-      h('div', { class: 'tower-chat' }, log, errSlot,
-        h('div', { class: 'tower-chat-composer' }, ta,
-          h('div', { class: 'tower-chat-actions' }, hint,
-            h('div', { class: 'tower-form-row' }, wfBtn, sendBtn)))),
-      h('div', { class: 'tower-form-row' }, threadWrap, newBtn));
-    chat.classList.add('tower-chat-panel');
-    content.replaceChildren(h('div', { class: 'tower-workbench' }, chat, insp));
+    content.replaceChildren(h('div', { class: 'tower-workbench tower-workbench-full' }, mainc, insp));
 
-    // ---- inspector: conversation totals, span time, and one card per run ----
+    // ---- formatting: one duration formatter everywhere ----
+    function dur(secs) {
+      const s = Number(secs) || 0;
+      if (s >= 1) return s.toFixed(2) + ' s';
+      const ms = Math.round(s * 1000);
+      if (ms >= 1000) return (ms / 1000).toFixed(2) + ' s';
+      if (ms >= 1) return ms + ' ms';
+      return '<1 ms';
+    }
+
     const coTraceCache = new Map();
     let inspSeq = 0;
+
+    function traceRows(id) {
+      const t = coTraceCache.get(id);
+      if (!t) return null;
+      return buildTimeline(t.spans || []).rows;
+    }
+    function runFor(id) {
+      const rows = traceRows(id);
+      if (!rows) return null;
+      const total = rows.reduce((a, r) => a + r.dur / 1000, 0);
+      const gen = rows.filter(r => r.span.name === 'model.generate').reduce((a, r) => a + r.dur / 1000, 0);
+      return { rows, total, gen, spans: (coTraceCache.get(id).spans || []).length };
+    }
+
     function stat(v, caption) {
       return h('div', { class: 'tower-stat' }, h('b', null, String(v)), h('small', null, caption));
     }
-    // A span without latency_s is a point in time, not a zero-duration operation:
-    // say "point" instead of inventing 0 ms.
     function spanRow(name, secs, max) {
-      const timed = secs > 0;
       return h('div', { class: 'tower-span-row' },
         h('span', null, name),
-        h('div', { class: 'tower-span-bar' }, h('i', { style: 'width:' + (timed ? Math.max(3, (secs / max) * 100) : 3) + '%' })),
-        h('span', { class: 'tower-mono' }, timed ? fmt.ms(secs) : 'point'));
+        h('div', { class: 'tower-span-bar' }, h('i', { style: 'width:' + Math.max(3, (secs / max) * 100) + '%' })),
+        h('span', { class: 'tower-mono' }, dur(secs)));
     }
+    function spanChip(id) {
+      const r = runFor(id);
+      return h('button', { class: 'tower-chip tower-chip-spans', type: 'button', 'data-spans': id },
+        r ? '\u25cf ' + r.spans + ' spans \u00b7 ' + dur(r.total) : '\u25cf spans \u00b7 \u2026');
+    }
+    function focusRun(id) {
+      const el = document.getElementById('run-' + id);
+      if (!el) return;
+      el.scrollIntoView({ block: 'nearest' });
+      // "latest" marks the newest run permanently; "flash" is the transient
+      // answer to a click, so the two never fight over the same border.
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 1400);
+    }
+    log.addEventListener('click', e => {
+      const b = e.target.closest('[data-spans]');
+      if (b) focusRun(b.dataset.spans);
+    });
+
+    function refreshFooters() {
+      log.querySelectorAll('[data-spans]').forEach(el => {
+        const r = runFor(el.dataset.spans);
+        if (r) el.textContent = '\u25cf ' + r.spans + ' spans \u00b7 ' + dur(r.total);
+      });
+    }
+
     async function renderInspector() {
       const me = ++inspSeq;
       const answers = coHist.map((m, i) => ({ m, i }))
         .filter(x => x.m.role === 'assistant' && x.m.trace_id);
-      const missing = answers.slice(-8).filter(x => !coTraceCache.has(x.m.trace_id));
+      const missing = answers.filter(x => !coTraceCache.has(x.m.trace_id));
       await Promise.all(missing.map(async x => {
         try { coTraceCache.set(x.m.trace_id, await api('/v1/traces/' + encodeURIComponent(x.m.trace_id))); }
         catch (e) { coTraceCache.set(x.m.trace_id, null); }
       }));
       if (me !== inspSeq || !insp.isConnected) return;
+      refreshFooters();
 
-      const agg = {};
-      const seen = answers.slice(-8);
-      seen.forEach(x => {
-        const t = coTraceCache.get(x.m.trace_id);
-        if (!t) return;
-        buildTimeline(t.spans || []).rows.forEach(r => {
-          const secs = r.dur / 1000;
-          agg[r.span.name] = (agg[r.span.name] || 0) + secs;
-        });
-      });
-      const all = Object.values(agg);
-      const total = all.reduce((a, b) => a + b, 0);
-      // p50 over spans that actually report a duration; points are not 0 ms.
-      const sorted = all.filter(v => v > 0).sort((a, b) => a - b);
-      const p50 = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.5))] : null;
-      const tokens = coHist.reduce((n, m) => n + (Number(m.tokens) || 0), 0);
+      const runs = answers.map(x => ({ x, r: runFor(x.m.trace_id) })).filter(o => o.r);
+      const totals = runs.map(o => o.r.total).sort((a, b) => a - b);
+      const sorted = totals.slice();
+      const median = sorted.length
+        ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2)
+        : null;
+      const compute = sorted.reduce((a, b) => a + b, 0);
+      const inTok = coHist.reduce((n, m) => n + (Number(m.prompt_tokens) || 0), 0);
+      const outTok = coHist.reduce((n, m) => n + (Number(m.completion_tokens) || 0), 0);
+      const genTime = runs.reduce((a, o) => a + o.r.gen, 0);
+      const tps = genTime > 0 ? outTok / genTime : null;
+      const tokValue = inTok + outTok;
+      const tokCaption = inTok > 0 ? inTok + ' in \u00b7 ' + outTok + ' out' : 'output tokens';
 
       inspStats.replaceChildren(
         stat(coHist.length, 'messages'),
-        stat(tokens ? tokens.toLocaleString() : '-', 'tokens this session'),
-        stat(answers.length, 'runs with a trace'),
-        stat(total ? fmt.ms(total) : '-', 'compute measured'),
-        stat(p50 != null ? fmt.ms(p50) : '-', 'p50 span'),
-        stat(answers.length ? String(Math.max(1, coHist.length - answers.length)) : '-', 'turns'));
+        stat(tokValue, tokCaption),
+        stat(runs.length ? dur(compute) : '\u2013', 'total compute'),
+        stat(median != null ? dur(median) : '\u2013', 'p50 latency'),
+        stat(tps != null ? tps.toFixed(1) : '\u2013', 'tokens / s'),
+        stat('\u2013', 'avg faithfulness'));
 
-      const max = Math.max(0.001, ...all);
-      inspSpans.replaceChildren(...(all.length
+      const agg = {};
+      runs.forEach(o => o.r.rows.forEach(row => {
+        const secs = row.dur / 1000;
+        agg[row.span.name] = (agg[row.span.name] || 0) + secs;
+      }));
+      const max = Math.max(0.001, ...Object.values(agg));
+      inspSpans.replaceChildren(...(Object.keys(agg).length
         ? Object.entries(agg).sort((a, b) => b[1] - a[1]).map(([n, s]) => spanRow(n, s, max))
         : [h('div', { class: 'tower-empty' }, 'No runs yet - send a message and its spans appear here.')]));
 
-      inspRuns.replaceChildren(...(answers.length
-        ? answers.slice().reverse().slice(0, 6).map((x, k) => {
-          const t = coTraceCache.get(x.m.trace_id);
-          const rows = t ? buildTimeline(t.spans || []).rows : [];
-          const rmax = Math.max(0.001, ...rows.map(r => r.dur / 1000));
-          const meta = [x.m.model, x.m.tokens ? x.m.tokens + ' tok' : '', x.m.reason].filter(Boolean).join(' - ');
-          const card = h('div', { class: 'tower-run-card' + (k === 0 ? ' latest' : '') },
-            h('div', { class: 'tower-run-head' }, h('span', { class: 'tower-mono' }, fmt.short(x.m.trace_id)),
-              h('span', { class: 'tower-mono tower-muted' }, fmt.time(x.m.at))),
-            h('div', { class: 'tower-panel-sub' }, meta || 'run'),
-            ...(rows.length
-              ? rows.map(r => spanRow(r.span.name, r.dur / 1000, rmax))
-              : [h('div', { class: 'tower-panel-sub' }, t ? 'No spans recorded' : 'Span detail unavailable')]));
+      runsLabel.textContent = 'Runs \u00b7 ' + runs.length;
+      inspRuns.replaceChildren(...(runs.length
+        ? runs.slice().reverse().map((o, k) => {
+          const r = o.r;
+          const rmax = Math.max(0.001, ...r.rows.map(x => x.dur / 1000));
+          const m = o.x.m;
+          const toks = Number(m.prompt_tokens) > 0
+            ? (m.prompt_tokens + '\u2192' + (Number(m.completion_tokens) || 0) + ' tok')
+            : ((Number(m.completion_tokens) || Number(m.tokens) || 0) + ' tok');
+          const meta = [m.model || '', toks].filter(Boolean).join(' \u00b7 ');
+          const card = h('div', { id: 'run-' + m.trace_id, class: 'tower-run-card' + (k === 0 ? ' latest' : '') },
+            h('div', { class: 'tower-run-head' },
+              h('span', { class: 'tower-mono tower-run-id' }, fmt.short(m.trace_id)),
+              h('span', { class: 'tower-mono tower-muted' }, fmt.time(m.at))),
+            h('div', { class: 'tower-run-meta' }, meta),
+            ...r.rows.map(row => spanRow(row.span.name, row.dur / 1000, rmax)));
           card.addEventListener('click', () => {
-            const el = document.getElementById('co-m' + x.i);
+            const el = document.getElementById('co-m' + o.x.i);
             if (!el) return;
             el.scrollIntoView({ block: 'center' });
             el.classList.add('latest');
-            setTimeout(() => el.classList.remove('latest'), 1200);
+            setTimeout(() => el.classList.remove('latest'), 1400);
           });
           return card;
         })
         : [h('div', { class: 'tower-empty' }, 'Nothing measured yet.')]));
     }
 
-    threadsBtn.addEventListener('click', e => { e.stopPropagation(); pop.classList.toggle('open'); });
-    const closePop = e => {
-      if (!threadWrap.isConnected) { document.removeEventListener('click', closePop); return; }
-      if (!threadWrap.contains(e.target)) pop.classList.remove('open');
-    };
-    document.addEventListener('click', closePop);
-    pop.addEventListener('keydown', e => { if (e.key === 'Escape') pop.classList.remove('open'); });
-
     function autosize() {
       ta.style.height = 'auto';
-      ta.style.height = Math.min(160, Math.max(46, ta.scrollHeight)) + 'px';
+      ta.style.height = Math.min(180, Math.max(46, ta.scrollHeight)) + 'px';
+    }
+    function syncComposer() {
+      const v = ta.value;
+      tokensHint.textContent = '~' + (v.trim() ? Math.max(1, Math.ceil(v.length / 4)) : 0) + ' tokens';
+      sendBtn.disabled = coPromise || !v.trim();
+      wfBtn.disabled = coPromise || !coLastInput;
     }
     function emptyState() {
       const prompts = [
@@ -1130,54 +1199,49 @@
         h('div', { class: 'tower-chat-empty-title' }, 'What are we working on?'),
         h('div', { class: 'tower-panel-sub' }, 'Everything you run here is measured in the inspector on the right. History is resent each turn; prompts are never stored.'),
         h('div', { class: 'tower-chat-suggest' }, prompts.map(p => {
-          const b = h('button', { class: 'tower-chip tower-chip-btn' }, p);
-          b.addEventListener('click', () => { ta.value = p; autosize(); ta.focus(); });
+          const b = h('button', { class: 'tower-chip tower-chip-btn', type: 'button' }, p);
+          b.addEventListener('click', () => { ta.value = p; autosize(); syncComposer(); ta.focus(); });
           return b;
         })));
     }
-    function meta(m) {
+    function msgEl(m, i) {
+      if (m.role === 'user') {
+        return h('div', { id: 'co-m' + i, class: 'tower-chat-msg user', title: m.at ? fmt.date(m.at) : '' }, m.content);
+      }
       const bits = [];
       if (m.model) bits.push(chip(m.model));
       if (m.backend) bits.push(chip(m.backend));
-      if (m.reason) bits.push(chip(m.reason));
-      if (m.tokens) bits.push(h('span', null, m.tokens + ' tok'));
+      const t = Number(m.tokens) || ((Number(m.prompt_tokens) || 0) + (Number(m.completion_tokens) || 0));
+      if (t) bits.push(h('span', { class: 'tower-chat-tok' }, t + ' tok'));
+      if (m.trace_id) bits.push(spanChip(m.trace_id));
       if (m.trace_id) bits.push(h('a', { class: 'tower-link tower-mono', href: '#/traces/' + m.trace_id }, fmt.short(m.trace_id)));
-      return bits.length ? h('div', { class: 'tower-chat-meta' }, ...bits) : null;
-    }
-    function msgEl(m, i, last) {
-      const mine = m.role === 'user';
-      return h('div', { id: 'co-m' + i, class: 'tower-chat-msg ' + (mine ? 'user' : 'assistant') + (last && !mine ? ' latest' : '') },
-        h('div', { class: 'tower-chat-role' }, h('span', null, mine ? 'you' : 'assistant'),
-          m.at ? h('span', null, fmt.time(m.at)) : null),
+      return h('div', { id: 'co-m' + i, class: 'tower-chat-msg assistant' },
         h('div', { class: 'tower-chat-body' }, m.content),
-        meta(m));
+        bits.length ? h('div', { class: 'tower-chat-meta' }, ...bits) : null);
     }
     function pendingEl() {
       return h('div', { class: 'tower-chat-msg assistant pending' },
-        h('div', { class: 'tower-chat-role' }, dot, h('span', null, 'thinking')),
-        h('div', { class: 'tower-chat-body' }, 'Waiting for the model — the first answer loads it into VRAM.'));
+        h('span', { class: 'tower-typing' }, h('i'), h('i'), h('i')));
     }
     function renderChat() {
-      const nodes = coHist.length ? coHist.map((m, i) => msgEl(m, i, i === coHist.length - 1)) : [emptyState()];
+      const t = coConvTitle || (coHist.find(m => m.role === 'user') || {}).content || 'New thread';
+      titleEl.textContent = t;
+      titleEl.title = t;
+      savedEl.textContent = coConvId ? 'saved' : 'not saved yet';
+      inspSub.textContent = 'Every calculation in \u201c' + t + '\u201d';
+
+      const nodes = coHist.length ? coHist.map((m, i) => msgEl(m, i)) : [emptyState()];
       if (coPromise) nodes.push(pendingEl());
       if (coWorkflow) nodes.push(h('div', { class: 'tower-chat-msg assistant' },
-        h('div', { class: 'tower-chat-role' }, h('span', null, 'workflow')),
-        h('div', { class: 'tower-chat-body' }, 'Started on the same input — it runs as a durable ticket.'),
+        h('div', { class: 'tower-chat-body' }, 'Started on the same input - it runs as a durable ticket.'),
         h('div', { class: 'tower-chat-meta' }, chip('workflow'),
           h('a', { class: 'tower-link tower-mono', href: '#/traces/' + coWorkflow }, coWorkflow))));
       log.replaceChildren(...nodes);
-      log.scrollTop = log.scrollHeight;
-      const n = coHistTokens(coHist);
-      hint.textContent = coHist.length
-        ? coHist.length + ' msgs · ~' + n + ' tokens' + (coDropped ? ' · ' + coDropped + ' dropped' : '')
-        : 'Enter sends · Shift+Enter newline';
-      sub.textContent = (coConvId ? (coConvTitle || 'thread') + ' · saved' : 'new conversation · not saved yet');
+      scroller.scrollTop = scroller.scrollHeight;
+      syncComposer();
       renderInspector();
     }
-    function setBusy(busy) {
-      sendBtn.disabled = busy; wfBtn.disabled = busy; ta.disabled = busy;
-      sendBtn.textContent = busy ? 'Sending…' : 'Send';
-    }
+
     async function send() {
       const text = ta.value.trim();
       if (!text || coPromise) return;
@@ -1188,19 +1252,21 @@
       coDropped = 0;
       while (wire.length > 1 && coHistTokens(wire) > coHistBudget) { wire.shift(); coDropped++; }
       coLastInput = text; coPromise = true;
-      setBusy(true); renderChat();
+      syncComposer(); renderChat();
       const ctl = new AbortController();
       let convId = coConvId;
       if (!convId) {
-        // Storage is best-effort: a thread that cannot be stored still chats.
         try { convId = (await api('/v1/conversations', { method: 'POST', body: JSON.stringify({ model: '' }) }, ctl.signal)).id; }
         catch (e) { convId = null; }
       }
       try {
         const r = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: wire }) }, ctl.signal);
+        const pt = r.usage ? r.usage.prompt_tokens : 0;
+        const ct = r.usage ? r.usage.completion_tokens : 0;
         coHist.push({
           role: 'assistant', content: r.text, model: r.model, backend: r.backend, reason: r.reason,
-          trace_id: r.trace_id, tokens: r.usage ? r.usage.total_tokens : 0, at: new Date().toISOString(),
+          trace_id: r.trace_id, tokens: (r.usage ? r.usage.total_tokens : 0),
+          prompt_tokens: pt, completion_tokens: ct, at: new Date().toISOString(),
         });
         coPin = r.trace_id;
         if (convId) {
@@ -1209,21 +1275,18 @@
           recordTurn(convId, { role: 'user', content: text, trace_id: r.trace_id }).then(() =>
             recordTurn(convId, {
               role: 'assistant', content: r.text, model: r.model, trace_id: r.trace_id,
-              prompt_tokens: r.usage ? r.usage.prompt_tokens : 0,
-              completion_tokens: r.usage ? r.usage.completion_tokens : 0,
+              prompt_tokens: pt, completion_tokens: ct,
             }).then(() => { if (convList.isConnected) loadConvs(); }));
         }
       } catch (e) {
         if (e.name !== 'AbortError') {
-          // Give the message back: a failed send must not vanish, and the retry
-          // must not duplicate it in the transcript.
           if (coHist[coHist.length - 1] === mine) coHist.pop();
           ta.value = text; autosize();
           errSlot.replaceChildren(errorBox('Send failed: ' + e.message, send));
         }
       } finally {
         coPromise = false;
-        if (log.isConnected) { setBusy(false); renderChat(); }
+        if (log.isConnected) { renderChat(); }
       }
     }
     async function runWorkflow() {
@@ -1237,7 +1300,6 @@
       if (wfBtn.isConnected) wfBtn.disabled = false;
     }
     async function recordTurn(convId, m) {
-      // No page signal: storing must survive navigation, like the send itself.
       try { await api('/v1/conversations/' + convId + '/messages', { method: 'POST', body: JSON.stringify(m) }); }
       catch (e) { toast('Thread not stored: ' + e.message, true); }
     }
@@ -1247,14 +1309,14 @@
       catch (e) { convList.replaceChildren(errorBox('Threads unavailable: ' + e.message, loadConvs)); return; }
       const convs = data.conversations || [];
       convList.replaceChildren(...(convs.length ? convs.map(c => {
-        const del = h('span', { class: 'tower-conv-del', title: 'delete thread' }, '×');
+        const del = h('button', { class: 'tower-conv-del', type: 'button', title: 'delete thread', 'aria-label': 'Delete thread' }, '\u00d7');
         del.addEventListener('click', ev => { ev.stopPropagation(); deleteConv(c.id); });
         const el = h('div', { class: 'tower-conv-item' + (c.id === coConvId ? ' active' : '') },
           h('div', { class: 'tower-conv-title' }, c.title || '(untitled)'),
           h('div', { class: 'tower-conv-meta' }, chip(c.messages + ' msgs'), h('span', null, fmt.date(c.updated_at)), del));
         el.addEventListener('click', () => openConv(c.id, c.title));
         return el;
-      }) : [h('div', { class: 'tower-empty' }, 'No threads yet — send one.')]));
+      }) : [h('div', { class: 'tower-empty' }, 'No threads yet - send one.')]));
     }
     async function openConv(id, title) {
       if (coPromise) return;
@@ -1266,19 +1328,29 @@
       const msgs = data.messages || [];
       coHist = msgs.map(m => ({
         role: m.role, content: m.content, model: m.model, trace_id: m.trace_id,
-        tokens: (m.prompt_tokens || 0) + (m.completion_tokens || 0), at: m.created_at,
+        tokens: (m.prompt_tokens || 0) + (m.completion_tokens || 0),
+        prompt_tokens: m.prompt_tokens || 0, completion_tokens: m.completion_tokens || 0,
+        at: m.created_at,
       }));
       const users = coHist.filter(m => m.role === 'user');
       coLastInput = users.length ? users[users.length - 1].content : '';
       const traces = msgs.map(m => m.trace_id).filter(t => t);
       coPin = traces.length ? traces[traces.length - 1] : null;
-      errSlot.replaceChildren(); setBusy(false); renderChat(); loadConvs(); ta.focus();
+      errSlot.replaceChildren(); syncComposer(); renderChat(); loadConvs(); ta.focus();
     }
-    function newThread() {
+    async function newThread() {
       if (coPromise) return;
+      // Already on an empty new thread: do not create a second empty row.
+      if (coConvId && !coHist.length) { pop.classList.remove('open'); ta.focus(); return; }
       coConvId = null; coConvTitle = ''; coHist = []; coDropped = 0; coPin = null; coLastInput = ''; coWorkflow = null;
       pop.classList.remove('open');
-      errSlot.replaceChildren(); setBusy(false); renderChat(); loadConvs(); ta.focus();
+      errSlot.replaceChildren(); syncComposer(); renderChat(); loadConvs(); ta.focus();
+      // Threads live server-side, so a new one is persisted now: it must appear in
+      // the Threads list and the previous one must keep its runs (audit checklist).
+      try {
+        const c = await api('/v1/conversations', { method: 'POST', body: JSON.stringify({ model: '' }) });
+        if (!coConvId && !coHist.length && log.isConnected) { coConvId = c.id; renderChat(); loadConvs(); }
+      } catch (e) { /* drafting still works without storage */ }
     }
     async function deleteConv(id) {
       try { await api('/v1/conversations/' + id, { method: 'DELETE' }); }
@@ -1287,15 +1359,24 @@
       if (id === coConvId) newThread();
       else loadConvs();
     }
-    ta.addEventListener('input', autosize);
+    ta.addEventListener('input', () => { autosize(); syncComposer(); });
     ta.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     });
     sendBtn.addEventListener('click', send);
     wfBtn.addEventListener('click', runWorkflow);
     newBtn.addEventListener('click', newThread);
+    popNew.addEventListener('click', newThread);
+    threadsBtn.addEventListener('click', e => { e.stopPropagation(); pop.classList.toggle('open'); });
+    const closePop = e => {
+      if (!threadWrap.isConnected) { document.removeEventListener('click', closePop); return; }
+      if (!threadWrap.contains(e.target)) pop.classList.remove('open');
+    };
+    document.addEventListener('click', closePop);
+    pop.addEventListener('keydown', e => { if (e.key === 'Escape') pop.classList.remove('open'); });
+
     const feed = () => { railCleanup = mountRail(listBody,
-      (nt, ns) => { label.textContent = nt + ' traces · ' + ns + ' spans on rail'; },
+      (nt, ns) => { label.textContent = nt + ' traces \u00b7 ' + ns + ' spans'; },
       () => coPin,
       msg => listBody.replaceChildren(errorBox(msg, feed))); };
     feed();
@@ -1306,6 +1387,9 @@
   // ---------- router ----------
   const pages = { overview: pageOverview, traces: pageTraces, evals: pageEvals, benchmarks: pageBenchmarks, workflows: pageWorkflows, cockpit: pageCockpit, gpu: pageGPU, metrics: pageMetrics, models: pageModels };
   function route() {
+    content.classList.remove('is-cockpit');
+    const mainEl = document.querySelector('.tower-main');
+    if (mainEl) mainEl.classList.remove('is-cockpit');
     if (railCleanup) { railCleanup(); railCleanup = null; }
     if (pageCtl) pageCtl.abort();
     clearTimeout(pollTimer);

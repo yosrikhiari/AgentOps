@@ -18,6 +18,7 @@
        critical pill. */
     --tower-red:#F07A88;
     --tower-red-dim:#3A2229;
+    --tower-user:#2B2825;
     --tower-font-display:'Space Grotesk', sans-serif;
     --tower-font-serif:ui-serif, Georgia, 'Times New Roman', serif;
     --tower-font-body:'Inter', -apple-system, sans-serif;
@@ -49,11 +50,11 @@
   *::-webkit-scrollbar-thumb{ background:var(--tower-border); border-radius:8px; border:2px solid var(--tower-surface); }
   *::-webkit-scrollbar-thumb:hover{ background:var(--tower-ink-faint); }
   /* Workbench shell: a slim rail with icon + visible label, not a 216px sidebar. */
-  .tower-shell{ display:grid; grid-template-columns:72px 1fr; min-height:100vh; }
+  .tower-shell{ display:grid; grid-template-columns:56px 1fr; min-height:100vh; }
   .tower-side{
     position:sticky; top:0; height:100vh; overflow:auto;
     background:var(--tower-surface); border-right:1px solid var(--tower-border-soft);
-    display:flex; flex-direction:column; align-items:stretch; padding:14px 8px; gap:4px;
+    display:flex; flex-direction:column; align-items:center; padding:12px 6px; gap:4px;
   }
   .tower-brand{ display:flex; justify-content:center; padding:0 0 14px; }
   .tower-rail-mark{
@@ -68,18 +69,21 @@
      name underneath its icon (never display:none — see audit U3). */
   .tower-nav-label{ display:none; }
   .tower-nav-btn{
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
-    width:100%; text-align:center;
-    padding:7px 3px; border-radius:8px; border:none; background:transparent;
-    color:var(--tower-ink-muted); font:500 9.5px/1.15 var(--tower-font-body); letter-spacing:.01em;
-    cursor:pointer; text-decoration:none;
+    display:flex; align-items:center; justify-content:center;
+    width:40px; height:40px; padding:0; border-radius:10px; border:none; background:transparent;
+    color:var(--tower-ink-muted); cursor:pointer; text-decoration:none;
     transition:background .12s ease, color .12s ease;
   }
   .tower-nav-btn:hover{ background:var(--tower-surface-raised); color:var(--tower-ink); }
   .tower-nav-btn[data-active="true"]{ background:var(--tower-amber-dim); color:var(--tower-amber); }
-  .tower-nav-btn svg{ width:18px; height:18px; flex:none; }
-  .tower-nav-btn span{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tower-side-foot{ margin-top:auto; padding:10px 2px 4px; border-top:1px solid var(--tower-border-soft); display:flex; flex-direction:column; align-items:center; gap:4px; font-size:9.5px; text-align:center; }
+  .tower-nav-btn svg{ width:19px; height:19px; flex:none; }
+  /* Icon rail: the name stays in the accessibility tree and in the tooltip. */
+  .tower-nav-btn span{
+    position:absolute; width:1px; height:1px; overflow:hidden;
+    clip-path:inset(50%); white-space:nowrap;
+  }
+  .tower-side-foot{ margin-top:auto; padding:10px 0 2px; border-top:1px solid var(--tower-border-soft); display:flex; justify-content:center; }
+  .tower-side-foot span:not(.tower-pulse-dot), .tower-side-foot #side-version{ display:none; }
 
   .tower-main{ display:flex; flex-direction:column; min-width:0; }
 
@@ -235,7 +239,8 @@
     .tower-side-foot{ display:none; }
     .tower-workbench{ grid-template-columns:1fr; }
     .tower-insp{ display:none; }
-    .tower-chat-panel{ height:auto; min-height:calc(100vh - 150px); }
+    .tower-chat-head{ padding:12px 14px 8px; }
+    .tower-chat-title{ max-width:55vw; }
     .tower-content{ padding:18px 14px 40px; }
   }
 
@@ -344,17 +349,71 @@
   .tower-conv-item.active{ box-shadow:inset 2px 0 0 var(--tower-amber); }
 
   /* ===== Workbench (Cockpit) =====
-     Conversation column on the left, inspector on the right. Threads live in a
-     popover so the reading column stays the widest thing on screen. */
-  .tower-workbench{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:18px; align-items:start; }
-  .tower-thread-wrap{ position:relative; display:inline-block; }
-  .tower-thread-pop{
-    position:absolute; right:0; top:calc(100% + 6px); width:320px; max-height:60vh; overflow:auto;
-    background:var(--tower-surface-raised); border:1px solid var(--tower-border);
-    border-radius:var(--tower-radius-md); padding:8px; z-index:8; display:none;
-    box-shadow:0 12px 30px rgba(0,0,0,.35);
+     Full-height page: rail | conversation | inspector. Only the message list and
+     the inspector scroll; the composer never leaves the screen. */
+  .tower-main.is-cockpit{ height:100vh; overflow:hidden; }
+  .tower-content.is-cockpit{ flex:1; min-height:0; max-width:none; padding:0; overflow:hidden; }
+  .tower-workbench{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:0; height:100%; }
+  .tower-workbench-full{ height:100%; }
+  .tower-cockpit-main{ display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .tower-chat-head{ display:flex; align-items:center; gap:12px; padding:14px 20px 10px; }
+  .tower-chat-heading{ display:flex; align-items:baseline; gap:10px; min-width:0; flex:1; }
+  .tower-chat-title{
+    font-family:var(--tower-font-serif); font-weight:500; font-size:17px; margin:0;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40vw;
   }
-  .tower-thread-pop.open{ display:block; }
+  .tower-chat-saved{ font-size:12px; color:var(--tower-ink-faint); white-space:nowrap; }
+  .tower-chat-scroll{ flex:1; min-height:0; overflow:auto; }
+  .tower-chat-col{ width:100%; max-width:740px; margin:0 auto; padding:0 20px; }
+  .tower-chat-dock{ padding:10px 0 16px; }
+  .tower-chat-log{ max-height:none; }
+
+  /* Messages: user = warm bubble with only text; assistant = plain prose. */
+  .tower-chat-msg{ max-width:100%; }
+  .tower-chat-msg.user{
+    align-self:flex-end; max-width:80%; background:var(--tower-user);
+    border:0; border-radius:18px 18px 4px 18px; padding:9px 16px; white-space:pre-wrap;
+  }
+  .tower-chat-msg.assistant{ align-self:stretch; background:transparent; border:0; padding:0; }
+  .tower-chat-msg.assistant.latest{ background:var(--tower-amber-dim); border-radius:8px; }
+  .tower-chat-body{ font-size:16px; line-height:1.7; white-space:pre-wrap; }
+  .tower-chat-meta{ opacity:.75; transition:opacity .15s ease; }
+  .tower-chat-msg:hover .tower-chat-meta{ opacity:1; }
+  .tower-chat-tok{ font-size:11px; color:var(--tower-ink-muted); }
+  .tower-chip-spans{ color:var(--tower-green); border-color:var(--tower-green-dim); }
+  .tower-chip-spans:hover{ border-color:var(--tower-green); }
+
+  /* Composer: one rounded control, docked; round amber send. */
+  .tower-chat-composer{
+    border:1px solid var(--tower-border); border-radius:20px; padding:12px 14px 10px;
+    background:var(--tower-surface);
+  }
+  .tower-chat-composer:focus-within{ border-color:var(--tower-amber); }
+  .tower-chat-input{ border:0; background:transparent; padding:2px 0; min-height:44px; }
+  .tower-chat-input:focus{ border:0; }
+  .tower-chat-actions{ display:flex; align-items:center; gap:10px; }
+  .tower-spacer{ flex:1; }
+  .tower-chat-tokens{ font-size:12px; color:var(--tower-ink-faint); }
+  .tower-send{
+    width:34px; height:34px; border-radius:50%; border:0; background:var(--tower-amber);
+    color:var(--tower-ground); font-size:17px; font-weight:700; display:grid; place-items:center; cursor:pointer;
+  }
+  .tower-send:disabled{ opacity:.4; cursor:default; }
+  .tower-btn-amber{ border-color:var(--tower-amber); color:var(--tower-amber); }
+  .tower-typing{ display:inline-flex; gap:4px; padding:6px 0; }
+  .tower-typing i{ width:6px; height:6px; border-radius:50%; background:var(--tower-ink-muted); animation:tower-blink 1s infinite; }
+  .tower-typing i:nth-child(2){ animation-delay:.15s; }
+  .tower-typing i:nth-child(3){ animation-delay:.3s; }
+  @keyframes tower-blink{ 0%,80%,100%{opacity:.25} 40%{opacity:1} }
+
+  /* Inspector: docked panel, flush right, its own scroll. */
+  .tower-insp{
+    border-left:1px solid var(--tower-border); background:var(--tower-surface);
+    height:100%; min-height:0; overflow:auto; padding:16px;
+  }
+  .tower-insp .tower-empty{ padding:14px 6px; }
+  .tower-insp-head{ margin-bottom:12px; }
+  .tower-insp-head h3{ margin:0; font-size:14px; }
   .tower-stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .tower-stat{ border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-sm); padding:8px 10px; background:var(--tower-ground); }
   .tower-stat b{ display:block; font-family:var(--tower-font-mono); font-weight:600; font-size:16px; color:var(--tower-ink); }
@@ -366,32 +425,29 @@
   .tower-run-card{ border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-md); padding:9px 11px; margin:7px 0; background:var(--tower-ground); cursor:pointer; }
   .tower-run-card:hover{ border-color:var(--tower-border); }
   .tower-run-card.latest{ border-color:var(--tower-amber); }
+  .tower-run-card.flash{ box-shadow:0 0 0 2px var(--tower-amber-dim), 0 0 0 1px var(--tower-amber); }
   .tower-run-head{ display:flex; justify-content:space-between; align-items:center; font-family:var(--tower-font-mono); font-size:11px; }
-  .tower-insp .tower-chat-log{ max-height:none; }
-  /* The conversation is the page, not a card: no panel chrome, and a reading
-     column instead of full-bleed text. */
-  .tower-chat-panel{ background:transparent; border:0; padding:0; display:flex; flex-direction:column; height:calc(100vh - 150px); }
-  .tower-chat-panel .tower-panel-head{ padding:0 4px; max-width:780px; margin:0 auto 10px; width:100%; }
-  .tower-chat-panel .tower-chat{ max-width:780px; margin:0 auto; width:100%; flex:1; display:flex; flex-direction:column; }
-  .tower-chat-panel .tower-chat-log{ flex:1; max-height:none; }
-  .tower-chat-panel .tower-chat-msg{ max-width:82%; }
-  .tower-chat-panel .tower-chat-msg.user{ border:0; border-radius:16px 16px 4px 16px; padding:9px 15px; }
-  .tower-chat-panel .tower-chat-msg.assistant{ max-width:100%; }
-  .tower-chat-panel .tower-chat-body{ font-size:15px; line-height:1.65; }
-  .tower-chat-panel .tower-chat-composer{ border:1px solid var(--tower-border); border-radius:16px; padding:12px 14px 10px; background:var(--tower-surface); }
-  .tower-chat-panel .tower-chat-composer:focus-within{ border-color:var(--tower-amber); }
-  .tower-chat-panel .tower-chat-input{ border:0; background:transparent; padding:2px 0; min-height:44px; }
-  .tower-chat-panel .tower-chat-input:focus{ border:0; }
-  .tower-chat-panel .tower-chat-msg.assistant{ background:transparent; border:0; padding-left:0; padding-right:0; }
-  .tower-chat-panel .tower-chat-msg.latest{ border:0; }
-  .tower-chat-empty{ max-width:600px; margin:0 auto; }
-  .tower-chat-empty .tower-panel-sub{ margin-top:2px; }
-  .tower-insp .tower-empty{ padding:14px 6px; }
+  .tower-run-id{ color:var(--tower-amber); }
+  .tower-run-meta{ font-size:11.5px; color:var(--tower-ink-muted); margin:2px 0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tower-insp-more{ margin-top:14px; }
   .tower-insp-more summary{
     cursor:pointer; font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
     color:var(--tower-ink-faint); margin-bottom:8px;
   }
+
+  .tower-thread-wrap{ position:relative; display:inline-block; }
+  .tower-thread-pop{
+    position:absolute; right:0; top:calc(100% + 6px); width:320px; max-height:60vh; overflow:auto;
+    background:var(--tower-surface-raised); border:1px solid var(--tower-border);
+    border-radius:var(--tower-radius-md); padding:8px; z-index:8; display:none;
+    box-shadow:0 12px 30px rgba(0,0,0,.35);
+  }
+  .tower-thread-pop.open{ display:block; }
+  .tower-thread-pop .tower-btn{ width:100%; justify-content:center; margin-bottom:6px; }
+  .tower-conv-del{ background:none; border:0; padding:0; line-height:1; font-size:13px; color:var(--tower-ink-faint); cursor:pointer; }
+  .tower-conv-del:hover{ color:var(--tower-red); }
+  .tower-chat-empty{ max-width:600px; margin:0 auto; }
+  .tower-chat-empty .tower-panel-sub{ margin-top:2px; }
 
   /* ===== Polish ===== */
   .tower-panel{ transition:border-color .12s ease; }

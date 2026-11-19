@@ -158,9 +158,9 @@
         </div>
         <table class="ds-spec">
           <tr><th>class</th><th>role</th><th>notes</th></tr>
-          <tr><td>.tower-shell</td><td>grid 72px 1fr, min-height 100vh</td><td>64px 1fr under 900 px; the rail never disappears</td></tr>
+          <tr><td>.tower-shell</td><td>grid 56px 1fr, min-height 100vh</td><td>64px 1fr under 900 px; the rail never disappears</td></tr>
           <tr><td>.tower-side</td><td>sticky rail (72 px), own scroll</td><td>brand → nav-label groups → nav-btn → side-foot (margin-top:auto)</td></tr>
-          <tr><td>.tower-nav-btn</td><td>column button: 18 px icon over a 9.5 px visible label</td><td><span class="tower-mono">data-active="true"</span> = amber-dim / amber. External links use target=_blank rel=noopener</td></tr>
+          <tr><td>.tower-nav-btn</td><td>40 px square icon button; the name is visually hidden but present for assistive tech and in the tooltip</td><td><span class="tower-mono">data-active="true"</span> = amber-dim / amber. External links use target=_blank rel=noopener</td></tr>
           <tr><td>.tower-nav-label</td><td>hidden in the rail (display:none); destinations carry visible labels instead</td><td>Operate · Quality · Links</td></tr>
           <tr><td>.tower-side-foot</td><td>router pulse + version, centred; hidden under 900 px</td><td>mirrors the strip so the state survives collapse</td></tr>
           <tr><td>.tower-statusstrip</td><td>sticky header, 92 % ground + blur(6px)</td><td>h1 = page title (set by the router), then pulse items: models · faithfulness · p50 · router live/down</td></tr>
@@ -415,9 +415,9 @@
           <tr><th>page</th><th>built from</th><th>used in</th></tr>
           <tr><td>#/cockpit</td><td>panel + tower-chat (log, message blocks, composer) + tower-grid-cockpit shell with tower-conv sidebar + shared rail (tower-ticket pinned tower-live-yours)</td><td>pageCockpit() in console/static/app.js; client-held messages[] capped at 4000 est. tokens (counts in tower-chat-hint); threads via GET/POST /v1/conversations (+messages, DELETE) with auto-title from the first user message; own trace pinned via mountRail pin hook; Run-as-workflow posts to POST /v1/workflows</td></tr>
           <tr><td>tower-chat-msg</td><td>user = right-aligned on surface-raised; assistant = left on ground; latest = amber border; pending = dashed with the live dot and the model-loading sentence</td><td>pageCockpit() · every turn</td></tr>
-          <tr><td>tower-chat-input</td><td>grows to 160 px, Enter sends, Shift+Enter newlines; disabled while a send is in flight; counts sit left of the buttons</td><td>pageCockpit() · composer</td></tr>
+          <tr><td>tower-chat-input</td><td>grows to 180 px, Enter sends, Shift+Enter newlines; round amber send disabled while empty or in flight; ~N tokens sits left of it</td><td>pageCockpit() · composer</td></tr>
 <tr><td>.tower-workbench</td><td>grid minmax(0,1fr) 340px; one column under 900 px, inspector hidden</td><td>pageCockpit() — the page shell</td></tr>
-<tr><td>.tower-insp / .tower-stat-grid / .tower-span-row / .tower-run-card</td><td>inspector: 2-column stat tiles, span bars scaled to the largest span, run cards jump to their message</td><td>pageCockpit() — renderInspector(), built from GET /v1/traces/{id}</td></tr>
+<tr><td>.tower-insp / .tower-stat-grid / .tower-span-row / .tower-run-card</td><td>inspector flush right, full height, own scroll: 2-column stat tiles, span bars scaled to the largest span, run cards jump to their message</td><td>pageCockpit() — renderInspector(), built from GET /v1/traces/{id}</td></tr>
 <tr><td>.tower-thread-pop</td><td>absolute popover under the Threads button; closes on select, outside click or Escape</td><td>pageCockpit() — loadConvs()</td></tr>
         </table>
       </section>

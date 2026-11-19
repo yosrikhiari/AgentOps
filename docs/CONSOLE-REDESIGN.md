@@ -66,23 +66,32 @@ scrolls, ruler present, minimum bar 12.4 px, four charts, three range buttons, t
 1 h switch refetches, an error trace auto-expands with a red bar, zero console
 errors.
 
-## Wave 3 — Benchmarks and Workflows (queued)
+## Wave 3 — Benchmarks and Workflows (shipped in the working tree)
 
 Benchmarks:
 
-- [ ] Two side-by-side model cards with bars; better value amber; winner badge.
-- [ ] Verdict banner explaining “n < 100 → route on cost”.
-- [ ] Scenario cards as grouped bars; low-sample scenarios flagged.
-- [ ] Slower latency in red; model history collapsed at the bottom.
+- [x] Two side-by-side model cards with bars; the better faithfulness, latency and
+      token values are amber, the slowest latency is red, the winner carries a badge.
+- [x] The “tied” KPI became a verdict banner that says why (“n < 100 → route on
+      cost”) instead of leaving a conclusion in a metric tile.
+- [x] Scenario cards (one per routing reason) with absolute 0–1 bars; a scenario with
+      fewer than 10 pairs is labelled “too few” rather than given a winner.
+- [x] Model-run history collapsed at the bottom.
 
 Workflows:
 
-- [ ] Group repeated inputs under one row with a ×N chip.
-- [ ] Compact state stepper (colored by state) naming the failed step.
-- [ ] Status filter (All / Running / Failed / Done).
-- [ ] Drop the empty Trajectory column; fold “clean” into the stepper.
-- [ ] Resume only on failed rows, as the primary amber action; relative time with a
-      full-date tooltip.
+- [x] Repeated inputs collapse under one row with a `×N` chip that expands the
+      hidden runs (verified: 9 identical inputs → 3 visible rows, 11 after expand).
+- [x] Compact stepper: one dot per step, green done / amber running / red failed /
+      faint pending, with the attempts and retry count in the tooltip.
+- [x] Status filter (All / Running / Failed / Done).
+- [x] The empty Trajectory column is gone; “clean” is the stepper tooltip.
+- [x] Resume appears only on failed rows, as the primary amber action; timestamps are
+      relative with the full date in a tooltip.
+
+Verified in Chromium: verdict banner, 2 model cards + 3 scenario cards, 3 amber and
+1 red bar, history collapsed; 4 filters, a ×9 chip, 3 visible / 8 hidden rows, 2 rows
+under the Failed filter, 11 after expanding, no console errors.
 
 ## Wave 4 — Metrics and Models (shipped)
 

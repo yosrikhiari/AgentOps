@@ -315,6 +315,7 @@
     .tower-wf-row{ grid-template-columns:120px 1fr 60px; }
     .tower-wf-ruler{ margin:0 60px 3px 120px; }
     .tower-gpu-cols{ grid-template-columns:1fr; }
+    .tower-cmp{ grid-template-columns:1fr; }
   }
 
 
@@ -327,6 +328,26 @@
   .tower-seg button{ border:0; background:none; padding:4px 12px; font-size:12px; color:var(--tower-ink-muted); cursor:pointer; }
   .tower-seg button.on{ background:var(--tower-amber-dim); color:var(--tower-amber); }
   .tower-series{ width:100%; height:auto; display:block; }
+  /* Benchmarks: two cards side by side, bars for the trade-off. */
+  .tower-banner{ border:1px solid var(--tower-amber); background:var(--tower-amber-dim); color:var(--tower-amber); padding:10px 14px; border-radius:12px; font-size:13px; }
+  .tower-cmp{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .tower-cmp-card{ border:1px solid var(--tower-border-soft); border-radius:12px; padding:14px; background:var(--tower-ground); min-width:0; }
+  .tower-cmp-card.win{ border-color:var(--tower-amber); }
+  .tower-cmp-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .tower-cmp-row{ white-space:nowrap; display:grid; grid-template-columns:110px 1fr 110px; gap:10px; align-items:center; margin:7px 0; font-size:12.5px; color:var(--tower-ink-muted); }
+  .tower-cmp-track{ height:6px; background:var(--tower-border-soft); border-radius:4px; overflow:hidden; }
+  .tower-cmp-fill{ display:block; height:100%; border-radius:4px; background:var(--tower-ink-faint); }
+  .tower-cmp-fill.a{ background:var(--tower-amber); }
+  .tower-cmp-fill.r{ background:var(--tower-red); }
+  /* Workflows: one dot per step, coloured by state. */
+  .tower-step{ display:inline-flex; align-items:center; gap:4px; }
+  .tower-step-dot{ width:9px; height:9px; border-radius:50%; background:var(--tower-ink-faint); display:inline-block; }
+  .tower-step-dot.done{ background:var(--tower-green); }
+  .tower-step-dot.running{ background:var(--tower-amber); }
+  .tower-step-dot.failed{ background:var(--tower-red); }
+  .tower-step-dot.pending{ background:var(--tower-border); }
+  .tower-step-line{ width:10px; height:2px; background:var(--tower-border); }
+
   .tower-gpu-chart{ width:100%; height:auto; display:block; }
   .tower-gpu-line{ fill:none; stroke:var(--tower-amber); stroke-width:2; vector-effect:non-scaling-stroke; }
 
@@ -463,6 +484,37 @@
   }
   .tower-thread-pop.open{ display:block; }
   .tower-thread-pop .tower-btn{ width:100%; justify-content:center; margin-bottom:6px; }
+
+  /* ===== Chat popovers (why this model?, retry with) =====
+     Both are the same component: a chip-button that opens one panel at a time.
+     They sit inside the transcript, so they anchor above the footer and never
+     cover the composer. */
+  .tower-pop-anchor{ position:relative; display:inline-flex; }
+  .tower-pop{
+    display:none; position:absolute; left:0; bottom:calc(100% + 8px); z-index:9;
+    width:320px; max-width:76vw; padding:10px 12px; text-align:left;
+    background:var(--tower-surface-raised); border:1px solid var(--tower-border);
+    border-radius:var(--tower-radius-md); box-shadow:0 12px 30px var(--tower-ground);
+  }
+  .tower-pop.open{ display:block; }
+  .tower-why-head{ font-family:var(--tower-font-mono); font-size:10px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--tower-ink-faint); margin-bottom:6px; }
+  .tower-why-label{ font-family:var(--tower-font-mono); font-size:10px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--tower-ink-faint); margin:10px 0 4px; }
+  .tower-pop-list{ display:flex; flex-direction:column; gap:4px; }
+  .tower-pop-item{ display:flex; justify-content:space-between; gap:10px; font-size:11.5px;
+    color:var(--tower-ink-muted); }
+  .tower-pop-item span:first-child{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tower-pop-action{
+    display:block; width:100%; text-align:left; cursor:pointer; font:inherit; font-size:12.5px;
+    color:var(--tower-ink); background:var(--tower-ground); border:1px solid var(--tower-border-soft);
+    border-radius:var(--tower-radius-sm); padding:6px 9px;
+  }
+  .tower-pop-action:hover{ border-color:var(--tower-amber); color:var(--tower-amber); }
+  /* Model picker: the four tiers, as chips, above the input. */
+  .tower-model-pick{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .tower-model-pick-label{ font-family:var(--tower-font-mono); font-size:10px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--tower-ink-faint); margin-right:2px; }
   .tower-conv-del{ background:none; border:0; padding:0; line-height:1; font-size:13px; color:var(--tower-ink-faint); cursor:pointer; }
   .tower-conv-del:hover{ color:var(--tower-red); }
   .tower-chat-empty{ max-width:600px; margin:0 auto; }

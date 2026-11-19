@@ -713,6 +713,14 @@
     if (status.running) pollTimer = setTimeout(() => { if (location.hash.startsWith('#/evals')) pageEvals(signal); }, 5000);
   }
 
+  function cmpRow(label, pct, value, cls) {
+    return h('div', { class: 'tower-cmp-row' },
+      h('span', null, label),
+      h('div', { class: 'tower-cmp-track' },
+        h('i', { class: 'tower-cmp-fill ' + (cls || ''), style: 'width:' + Math.max(2, Math.min(100, pct)) + '%' })),
+      h('span', { class: 'tower-mono' }, value));
+  }
+
   async function pageBenchmarks(signal) {
     content.replaceChildren(skeleton(6));
     let data;
@@ -721,33 +729,52 @@
     const c = data.comparison || {};
     const verdict = c.verdict || {};
     const models = c.models || [], scenarios = c.scenarios || [], history = data.history || [];
-    const metrics = h('div', { class: 'tower-metric-row' },
-      metric('Verdict (' + (data.golden_version || '–') + ')', verdict.winner || 'tied', verdict.reason || c.note || ''),
-      metric('Judge', c.judge || '–', c.comparable ? 'same judge across compared runs' : 'not comparable'),
-      metric('Models compared', models.length, models.length ? models.map(m => m.model).join(' · ') : ''),
-      metric('Scenarios', scenarios.length, 'split by routing reason'));
-    const matrix = panel('Models — faithfulness, latency, tokens', 'Latest scored run per model; misses excluded from every average',
-      models.length ? h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null, ...['model', 'faith', 'scored', 'misses', 'p50 latency', 'tokens/answer'].map(t => h('th', null, t)))),
-        h('tbody', null, models.map(m => h('tr', null,
-          h('td', null, m.model === verdict.winner ? chip(m.model) : m.model),
-          h('td', { class: 'tower-mono' }, fmt.score(m.faithfulness)),
-          h('td', { class: 'tower-mono' }, m.scored),
-          h('td', { class: 'tower-mono' }, m.misses),
-          h('td', { class: 'tower-mono' }, fmt.ms(m.p50_latency_s)),
-          h('td', { class: 'tower-mono' }, Math.round(m.tokens_per_answer))))))
-        : h('div', { class: 'tower-empty' }, 'No scored model runs yet. Run one per model: go run . --score --score-model <name> (same golden version, same judge).'));
-    const scenPanels = scenarios.map(sc => {
-      const rows = sc.models.map(m => h('tr', null,
-        h('td', null, m.model === sc.winner ? chip(m.model) : m.model),
-        h('td', { class: 'tower-mono' }, fmt.score(m.faithfulness)),
-        h('td', { class: 'tower-mono' }, m.n)));
-      const tbl = h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null, ...['model', 'faith', 'n'].map(t => h('th', null, t)))),
-        h('tbody', null, rows));
-      return panel('Scenario: ' + sc.scenario, sc.winner ? 'winner ' + sc.winner + ' — ' + sc.reason : sc.reason, tbl);
-    });
-    const hist = panel('Model runs', 'Latest first; full history with golden-answer runs on the Evals page',
+
+    const metrics = h('div', { class: 'tower-metric-row cols-3' },
+      metric('Judge', c.judge || '—', c.comparable ? 'same judge across compared runs' : 'not comparable'),
+      metric('Models compared', String(models.length), models.length ? models.map(m => m.model).join(' · ') : ''),
+      metric('Scenarios', String(scenarios.length), 'split by routing reason'));
+
+    // A verdict is a conclusion with a reason, not a KPI: "tied" alone is not
+    // actionable. The banner says why and what to do (redesign guide).
+    const banner = h('div', { class: 'tower-banner' },
+      h('b', null, 'Verdict: ' + (verdict.winner || 'tied') + '. '),
+      verdict.reason || c.note || (c.comparable ? '' : 'The runs are not comparable: different judges.'));
+
+    const maxLat = Math.max(0.001, ...models.map(m => Number(m.p50_latency_s) || 0));
+    const maxTok = Math.max(1, ...models.map(m => Number(m.tokens_per_answer) || 0));
+    const bestFaith = Math.max(0, ...models.map(m => Number(m.faithfulness) || 0));
+    const bestLat = Math.min(...models.map(m => Number(m.p50_latency_s) || 0));
+    const bestTok = Math.min(...models.map(m => Number(m.tokens_per_answer) || 0));
+    const cards = models.length
+      ? h('div', { class: 'tower-cmp' }, models.map(m => {
+        const win = m.model === verdict.winner;
+        return h('div', { class: 'tower-cmp-card' + (win ? ' win' : '') },
+          h('div', { class: 'tower-cmp-head' }, h('b', null, m.model), win ? chip('winner') : null),
+          h('div', { class: 'tower-panel-sub' }, m.scored + ' scored · ' + m.misses + ' misses'),
+          cmpRow('faithfulness', (Number(m.faithfulness) || 0) * 100, fmt.score(m.faithfulness),
+            Number(m.faithfulness) === bestFaith && models.length > 1 ? 'a' : ''),
+          cmpRow('p50 latency', ((Number(m.p50_latency_s) || 0) / maxLat) * 100, fmt.ms(m.p50_latency_s),
+            models.length > 1 && Number(m.p50_latency_s) === maxLat ? 'r' : (models.length > 1 && Number(m.p50_latency_s) === bestLat ? 'a' : '')),
+          cmpRow('tokens / answer', ((Number(m.tokens_per_answer) || 0) / maxTok) * 100,
+            String(Math.round(Number(m.tokens_per_answer) || 0)), models.length > 1 && Number(m.tokens_per_answer) === bestTok ? 'a' : ''));
+      }))
+      : h('div', { class: 'tower-empty' }, 'No scored model runs yet. Run one per model: go run . --score --score-model <name> (same golden version, same judge).');
+
+    const scenCards = scenarios.length
+      ? h('div', { class: 'tower-cmp' }, scenarios.map(sc => {
+        const total = Math.max(0, ...sc.models.map(m => Number(m.n) || 0));
+        const tooFew = total < 10;
+        return h('div', { class: 'tower-cmp-card' },
+          h('div', { class: 'tower-cmp-head' }, h('b', null, sc.scenario),
+            tooFew ? pill('degraded', 'too few') : chip('n=' + total)),
+          h('div', { class: 'tower-panel-sub' }, tooFew ? 'n=' + total + ' is too few to decide' : (sc.winner ? 'winner ' + sc.winner : (sc.reason || 'no verdict'))),
+          ...sc.models.map(m => cmpRow(m.model, (Number(m.faithfulness) || 0) * 100,
+            fmt.score(m.faithfulness) + ' · n=' + m.n, m.model === sc.winner ? 'a' : '')));
+      }))
+      : h('div', { class: 'tower-empty' }, 'No scenario split yet.');
+
+    const hist = h('details', { class: 'tower-insp-more' }, h('summary', null, 'Model runs · ' + history.length),
       history.length ? h('table', { class: 'tower-table' },
         h('thead', null, h('tr', null, ...['run', 'model', 'judge', 'score', 'when'].map(t => h('th', null, t)))),
         h('tbody', null, history.map(r => h('tr', null,
@@ -757,53 +784,107 @@
           h('td', { class: 'tower-mono' }, fmt.score(r.score)),
           h('td', { class: 'tower-mono' }, fmt.date(r.created_at))))))
         : h('div', { class: 'tower-empty' }, 'No model runs recorded yet'));
-    content.replaceChildren(metrics, matrix, ...scenPanels, hist);
+
+    content.replaceChildren(metrics, banner,
+      panel('Model comparison', 'Latest scored run per model; misses excluded from every average. Amber = better, red = slower', cards),
+      panel('Scenarios', 'Split by the routing reason each question produced', scenCards),
+      hist);
   }
 
-  function stepPill(st) {
-    const state = st.status === 'done' ? 'healthy' : st.status === 'running' ? 'degraded' : 'critical';
-    return h('span', { class: 'tower-pill ' + state, title: st.output_snippet || '' }, st.name + (st.attempts > 1 ? ' ×' + st.attempts : ''));
+  function stepper(w) {
+    const nodes = [];
+    w.steps.forEach((st, i) => {
+      if (i) nodes.push(h('span', { class: 'tower-step-line' }));
+      const cls = st.status === 'done' ? 'done' : st.status === 'running' ? 'running' : st.status === 'failed' ? 'failed' : 'pending';
+      nodes.push(h('i', {
+        class: 'tower-step-dot ' + cls,
+        title: st.name + ' — ' + st.status + (st.attempts > 1 ? ' (' + st.attempts + ' attempts)' : ''),
+      }));
+    });
+    return h('span', { class: 'tower-step', title: w.clean ? 'no retries' : w.retries + ' retries' }, ...nodes);
   }
 
   async function pageWorkflows(signal) {
     const input = h('input', { class: 'tower-input', placeholder: 'question for the Researcher → Drafter → Reviewer agent', value: 'what does tower do?' });
     const startBtn = h('button', { class: 'tower-btn primary' }, 'Start workflow');
     const listBody = h('div', null, skeleton(5));
+    let filter = 'all';
+    let cache = [];
+
+    const filterBar = h('div', { class: 'tower-seg', style: 'margin-bottom:10px' },
+      ...[['all', 'All'], ['running', 'Running'], ['failed', 'Failed'], ['done', 'Done']].map(([k, text]) =>
+        h('button', { class: filter === k ? 'on' : '', onclick: () => { filter = k; filterBar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.textContent === text)); render(); } }, text)));
+
     content.replaceChildren(
       panel('Durable workflows', 'Each step is a Postgres row; kill the process mid-step and resume the same id — done steps are never re-run.',
         h('div', { class: 'tower-form-row' }, input, startBtn)),
-      panel('Workflows', 'Newest first, refreshes while something is running. "clean" = every step landed on the first attempt; pass^k over repeats comes from --workflow-repeats. Quality is a 1-5 rubric on the final answer (--workflow-grade), not groundedness.', listBody));
+      panel('Workflows', 'Newest first; repeated inputs are grouped. A stepper is one dot per step: green done, amber running, red failed, faint pending. Quality is a 1-5 rubric on the final answer (--workflow-grade), not groundedness.',
+        h('div', null, filterBar, listBody)));
+
+    function runRow(w) {
+      const failed = w.steps.find(s => s.status === 'failed');
+      const resume = h('button', { class: 'tower-btn primary', type: 'button' }, 'Resume');
+      resume.addEventListener('click', async () => {
+        resume.disabled = true;
+        try { await api('/v1/workflows/' + w.id + '/resume', { method: 'POST' }); toast('Resuming ' + w.id); } catch (e) { toast(e.message, true); }
+        setTimeout(refresh, 800);
+      });
+      return h('tr', null,
+        h('td', { class: 'tower-mono', title: fmt.date(w.created_at) }, fmt.ago(w.created_at)),
+        h('td', null, h('a', { class: 'tower-link tower-mono', href: '#/traces/' + w.id }, fmt.short(w.id))),
+        h('td', null, w.input.length > 60 ? w.input.slice(0, 60) + '…' : w.input),
+        h('td', null, stepper(w)),
+        h('td', null, w.grade ? chip(w.grade.score + '/5') : h('span', { class: 'tower-muted' }, '—')),
+        h('td', null, w.status === 'done' ? pill('healthy', 'done')
+          : w.status === 'failed' ? pill('critical', failed ? 'failed at ' + failed.name : 'failed')
+          : pill('degraded', w.status)),
+        h('td', null, w.status === 'failed' ? resume : null));
+    }
+
+    function render() {
+      const shown = cache.filter(w => filter === 'all' || w.status === filter);
+      if (!shown.length) {
+        listBody.replaceChildren(h('div', { class: 'tower-empty' }, cache.length ? 'Nothing matches this filter.' : 'No workflows yet'));
+        return;
+      }
+      // Group by input: one visible row per distinct question, with the others
+      // tucked behind a ×N chip so a repeated question cannot fill the page.
+      const groups = [];
+      const byInput = new Map();
+      shown.forEach(w => {
+        if (!byInput.has(w.input)) { byInput.set(w.input, []); groups.push(byInput.get(w.input)); }
+        byInput.get(w.input).push(w);
+      });
+      const rows = [];
+      groups.forEach(g => {
+        const first = runRow(g[0]);
+        if (g.length > 1) {
+          const extras = g.slice(1).map(w => { const tr = runRow(w); tr.hidden = true; return tr; });
+          const cell = first.querySelector('td:nth-child(3)');
+          const toggle = h('button', { class: 'tower-chip tower-chip-btn', type: 'button', style: 'margin-left:6px' }, '×' + g.length);
+          toggle.addEventListener('click', () => {
+            const open = extras[0].hidden;
+            extras.forEach(tr => { tr.hidden = !open; });
+          });
+          cell.append(toggle);
+          rows.push(first, ...extras);
+        } else {
+          rows.push(first);
+        }
+      });
+      listBody.replaceChildren(h('table', { class: 'tower-table' },
+        h('thead', null, h('tr', null, ...['when', 'id', 'input', 'steps', 'quality', 'status', ''].map(t => h('th', null, t)))),
+        h('tbody', null, rows)));
+    }
 
     async function refresh() {
       let data;
       try { data = await api('/v1/workflows?limit=20', null, signal); }
       catch (e) { if (e.name === 'AbortError') return; listBody.replaceChildren(errorBox('Could not load workflows: ' + e.message, refresh)); return; }
-      const wfs = data.workflows || [];
-      const rows = wfs.map(w => {
-        const resume = h('button', { class: 'tower-btn secondary' }, 'Resume');
-        resume.addEventListener('click', async () => {
-          resume.disabled = true;
-          try { await api('/v1/workflows/' + w.id + '/resume', { method: 'POST' }); toast('Resuming ' + w.id); } catch (e) { toast(e.message, true); }
-          setTimeout(refresh, 800);
-        });
-        return h('tr', null,
-          h('td', { class: 'tower-mono' }, fmt.date(w.created_at)),
-          h('td', null, h('a', { class: 'tower-link tower-mono', href: '#/traces/' + w.id }, w.id)),
-          h('td', null, w.input.length > 60 ? w.input.slice(0, 60) + '…' : w.input),
-          h('td', null, h('div', { class: 'tower-steps' }, w.steps.map(stepPill))),
-          h('td', null, w.clean ? pill('healthy', 'clean')
-            : w.status === 'done' ? pill('degraded', w.retries + (w.retries === 1 ? ' retry' : ' retries'))
-            : chip('—')),
-          h('td', null, w.grade ? chip(w.grade.score + '/5')
-            : h('span', { class: 'tower-muted', title: 'run --workflow-grade ' + w.id }, '—')),
-          h('td', null, w.status === 'done' ? pill('healthy', 'done') : pill('degraded', w.status)),
-          h('td', null, w.status !== 'done' ? resume : null));
-      });
-      listBody.replaceChildren(wfs.length ? h('table', { class: 'tower-table' },
-        h('thead', null, h('tr', null, ...['when', 'id', 'input', 'steps', 'trajectory', 'quality', 'status', ''].map(t => h('th', null, t)))),
-        h('tbody', null, rows)) : h('div', { class: 'tower-empty' }, 'No workflows yet'));
+      cache = data.workflows || [];
+      render();
       clearTimeout(pollTimer);
-      if (wfs.some(w => w.status === 'running')) pollTimer = setTimeout(() => { if (location.hash.startsWith('#/workflows')) refresh(); }, 4000);
+      if (cache.some(w => w.status === 'running')) pollTimer = setTimeout(() => { if (location.hash.startsWith('#/workflows')) refresh(); }, 4000);
     }
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true;

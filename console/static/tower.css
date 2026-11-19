@@ -246,7 +246,13 @@
   }
 
   /* ===== Traces page ===== */
-  .tower-grid-traces{ display:grid; grid-template-columns:380px minmax(0,1fr); gap:16px; align-items:start; }
+  /* Fixed-height master-detail: the list and the detail scroll independently
+     (redesign guide, Traces). */
+  .tower-grid-traces{ display:grid; grid-template-columns:380px minmax(0,1fr); gap:16px; align-items:stretch; height:calc(100vh - 152px); }
+  .tower-panel.tower-master, .tower-panel.tower-detail{ display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .tower-master .tower-trace-list{ max-height:none; flex:1; overflow:auto; }
+  .tower-detail{ overflow:auto; }
+  .tower-wf-ruler{ display:flex; justify-content:space-between; margin:0 82px 3px 190px; font:10px var(--tower-font-mono); color:var(--tower-ink-faint); }
   .tower-filters{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
   .tower-chip-btn{ cursor:pointer; border-color:var(--tower-border); }
   .tower-chip-btn:hover{ color:var(--tower-ink); }
@@ -303,12 +309,23 @@
   .tower-empty-tall{ padding:60px 12px; }
   .tower-empty-title{ font-family:var(--tower-font-display); font-weight:600; font-size:15px; color:var(--tower-ink-muted); margin-bottom:6px; }
   a.tower-btn{ text-decoration:none; display:inline-flex; align-items:center; }
-  @media (max-width: 1000px){ .tower-grid-traces{ grid-template-columns:1fr; } .tower-trace-list{ max-height:40vh; } .tower-wf-row{ grid-template-columns:120px 1fr 60px; } }
+  @media (max-width: 1000px){
+    .tower-grid-traces{ grid-template-columns:1fr; height:auto; }
+    .tower-trace-list{ max-height:40vh; }
+    .tower-wf-row{ grid-template-columns:120px 1fr 60px; }
+    .tower-wf-ruler{ margin:0 60px 3px 120px; }
+    .tower-gpu-cols{ grid-template-columns:1fr; }
+  }
 
 
   /* ===== GPU page ===== */
   /* One line per chart, no library. The viewBox is 900×140; width 100% keeps the
      aspect ratio so the two panels line up at any console width. */
+  .tower-gpu-cols{ display:grid; grid-template-columns:2fr 1fr; gap:14px; align-items:start; }
+  .tower-gpu-col{ display:flex; flex-direction:column; gap:14px; min-width:0; }
+  .tower-seg{ display:inline-flex; border:1px solid var(--tower-border); border-radius:8px; overflow:hidden; }
+  .tower-seg button{ border:0; background:none; padding:4px 12px; font-size:12px; color:var(--tower-ink-muted); cursor:pointer; }
+  .tower-seg button.on{ background:var(--tower-amber-dim); color:var(--tower-amber); }
   .tower-gpu-chart{ width:100%; height:auto; display:block; }
   .tower-gpu-line{ fill:none; stroke:var(--tower-amber); stroke-width:2; vector-effect:non-scaling-stroke; }
 

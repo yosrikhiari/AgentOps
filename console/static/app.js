@@ -460,8 +460,10 @@
         h('a', { class: 'tower-btn ghost', href: '/v1/traces/' + encodeURIComponent(data.trace_id), target: '_blank' }, 'JSON')));
 
     // waterfall
+    const ruler = h('div', { class: 'tower-wf-ruler' },
+      [0, 25, 50, 75, 100].map(px => h('span', null, fmt.dur((total * px / 100) / 1000))));
     const wf = h('div', { class: 'tower-waterfall' }, ...rows.map(r => {
-      const left = (r.start / total) * 100, width = Math.max(0.6, (r.dur / total) * 100);
+      const left = (r.start / total) * 100, width = Math.max(2, (r.dur / total) * 100);
       const color = r.attrs.error ? 'var(--tower-red)' : r.span.name === 'model.generate' ? 'var(--tower-amber)' : r.span.name.startsWith('route') || r.span.name.startsWith('router') ? 'var(--tower-ink-faint)' : 'var(--tower-green)';
       return h('div', { class: 'tower-wf-row' },
         h('div', { class: 'tower-wf-name', style: 'padding-left:' + (r.depth * 14) + 'px' }, r.span.name),
@@ -478,6 +480,8 @@
           h('span', { class: 'k' }, 'started_at'), h('span', { class: 'v' }, fmt.date(s.started_at)),
           h('span', { class: 'k' }, 'span_id'), h('span', { class: 'v' }, s.span_id),
           h('span', { class: 'k' }, 'parent_id'), h('span', { class: 'v' }, s.parent_id || '(root)')));
+      // A failed span is the first thing an operator needs: open it, do not hide it.
+      if (attrs.error) detail.classList.add('open');
       const body = h('div', { class: 'tower-trace-body', onclick: () => detail.classList.toggle('open') },
         h('div', { class: 'tower-trace-top' },
           h('span', { class: 'tower-trace-name' }, s.name),
@@ -494,27 +498,28 @@
         detail);
       return h('div', { class: 'tower-trace-step ' + (attrs.error ? 'active' : 'done'), style: 'margin-left:' + (11 + r.depth * 14) + 'px' }, h('span', { class: 'tower-trace-dot' }), body);
     });
-    return h('div', null, head, h('h4', { class: 'tower-sub-h' }, 'Timeline'), wf, h('h4', { class: 'tower-sub-h' }, 'Spans'), h('div', { class: 'tower-trace' }, ...steps),
+    return h('div', null, head, h('h4', { class: 'tower-sub-h' }, 'Timeline'), ruler, wf, h('h4', { class: 'tower-sub-h' }, 'Spans'), h('div', { class: 'tower-trace' }, ...steps),
       gen && gen.attrs.fallback_from ? h('div', { class: 'tower-note' }, 'Fallback: ' + gen.attrs.fallback_from.join(', ') + ' failed → served by ' + gen.attrs.model) : null);
   }
 
   async function pageTraces(signal, id) {
     let filter = 'all';
-    const input = h('input', { class: 'tower-input', placeholder: 'trace id or workflow id', value: id || '' });
+    const input = h('input', { class: 'tower-input', placeholder: 'Search or paste a trace id...', value: id || '', 'aria-label': 'Trace id' });
     const go = () => { const v = input.value.trim(); if (v) location.hash = '#/traces/' + v; };
     input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
     const filters = h('div', { class: 'tower-filters' });
     const listBody = h('div', { class: 'tower-trace-list' }, skeleton(6));
-    const detail = h('div', null);
-    const listPanel = h('section', { class: 'tower-panel' },
-      h('div', { class: 'tower-panel-head' }, h('div', null, h('h3', null, 'Recent traces'), h('div', { class: 'tower-panel-sub' }, 'Router chats and workflows, newest first')), null),
+    const detail = h('div', null, h('div', { class: 'tower-empty' }, 'Pick a trace on the left, or paste an id above.'));
+    // One master-detail surface: the old separate "Trace inspector" card is gone;
+    // the search box lives above the list it filters (redesign guide, Traces).
+    const listPanel = h('section', { class: 'tower-panel tower-master' },
+      h('div', { class: 'tower-panel-head' },
+        h('div', null, h('h3', null, 'Traces'), h('div', { class: 'tower-panel-sub' }, 'Newest first - click to inspect'))),
+      h('div', { class: 'tower-form-row', style: 'margin-bottom:10px' }, input,
+        h('button', { class: 'tower-btn primary', onclick: go }, 'Inspect')),
       filters, listBody);
-    const detailPanel = h('section', { class: 'tower-panel' }, detail);
-    content.replaceChildren(
-      panel('Trace inspector', 'Every request is a tree of spans with trace_id / span_id / parent_id. Prompts are never stored.',
-        h('div', { class: 'tower-form-row' }, input, h('button', { class: 'tower-btn primary', onclick: go }, 'Inspect'))),
-      h('div', { class: 'tower-grid-traces' }, listPanel, detailPanel));
-
+    const detailPanel = h('section', { class: 'tower-panel tower-detail' }, detail);
+    content.replaceChildren(h('div', { class: 'tower-grid-traces' }, listPanel, detailPanel));
     let items = [];
     function renderFilters() {
       filters.replaceChildren(...[['all', 'All'], ['chat', 'Chats'], ['workflow', 'Workflows'], ['error', 'Errors'], ['sensitive', 'Sensitive'], ['fallback', 'Fallbacks']].map(([k, label]) =>
@@ -777,19 +782,51 @@
   // gpuChart is deliberately the same hand-rolled-SVG idea as trafficChart: no
   // library, one path, tokens only, y clamped to max so a bad value cannot
   // escape the box.
-  function gpuChart(points, key, max) {
-    const w = 900, hgt = 140, pad = 8;
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + hgt);
-    svg.setAttribute('class', 'tower-gpu-chart');
+  // Hand-rolled SVG, tokens only. Every chart now has a scale, units, time
+  // labels and a current-value dot; VRAM can draw its capacity and fill, and a
+  // temperature chart can draw the throttle threshold (redesign guide, GPU).
+  function gpuChart(points, key, max, opts) {
+    opts = opts || {};
+    const fmtV = opts.fmt || (v => String(Math.round(v)));
+    const w = opts.vw || 760, hgt = 150, padL = 54, padR = 12, padT = 12, padB = 24;
+    const NS = 'http://www.w3.org/2000/svg';
+    const el = (t, a) => { const n = document.createElementNS(NS, t); for (const k in a) n.setAttribute(k, a[k]); return n; };
+    const svg = el('svg', { viewBox: '0 0 ' + w + ' ' + hgt, class: 'tower-gpu-chart' });
     if (!points.length || !max) return svg;
-    const x = i => pad + i * (w - pad * 2) / Math.max(1, points.length - 1);
-    const y = v => hgt - pad - Math.min(1, Math.max(0, v / max)) * (hgt - pad * 2);
-    const d = points.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p[key] || 0).toFixed(1)).join(' ');
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', d);
-    path.setAttribute('class', 'tower-gpu-line');
-    svg.append(path);
+    const plotW = w - padL - padR, plotH = hgt - padT - padB;
+    const x = i => padL + i * plotW / Math.max(1, points.length - 1);
+    const y = v => padT + (1 - Math.min(1, Math.max(0, v / max))) * plotH;
+
+    [0, 0.5, 1].forEach(f => {
+      svg.append(el('line', { x1: padL, x2: w - padR, y1: y(max * f), y2: y(max * f), stroke: 'var(--tower-border-soft)' }));
+      const t = el('text', { x: padL - 8, y: y(max * f) + 3, 'text-anchor': 'end', fill: 'var(--tower-ink-faint)', 'font-size': 10 });
+      t.textContent = fmtV(max * f); svg.append(t);
+    });
+    if (opts.cap) {
+      svg.append(el('line', { x1: padL, x2: w - padR, y1: y(opts.cap), y2: y(opts.cap), stroke: 'var(--tower-ink-faint)', 'stroke-dasharray': '4 3' }));
+    }
+    if (opts.threshold != null) {
+      svg.append(el('line', { x1: padL, x2: w - padR, y1: y(opts.threshold), y2: y(opts.threshold), stroke: 'var(--tower-amber-dim)', 'stroke-dasharray': '4 3' }));
+      const t = el('text', { x: w - padR, y: y(opts.threshold) - 4, 'text-anchor': 'end', fill: 'var(--tower-ink-faint)', 'font-size': 10 });
+      t.textContent = opts.thresholdLabel || 'threshold'; svg.append(t);
+    }
+
+    const pts = points.map((p, i) => x(i).toFixed(1) + ',' + y(Number(p[key]) || 0).toFixed(1));
+    if (opts.area) {
+      svg.append(el('polygon', { points: padL + ',' + y(0) + ' ' + pts.join(' ') + ' ' + (padL + plotW) + ',' + y(0), fill: 'var(--tower-amber-dim)', opacity: '.5' }));
+    }
+    svg.append(el('polyline', { points: pts.join(' '), fill: 'none', stroke: 'var(--tower-amber)', 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }));
+
+    const last = points[points.length - 1];
+    const lv = Number(last[key]) || 0;
+    svg.append(el('circle', { cx: x(points.length - 1), cy: y(lv), r: 3.5, fill: 'var(--tower-amber)' }));
+    const vt = el('text', { x: x(points.length - 1) - 6, y: Math.max(10, y(lv) - 8), 'text-anchor': 'end', fill: 'var(--tower-ink)', 'font-size': 11, 'font-family': 'var(--tower-font-mono)' });
+    vt.textContent = fmtV(lv); svg.append(vt);
+
+    const t0 = el('text', { x: padL, y: hgt - 6, fill: 'var(--tower-ink-faint)', 'font-size': 10 });
+    t0.textContent = fmt.time(points[0].at); svg.append(t0);
+    const t1 = el('text', { x: w - padR, y: hgt - 6, 'text-anchor': 'end', fill: 'var(--tower-ink-faint)', 'font-size': 10 });
+    t1.textContent = fmt.time(last.at); svg.append(t1);
     return svg;
   }
 
@@ -811,10 +848,11 @@
         h('td', { class: 'tower-mono' }, fmt.date(m.expires_at))))));
   }
 
+  let gpuRange = '6h';
   async function pageGPU(signal, _sub, polling) {
     if (!polling) content.replaceChildren(skeleton(6));
     let data;
-    try { data = await api('/v1/gpu', null, signal); }
+    try { data = await api('/v1/gpu?since=' + gpuRange, null, signal); }
     catch (e) { if (e.name === 'AbortError') return; content.replaceChildren(errorBox('Could not load GPU: ' + e.message, () => route())); return; }
     const now = data.now || {};
     if (!now.available) {
@@ -829,38 +867,57 @@
     } else {
       const s = now.sample || {};
       const hist = (data.history || []).slice().reverse(); // the store returns newest-first
-      // history_error is set when the live read worked but the store did not.
-      // "No history yet" would then be a promise the server cannot keep.
       const histErr = data.history_error || '';
       const histEmpty = msg => h('div', { class: 'tower-empty' },
-        histErr ? 'History unavailable — ' + histErr : msg);
+        histErr ? 'History unavailable - ' + histErr : msg);
+
       const metrics = h('div', { class: 'tower-metric-row' },
         metric('Utilisation', gpuPct(s.util_pct), s.name || ''),
         metric('VRAM', gpuGB(s.mem_used_bytes) + ' / ' + gpuGB(s.mem_total_bytes),
           gpuPct(s.mem_total_bytes ? s.mem_used_bytes * 100 / s.mem_total_bytes : null)),
-        metric('Power', s.power_w == null ? '–' : Number(s.power_w).toFixed(0) + ' W', 'driver reading'),
-        metric('Temperature', s.temp_c == null ? '–' : Number(s.temp_c).toFixed(0) + ' °C', fmt.time(now.at)));
+        metric('Power', s.power_w == null ? '-' : Number(s.power_w).toFixed(0) + ' W', 'driver reading'),
+        metric('Temperature', s.temp_c == null ? '-' : Number(s.temp_c).toFixed(0) + ' C', fmt.time(now.at)));
+
+      const rangeSeg = h('div', { class: 'tower-seg' },
+        ...[['1h', '1 h'], ['6h', '6 h'], ['24h', '24 h']].map(([k, label]) =>
+          h('button', {
+            class: gpuRange === k ? 'on' : '',
+            onclick: () => { if (gpuRange === k) return; gpuRange = k; clearTimeout(pollTimer); pageGPU(signal, '', true); },
+          }, label)));
+
       const swaps = now.swaps_last_10m || 0;
       const swapCount = swaps + ' model swap' + (swaps === 1 ? '' : 's');
-      // With Ollama unreachable the count is only what was observed before the
-      // failure, so it cannot be stated as a plain fact about the last 10 min.
       const residentSub = now.error
-        ? 'Ollama unreachable — ' + swapCount + ' observed in the last 10 minutes'
+        ? 'Ollama unreachable - ' + swapCount + ' observed in the last 10 minutes'
         : swapCount + ' in the last 10 minutes';
+
+      const caps = [
+        panel('Utilisation', 'One sample per poll - last ' + gpuRange,
+          hist.length ? gpuChart(hist, 'util_pct', 100, { fmt: v => v.toFixed(0) + '%' })
+            : histEmpty('No history yet - the first sample lands within one poll interval')),
+        panel('Temperature', 'Driver reading - dashed line = 85 C throttle threshold',
+          hist.length ? gpuChart(hist, 'temp_c', 100, { fmt: v => v.toFixed(0) + ' C', threshold: 85, thresholdLabel: '85 C' })
+            : histEmpty('No history yet')),
+        panel('Power', 'Driver reading',
+          hist.length ? gpuChart(hist, 'power_w', Math.max(50, ...hist.map(p => Number(p.power_w) || 0)) * 1.15, { fmt: v => v.toFixed(0) + ' W' })
+            : histEmpty('No history yet')),
+      ];
+      const right = [
+        panel('VRAM used', 'Dashed line = the ' + gpuGB(s.mem_total_bytes) + ' this card has',
+          hist.length ? gpuChart(hist, 'mem_used_bytes', s.mem_total_bytes, { fmt: gpuGB, area: true, cap: s.mem_total_bytes, vw: 420 })
+            : histEmpty('No history yet')),
+        panel('Resident models', residentSub, residentTable(now.resident || [], now.error)),
+      ];
+
       const nodes = [metrics,
-        panel('Utilisation', 'Last 6 hours, one point per poll',
-          hist.length ? gpuChart(hist, 'util_pct', 100) : histEmpty('No history yet — the first sample lands within one poll interval')),
-        panel('VRAM used', 'In use against the ' + gpuGB(s.mem_total_bytes) + ' this card has installed',
-          hist.length ? gpuChart(hist, 'mem_used_bytes', s.mem_total_bytes) : histEmpty('No history yet')),
-        panel('Resident models', residentSub,
-          residentTable(now.resident || [], now.error))];
+        h('div', { class: 'tower-form-row', style: 'justify-content:flex-end' }, rangeSeg),
+        h('div', { class: 'tower-gpu-cols' },
+          h('div', { class: 'tower-gpu-col' }, ...caps),
+          h('div', { class: 'tower-gpu-col' }, ...right))];
       if (swaps > 2) {
         nodes.push(h('div', { class: 'tower-note' },
-          'Ollama swapped models ' + swaps + ' times in the last 10 minutes. Every swap unloads one model to load another, so a run that straddles one is not a fair speed comparison — see docs/VRAM.md.'));
+          'Ollama swapped models ' + swaps + ' times in the last 10 minutes. Every swap unloads one model to load another, so a run that straddles one is not a fair speed comparison - see docs/VRAM.md.'));
       }
-      // Heat is the other thing that changes the clock under a run. The driver's
-      // throttle bit is a state, so it is a pill, and the consequence is spelled out:
-      // a hot card gives the same answers, only later.
       if (s.throttled) {
         nodes.splice(1, 0, h('div', { class: 'tower-note' },
           pill('degraded', 'throttled'),
@@ -868,8 +925,6 @@
       }
       content.replaceChildren(...nodes);
     }
-    // Page-local refresh, mirroring pageOverview's poll: skip the skeleton so
-    // the charts do not flash, and stop as soon as the route changes.
     pollTimer = setTimeout(() => { if (location.hash.startsWith('#/gpu')) pageGPU(signal, '', true); }, 5000);
   }
 

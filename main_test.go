@@ -142,3 +142,24 @@ func TestAuditJudgeBackends(t *testing.T) {
 		t.Fatal("unknown backend must fail")
 	}
 }
+
+// TestEvalTallyKeepsNoClaimPairsOutOfTheMean: an answer too short to split into
+// claims never reaches the judge, so it is unmeasured, not a zero. Counting it as
+// 0.0 depressed the suite score and could fail the gate (audit 2026-11-18 C4).
+func TestEvalTallyKeepsNoClaimPairsOutOfTheMean(t *testing.T) {
+	var tl evalTally
+	tl.add(1.0, 3, false, false, 1, 1) // fully faithful
+	tl.add(0.0, 0, false, false, 1, 1) // no scorable claim -> unmeasured
+	tl.add(0.0, 2, false, true, 1, 1)  // refuted by the judge
+	tl.add(0.0, 0, true, true, 0, 0)   // retrieval miss
+
+	if tl.scored != 2 {
+		t.Fatalf("scored = %d, want 2 (the faithful pair and the refuted one)", tl.scored)
+	}
+	if tl.sumF != 1.0 {
+		t.Fatalf("sumF = %v, want 1.0 - the no-claim pair must not add a zero", tl.sumF)
+	}
+	if tl.noClaims != 1 || tl.misses != 1 || tl.refuted != 1 || tl.unsolvable != 2 {
+		t.Fatalf("tally = %+v", tl)
+	}
+}

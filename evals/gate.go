@@ -40,8 +40,13 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 	if k <= 0 {
 		k = 3
 	}
+	// The window a run occupied is started_at .. finished_at. created_at is the
+	// insert time, ~70 ms after started_at, so selecting it here made the window
+	// empty and every "what was the card doing" answer "no samples" (audit
+	// 2026-11-18 C1). Pre-0014 rows have no finished_at; coalescing keeps them
+	// readable and the report marks their window as unrecorded.
 	rows, err := db.Query(ctx,
-		`SELECT id, judge_model, judge_prompt, score, started_at, created_at FROM eval_runs
+		`SELECT id, judge_model, judge_prompt, score, started_at, COALESCE(finished_at, created_at) FROM eval_runs
 		 WHERE golden_version = $1 AND model = '' AND status = 'complete'
 		   AND EXISTS (SELECT 1 FROM eval_pair_scores p WHERE p.run_id = eval_runs.id AND p.faithfulness IS NOT NULL)
 		 ORDER BY created_at DESC, id DESC LIMIT $2`,
@@ -64,6 +69,11 @@ func ReleaseGate(ctx context.Context, db Queryer, golden string, k int, threshol
 	fmt.Fprintf(&sb, "release gate %s k=%d threshold=%.2f: %d/%d runs\n", golden, k, threshold, len(res.Runs), k)
 	for _, r := range res.Runs {
 		fmt.Fprintf(&sb, "  run %d judge=%s prompt=%s score=%.3f\n", r.ID, r.Judge, r.Prompt, r.Score)
+		if r.FinishedAt.Sub(r.StartedAt) < time.Second {
+			// Pre-0014 rows coalesce to created_at, which is the insert time: the
+			// window is real only for runs recorded after the column existed.
+			fmt.Fprintf(&sb, "    window unrecorded (run predates finished_at; GPU comparability unknown)\n")
+		}
 	}
 	if len(res.Runs) < k {
 		fmt.Fprintf(&sb, "FAIL: need %d runs, have %d — run the suite %d more time(s)", k, len(res.Runs), k-len(res.Runs))

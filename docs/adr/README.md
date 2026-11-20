@@ -16,3 +16,4 @@ One page each, written once the decision was real. Numbering follows the plan.
 | [0010](0010-client-held-conversation-and-gated-workflows.md) | Cockpit: client-held conversation; capability-gated workflows with approval (proposed) |
 | [0011](0011-startup-presence-check.md) | Track J: presence over assumption — unpulled models read 503, paths never register |
 | [0012](0012-static-advisor.md) | Track K: static VRAM/fit report with provenance-bound rumors, no runtime role |
+| [0013](0013-multi-provider-ladder.md) | Multi-provider LLM ladder: ranked free APIs, exhaustion tracking with cooldowns, local Ollama as final rung |

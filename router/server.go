@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,7 +138,10 @@ type Server struct {
 	Limiter    *RateLimiter
 	// Prober, when set, answers /v1/models health and lets the router skip backends that
 	// the last probe found down.
-	Prober            *HealthProber
+	Prober *HealthProber
+	// Exhaustion, when set, benches backends that return quota/rate-limit (or persistent
+	// transient) errors and lets the router skip them until the cooldown elapses.
+	Exhaustion        *ExhaustionTracker
 	SensitiveKeywords []string
 	RequestTimeout    time.Duration
 	mux               *http.ServeMux
@@ -674,6 +678,15 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		if s.Prober != nil && i > 0 && !s.Prober.Up(cand.Backend.Name()) {
 			continue // a known-down fallback is not worth a timeout
 		}
+		// A benched backend (exhausted quota / persistent transient failure)
+		// is skipped until its cooldown elapses. This is the ladder's whole point:
+		// do not pay the penalty of an exhausted free API on every request.
+		if s.Exhaustion != nil {
+			if benched, until := s.Exhaustion.Benched(cand.Backend.Name()); benched {
+				log.Printf("trace %s: %s/%s benched until %s, skipping", traceID, cand.Backend.Name(), cand.Model, until.Format(time.RFC3339))
+				continue
+			}
+		}
 		var text string
 		var usage Usage
 		var err error
@@ -681,7 +694,17 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		// name in the prompt, not the planned one's, so a fallback cannot be told it
 		// is a different model.
 		turn := withSystemPrompt(msgs, SystemPrompt(roster, cand.Model, route.Reason))
-		text, usage, err = generateOn(ctx, cand.Backend, cand.Model, turn, params, emit)
+		// Track whether any delta was emitted, so a mid-stream failure does not
+		// silently replace partial output already sent to the client.
+		emitted := false
+		wrappedEmit := emit
+		if emit != nil {
+			wrappedEmit = func(model, delta string) {
+				emitted = true
+				emit(model, delta)
+			}
+		}
+		text, usage, err = generateOn(ctx, cand.Backend, cand.Model, turn, params, wrappedEmit)
 		if err != nil {
 			lastErr = err
 			s.Metrics.ObserveError(cand.Model)
@@ -689,6 +712,28 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 				break
 			}
 			fallback = append(fallback, cand.Backend.Name()+"/"+cand.Model)
+			// Bench the rung so subsequent requests skip it until the cooldown.
+			if s.Exhaustion != nil {
+				if isExhaustion(err) {
+					d, kind := CooldownFor(err)
+					s.Exhaustion.Bench(cand.Backend.Name(), time.Now().Add(d), kind)
+					log.Printf("trace %s: %s/%s exhausted (%v); benched for %s", traceID, cand.Backend.Name(), cand.Model, err, d)
+				} else if isTransient(err) {
+					transient := 60 * time.Second
+					if v := os.Getenv("EXHAUST_COOLDOWN_TRANSIENT"); v != "" {
+						if d, perr := time.ParseDuration(v); perr == nil && d >= time.Second {
+							transient = d
+						}
+					}
+					s.Exhaustion.Bench(cand.Backend.Name(), time.Now().Add(transient), "transient")
+				}
+			}
+			// If we already streamed partial output, do not fall through: the client
+			// has seen it and a silent replacement would be worse than an error.
+			if emitted {
+				log.Printf("trace %s: %s/%s failed after emitting (%v); not falling through", traceID, cand.Backend.Name(), cand.Model, err)
+				break
+			}
 			log.Printf("trace %s: %s/%s failed (%v); trying next candidate", traceID, cand.Backend.Name(), cand.Model, err)
 			continue
 		}

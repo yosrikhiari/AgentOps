@@ -22,6 +22,8 @@ type Metrics struct {
 	mu               sync.Mutex
 	models           map[string]*modelStats
 	backendUp        map[string]bool
+	backendBenched   map[string]bool
+	backendExhausted map[string]uint64
 	keyRequests      map[string]uint64
 	keyRejects       map[string]uint64
 	evalFaithfulness float64
@@ -34,7 +36,7 @@ type Metrics struct {
 }
 
 func NewMetrics() *Metrics {
-	return &Metrics{models: map[string]*modelStats{}, backendUp: map[string]bool{}, keyRequests: map[string]uint64{}, keyRejects: map[string]uint64{}}
+	return &Metrics{models: map[string]*modelStats{}, backendUp: map[string]bool{}, backendBenched: map[string]bool{}, backendExhausted: map[string]uint64{}, keyRequests: map[string]uint64{}, keyRejects: map[string]uint64{}}
 }
 
 // SetBackendUp publishes the last health probe result for a backend.
@@ -42,6 +44,21 @@ func (m *Metrics) SetBackendUp(backend string, up bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.backendUp[backend] = up
+}
+
+// SetBackendBenched publishes whether a backend is currently benched (exhausted).
+func (m *Metrics) SetBackendBenched(backend string, benched bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.backendBenched[backend] = benched
+}
+
+// ObserveExhaustion counts a backend exhaustion event (quota or transient).
+func (m *Metrics) ObserveExhaustion(backend, kind string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.backendExhausted[backend]++
+	_ = kind
 }
 
 // ObserveKey counts a request attributed to an API key; rejected = 401/403/429 outcomes.
@@ -166,6 +183,24 @@ func (m *Metrics) exposeLocked() string {
 				v = 1
 			}
 			fmt.Fprintf(&sb, "router_backend_up{backend=%q} %d\n", n, v)
+		}
+	}
+	if len(m.backendBenched) > 0 {
+		sb.WriteString("# HELP router_backend_benched 1 if the backend is currently benched (exhausted quota / persistent failure).\n")
+		sb.WriteString("# TYPE router_backend_benched gauge\n")
+		for _, n := range sortedKeys(m.backendBenched) {
+			v := 0
+			if m.backendBenched[n] {
+				v = 1
+			}
+			fmt.Fprintf(&sb, "router_backend_benched{backend=%q} %d\n", n, v)
+		}
+	}
+	if len(m.backendExhausted) > 0 {
+		sb.WriteString("# HELP router_backend_exhausted_total Backends benched due to exhaustion, cumulative.\n")
+		sb.WriteString("# TYPE router_backend_exhausted_total counter\n")
+		for _, n := range sortedKeys(m.backendExhausted) {
+			fmt.Fprintf(&sb, "router_backend_exhausted_total{backend=%q} %d\n", n, m.backendExhausted[n])
 		}
 	}
 	if len(m.keyRequests)+len(m.keyRejects) > 0 {

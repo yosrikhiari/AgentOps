@@ -67,7 +67,7 @@ func (c *OllamaClient) post(ctx context.Context, model string, msgs []Message, p
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, fmt.Errorf("ollama status %d", resp.StatusCode)
+		return nil, &HTTPStatusError{Backend: "ollama", Status: resp.StatusCode, Body: ""}
 	}
 	return resp, nil
 }

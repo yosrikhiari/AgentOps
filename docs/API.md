@@ -152,7 +152,9 @@ for its models directory).
 | `OLLAMA_URL` | `http://localhost:11434` | local backend, always present, `local:true` |
 | `FAST_MODEL` / `QUALITY_MODEL` | `qwen2.5:3b-instruct` / `qwen2.5:7b-instruct-q4_K_M` | the auto tiers on Ollama |
 | `OLLAMA_MODELS` | — | comma-separated extra local models (`qwen3:8b,qwen2.5:3b-instruct`) a client may name explicitly; registered with tier `local` on the Ollama backend. A multi-agent client that places roles on different models needs every one of them registered here or the request answers `unknown_model` |
-| `GROQ_API_KEY` | — | when set, registers an OpenAI-compatible cloud backend |
+| `CLOUD_LADDER` | — | ordered list of cloud rungs, best first: `name|key|url|model` separated by commas (e.g. `groq|gsk_...|https://api.groq.com/openai/v1|openai/gpt-oss-20b,openrouter|sk-or-...|https://openrouter.ai/api/v1|meta-llama/...`). When set, it replaces the single `GROQ_API_KEY`/`CLOUD_*` backend. On exhaustion (429/402/403) a rung is benched and the next rung is tried; local Ollama is always the final rung. `CLOUD_LADDER` contains secrets — never log it |
+| `EXHAUST_COOLDOWN_TRANSIENT` | `60s` | how long a rung is benched after a persistent 5xx/timeout (clamped ≥1s) |
+| `EXHAUST_COOLDOWN_PERMINUTE` | `30s` | floor for the per-minute cooldown when a provider gives no `Retry-After` (clamped ≥1s); daily-quota exhaustion benches until midnight UTC regardless |
 | `CLOUD_MODEL` / `CLOUD_BASE_URL` / `CLOUD_BACKEND_NAME` | `openai/gpt-oss-20b` / `https://api.groq.com/openai/v1` / `groq` | point the cloud backend at any OpenAI-style API. The old default `llama-3.1-8b-instant` was retired by Groq in 2026 and returns `model_not_found` |
 | `REQUIRE_API_KEY` | `false` | reject anonymous requests |
 | `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |

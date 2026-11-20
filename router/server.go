@@ -40,6 +40,44 @@ type ChatRequest struct {
 	// X-Client-Ref / X-Agent-Role headers (or these fields) and land on every span.
 	ClientRef string `json:"client_ref,omitempty"`
 	AgentRole string `json:"agent_role,omitempty"`
+
+	// Decoded only to be refused. The OpenAI shape accepts these and the gateway
+	// cannot honour them; silently dropping them made a tool-using client believe
+	// its loop ran when it received plain prose (audit 2026-11-18, contract).
+	Tools       json.RawMessage `json:"tools,omitempty"`
+	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
+	N           *int            `json:"n,omitempty"`
+	Logprobs    *bool           `json:"logprobs,omitempty"`
+	TopLogprobs *int            `json:"top_logprobs,omitempty"`
+}
+
+// unsupportedFields names the OpenAI parameters this gateway cannot honour.
+// Refusing them is the same decision the Anthropic path already makes for
+// `tools`: a client that asked for tool calls must not get a 200 that pretends
+// they happened. `n=1` and `logprobs=false` are the neutral values and are
+// accepted, because they ask for exactly what the gateway already does.
+func unsupportedFields(req ChatRequest) string {
+	var bad []string
+	if len(req.Tools) > 0 {
+		bad = append(bad, "tools")
+	}
+	if len(req.ToolChoice) > 0 {
+		bad = append(bad, "tool_choice")
+	}
+	if req.N != nil && *req.N != 1 {
+		bad = append(bad, "n")
+	}
+	if req.Logprobs != nil && *req.Logprobs {
+		bad = append(bad, "logprobs")
+	}
+	if req.TopLogprobs != nil {
+		bad = append(bad, "top_logprobs")
+	}
+	if len(bad) == 0 {
+		return ""
+	}
+	return "unsupported field(s): " + strings.Join(bad, ", ") +
+		"; this gateway speaks plain text - tool calls, multiple choices and logprobs are not implemented"
 }
 
 type Choice struct {
@@ -160,13 +198,17 @@ func NewServer(fastModel, qualityModel string, local Backend) *Server {
 // unknownRoute answers what the mux did not match: 405 with Allow when the path exists
 // but the method does not, 404 otherwise, both in the one error shape.
 func (s *Server) unknownRoute(w http.ResponseWriter, r *http.Request) {
+	// A 404/405 is still a response a client may need to correlate with its own
+	// log; emitting an empty trace id made the documented header a lie.
+	traceID := newTraceID()
+	w.Header().Set("X-Trace-ID", traceID)
 	if allow, ok := s.allowed[r.URL.Path]; ok {
 		w.Header().Set("Allow", allow)
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed",
-			r.Method+" is not allowed on "+r.URL.Path+"; use "+allow, "")
+			r.Method+" is not allowed on "+r.URL.Path+"; use "+allow, traceID)
 		return
 	}
-	writeError(w, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, "")
+	writeError(w, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, traceID)
 }
 
 // AddModel registers another model (typically a cloud fallback with Tier "cloud").
@@ -399,6 +441,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Prompt == "" && len(req.Messages) == 0 {
 		writeError(w, http.StatusBadRequest, "bad_request", "prompt or messages is required", traceID)
+		return
+	}
+	if msg := unsupportedFields(req); msg != "" {
+		writeError(w, http.StatusBadRequest, "unsupported_field", msg, traceID)
 		return
 	}
 	if strings.EqualFold(r.Header.Get("X-Tower-Sensitive"), "true") {

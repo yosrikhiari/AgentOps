@@ -1557,6 +1557,13 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
+		// Every response carries the id the API reference promises. Chat and
+		// gateway error handlers overwrite it with the id that names their spans;
+		// console and trace reads keep this one, which identifies the request
+		// even though it has no span of its own.
+		if h.Get("X-Trace-ID") == "" {
+			h.Set("X-Trace-ID", tracker.NewWorkflowID())
+		}
 		next.ServeHTTP(w, r)
 	})
 }

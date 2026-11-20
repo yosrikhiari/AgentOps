@@ -112,6 +112,11 @@ func TestSecurityHeaders(t *testing.T) {
 			t.Errorf("CSP %q is missing %q", csp, must)
 		}
 	}
+	// The API reference promises this on every response, including console and
+	// trace reads that have no span of their own.
+	if rec.Header().Get("X-Trace-ID") == "" {
+		t.Error("X-Trace-ID is missing from a response")
+	}
 }
 
 // TestCrossSitePostIsRejected: a malicious page must not be able to POST

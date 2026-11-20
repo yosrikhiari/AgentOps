@@ -26,6 +26,7 @@ Send it as `Authorization: Bearer ak_…`. With `REQUIRE_API_KEY=true` anonymous
 | 403 | `api_key_disabled` | key disabled |
 | 403 | `budget_exceeded` | lifetime `tokens_used ≥ budget_tokens` |
 | 429 | `rate_limited` (+ `Retry-After`) | more than `rpm` requests in the current minute |
+| 400 | `bad_request` / `unsupported_field` / `option_out_of_range` / `request_too_large` | malformed body, a parameter this gateway cannot honour, an out-of-range generation option, or a body over 4 MiB |
 | 404 | `not_found` | no route for that method+path (unknown API path or a typo) |
 | 405 | `method_not_allowed` (+ `Allow`) | the path exists but not with that verb, e.g. `POST /v1/models` |
 
@@ -36,6 +37,8 @@ Per-key counters: `router_key_requests_total{key}` and `router_key_rejected_tota
 ## `POST /v1/chat/completions`
 
 OpenAI-compatible. `model` is optional — `"auto"` (default) lets the router pick a tier from the prompt; a served model name (or `backend/model`) is used as-is. A **tier name** — `"fast"`, `"quality"` or `"cloud"` — picks the first registered model serving that tier (`reason: "explicit-tier"`), which is what the console's model picker sends; a model that is really named `fast` still wins over the alias.
+
+**Unsupported OpenAI fields are refused, not dropped** — `tools`, `tool_choice`, `n` other than 1, `logprobs: true` and `top_logprobs` return `400 unsupported_field` naming every offending field. Returning 200 with plain prose would leave a tool-using client believing its `tool_calls` ran; the Anthropic ingress already refuses `tools` for the same reason. `n: 1` and `logprobs: false` ask for what the gateway already does and are accepted.
 
 ```bash
 curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{
@@ -199,7 +202,7 @@ estimate error.
 Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`
 (purpose: thread continuity; 90-day idle retention with boot purge; per-thread delete).
 
-- `GET /v1/conversations?limit=20` — newest first: `{id, title, model, messages, updated_at}`. Title auto-fills from the first user message.
+- `GET /v1/conversations?limit=20` — newest first: `{"conversations":[{id, title, model, messages, updated_at}]}`. `messages` is the **count** of stored turns (an integer, not an array); read `/v1/conversations/{id}/messages` for their contents. Title auto-fills from the first user message.
 - `POST /v1/conversations` (`{title?, model?}`) — open a thread → `{id}`.
 - `GET /v1/conversations/{id}/messages?limit=500` — `{messages:[{id, role, content, model, trace_id, prompt_tokens, completion_tokens, created_at}]}`; unknown id → `404 conversation_not_found`.
 - `POST /v1/conversations/{id}/messages` (`{role: user|assistant, content, model?, trace_id?, prompt_tokens?, completion_tokens?}`) — record one turn → `{status:"stored"}`; bad role or empty content → `400 bad_request`.

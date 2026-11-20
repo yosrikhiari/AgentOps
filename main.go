@@ -101,6 +101,7 @@ type pgDB interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // pgAdapter narrows pgDB to the tiny interfaces evals/ and tracker/ declare, so those
@@ -128,6 +129,32 @@ func (p pgAdapter) Query(ctx context.Context, sql string, args ...any) (evals.Ro
 	}
 	return rows, nil
 }
+
+// Begin opens a pgx transaction wrapped so it satisfies console.Tx (and, by
+// method set, evals.Execer). Used by console.SQLStore.AppendMessage.
+func (p pgAdapter) Begin(ctx context.Context) (console.Tx, error) {
+	tx, err := p.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return pgTx{tx: tx}, nil
+}
+
+type pgTx struct {
+	tx pgx.Tx
+}
+
+func (t pgTx) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	tag, err := t.tx.Exec(ctx, sql, args...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (t pgTx) Commit(ctx context.Context) error { return t.tx.Commit(ctx) }
+
+func (t pgTx) Rollback(ctx context.Context) error { return t.tx.Rollback(ctx) }
 
 // routerAdapter serves router.SQLKeyStore, which declares its own Rows type.
 type routerAdapter struct {
@@ -1812,7 +1839,7 @@ func main() {
 	func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		store := console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}}
+		store := console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}, Begin: pgAdapter{pool}}
 		if n, err := store.PurgeConversations(ctx, 90); err != nil {
 			log.Printf("conversation purge skipped: %v", err)
 		} else if n > 0 {
@@ -1895,7 +1922,7 @@ func main() {
 		}()
 	}
 	ui := console.New(console.Deps{
-		Store:         console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}, GPU: gpuAdapter{pgAdapter{pool}}},
+		Store:         console.SQLStore{Query: pgAdapter{pool}, Exec: pgAdapter{pool}, Row: pgAdapter{pool}, GPU: gpuAdapter{pgAdapter{pool}}, Begin: pgAdapter{pool}},
 		Router:        srv,
 		GPU:           gpuProber.Snapshot,
 		GoldenVersion: *driftGolden,

@@ -125,7 +125,10 @@ func TestOpenAIShape(t *testing.T) {
 	if out.Usage.TotalTokens != 10 || out.Usage.PromptTokens+out.Usage.CompletionTokens != 10 {
 		t.Fatalf("bad usage %+v", out.Usage)
 	}
-	if len(be.lastMsgs) != 2 || be.lastMsgs[0].Role != "system" || be.lastMaxTokens != 42 {
+	if len(be.lastMsgs) != 3 || !strings.HasPrefix(be.lastMsgs[0].Content, "You are the assistant behind Tower") {
+		t.Fatalf("gateway system prompt not prepended: %+v", be.lastMsgs)
+	}
+	if be.lastMsgs[1].Role != "system" || be.lastMsgs[1].Content != "be brief" || be.lastMaxTokens != 42 {
 		t.Fatalf("messages/max_tokens not forwarded: %+v %d", be.lastMsgs, be.lastMaxTokens)
 	}
 }

@@ -3,7 +3,10 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // GenParams are the per-call generation parameters a client may forward through the
@@ -81,6 +84,99 @@ func paramsOf(req ChatRequest) GenParams {
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// Client-supplied options reach the machine that hosts the model: num_ctx sizes
+// the KV cache, num_gpu places layers on the card, repeat_last_n and num_predict
+// bound the work, and keep_alive pins VRAM. A value chosen by a remote client must
+// not be able to take the card down for everyone else, so each has a ceiling and
+// an out-of-range value is a 400 rather than a silent clamp (audit 2026-11-18 S3).
+const (
+	maxNumCtx      = 32768
+	maxNumPredict  = 8192
+	maxNumGPU      = 99
+	maxNumThread   = 256
+	maxRepeatLastN = 4096
+	maxKeepAlive   = time.Hour
+)
+
+// ErrParamOutOfRange is a client mistake, not a backend failure: classifyChatError
+// maps it to 400 option_out_of_range on both wire formats.
+type ErrParamOutOfRange struct{ Option, Message string }
+
+func (e ErrParamOutOfRange) Error() string { return e.Message }
+
+// Validate bounds the resource knobs a request may set. Unknown option keys are
+// left alone: Ollama ignores what it does not know, and rejecting them would break
+// clients that forward a newer knob this gateway has not seen.
+func (p GenParams) Validate() error {
+	for _, l := range []struct {
+		key string
+		max float64
+	}{
+		{"num_ctx", maxNumCtx},
+		{"num_predict", maxNumPredict},
+		{"num_gpu", maxNumGPU},
+		{"num_thread", maxNumThread},
+		{"repeat_last_n", maxRepeatLastN},
+	} {
+		v, ok := p.Options[l.key]
+		if !ok {
+			continue
+		}
+		f, ok := toFloat(v)
+		if !ok {
+			return ErrParamOutOfRange{l.key, fmt.Sprintf("option %q must be a number", l.key)}
+		}
+		if f < 0 || f > l.max {
+			return ErrParamOutOfRange{l.key, fmt.Sprintf("option %q must be between 0 and %v", l.key, l.max)}
+		}
+	}
+	if p.KeepAlive != "" {
+		d, ok := keepAliveDuration(p.KeepAlive)
+		if !ok {
+			return ErrParamOutOfRange{"keep_alive", fmt.Sprintf("keep_alive %q is not a duration", p.KeepAlive)}
+		}
+		if d < 0 || d > maxKeepAlive {
+			return ErrParamOutOfRange{"keep_alive", fmt.Sprintf("keep_alive must be between 0 and %s", maxKeepAlive)}
+		}
+	}
+	return nil
+}
+
+// toFloat accepts the shapes a JSON number can arrive in.
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
+}
+
+// keepAliveDuration reads Ollama's keep_alive: a duration string ("30m"), a number
+// of seconds, or "-1" for "never unload". The last one is reported as negative so
+// Validate refuses it — pinning VRAM forever is the behaviour under attack.
+func keepAliveDuration(s string) (time.Duration, bool) {
+	s = strings.TrimSpace(s)
+	if s == "-1" {
+		return -1, true
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, true
+	}
+	if secs, err := strconv.ParseFloat(s, 64); err == nil {
+		return time.Duration(secs * float64(time.Second)), true
+	}
+	return 0, false
 }
 
 // SpanAttrs is what a span records about the parameters: the values that change what the

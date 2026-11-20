@@ -95,6 +95,26 @@ worth touching yet) so that doesn't get lost again.
 > the k6 gate stay. `corpus/04-metrics.md` + frozen golden pairs still describe
 > Grafana — deliberately untouched (frozen files never edited); follow-up is
 > corpus v4 + golden v4 + a scored run.
+>
+> **Current state (v27, 2026-11-19 — audit, perimeter, workbench).** A full read-only
+> audit (architecture, security, code quality, UX/a11y, docs) produced a prioritised
+> report; the fixes below are shipped on `main` with tests and CI green. **Perimeter:**
+> `ADDR` defaults to `127.0.0.1:8080`; console routes are loopback-only unless
+> `CONSOLE_REMOTE=true`; CSP + `X-Frame-Options`/`nosniff`/`Referrer-Policy` on every
+> response; `http.CrossOriginProtection`; chat bodies capped at 4 MiB; explicit
+> `ReadTimeout`/`WriteTimeout`/`IdleTimeout`; client `options` bounded (`num_ctx`,
+> `num_gpu`, `keep_alive`, ...); `/mcp` uses the chat gate and charges tokens.
+> **Correctness:** the release gate reads `finished_at` (its GPU comparability check
+> had never fired — measured 0 vs 145 samples); the scored path validates golden files
+> with `LoadGolden`; a no-claim pair is unmeasured, not 0.0; README numbers corrected
+> (244 tests / 19 policies, Go 1.26.11, 0.914 baseline). **Console:** Metrics and Models
+> are in-app pages (no raw JSON/text tab); the workbench shell (56 px icon rail, warm
+> neutrals, serif titles, contrast fixes) replaced the 216 px sidebar; Cockpit is a
+> full-height conversation + inspector built from real traces. The redesign guide's
+> remaining backlog and per-page status live in
+> [`CONSOLE-REDESIGN.md`](CONSOLE-REDESIGN.md). Open decisions: which judge owns the
+> baseline (local 0.914 vs Groq 0.986), rotating the three `.env` keys, Dependabot
+> #8/#9, cutting v1.1, corpus v4 + golden v4.
 
 ---
 

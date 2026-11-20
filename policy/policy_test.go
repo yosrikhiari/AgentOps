@@ -209,6 +209,27 @@ func TestPolicySpanSinkIsNonBlocking(t *testing.T) {
 	}
 }
 
+// RULE the console is a local surface and the default bind is loopback.
+// The console returns stored prompts and starts GPU work, so it must be mounted
+// behind consoleGuard, and a fresh install must not listen on every interface.
+// Both are one-line deletions away from regressing silently.
+func TestPolicyConsoleIsLocalOnly(t *testing.T) {
+	main := read(t, "main.go")
+	for _, want := range []string{
+		"consoleUI := consoleGuard(consoleRemote, ui)",
+		"mux.Handle(pattern, consoleUI)",
+		"securityHeaders(withCrossOriginProtection(mux))",
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("main.go is missing %q — the console must stay guarded and the browser defences wired", want)
+		}
+	}
+	cfg := read(t, "config.go")
+	if !strings.Contains(cfg, `addr = "127.0.0.1:8080"`) {
+		t.Error(`config.go default ADDR is not 127.0.0.1:8080 — a default install must not listen on every interface`)
+	}
+}
+
 // RULE every environment variable the code reads is documented in docs/API.md.
 // Reads go through os.Getenv or the envOr(key, default) helper in config.go.
 func TestPolicyEnvVarsDocumented(t *testing.T) {

@@ -59,6 +59,7 @@
     <a class="tower-nav-btn" href="#charts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg><span>Charts</span></a>
     <a class="tower-nav-btn" href="#gpu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h12M6 14h8"/></svg><span>GPU page</span></a>
     <a class="tower-nav-btn" href="#traces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 6h4a4 4 0 0 1 4 4v0M8 18h4a4 4 0 0 0 4-4v0"/></svg><span>Trace inspector</span></a>
+    <a class="tower-nav-btn" href="#observe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg><span>Metrics &amp; models</span></a>
     <div class="tower-nav-label">Rules</div>
     <a class="tower-nav-btn" href="#rules"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span>How to extend</span></a>
     <a class="tower-nav-btn" href="tower-enhancements.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.5 6 6.5.5-5 4.3 1.6 6.4L12 16.8 6.4 20.2 8 13.8 3 9.5l6.5-.5z"/></svg><span>Enhancement study</span></a>
@@ -157,14 +158,14 @@
         </div>
         <table class="ds-spec">
           <tr><th>class</th><th>role</th><th>notes</th></tr>
-          <tr><td>.tower-shell</td><td>grid 216px 1fr, min-height 100vh</td><td>64px 1fr under 900 px</td></tr>
-          <tr><td>.tower-side</td><td>sticky sidebar, own scroll</td><td>brand → nav-label groups → nav-btn → side-foot (margin-top:auto)</td></tr>
-          <tr><td>.tower-nav-btn</td><td>button or &lt;a&gt; with 17 px icon + label</td><td><span class="tower-mono">data-active="true"</span> = amber-dim / amber. External links use target=_blank rel=noopener</td></tr>
-          <tr><td>.tower-nav-label</td><td>10.5 px uppercase group header</td><td>Operate · Quality · Links</td></tr>
-          <tr><td>.tower-side-foot</td><td>router pulse + version</td><td>mirrors the strip so the state survives collapse</td></tr>
+          <tr><td>.tower-shell</td><td>grid 56px 1fr, min-height 100vh</td><td>64px 1fr under 900 px; the rail never disappears</td></tr>
+          <tr><td>.tower-side</td><td>sticky rail (72 px), own scroll</td><td>brand → nav-label groups → nav-btn → side-foot (margin-top:auto)</td></tr>
+          <tr><td>.tower-nav-btn</td><td>40 px square icon button; the name is visually hidden but present for assistive tech and in the tooltip</td><td><span class="tower-mono">data-active="true"</span> = amber-dim / amber. External links use target=_blank rel=noopener</td></tr>
+          <tr><td>.tower-nav-label</td><td>hidden in the rail (display:none); destinations carry visible labels instead</td><td>Operate · Quality · Links</td></tr>
+          <tr><td>.tower-side-foot</td><td>router pulse + version, centred; hidden under 900 px</td><td>mirrors the strip so the state survives collapse</td></tr>
           <tr><td>.tower-statusstrip</td><td>sticky header, 92 % ground + blur(6px)</td><td>h1 = page title (set by the router), then pulse items: models · faithfulness · p50 · router live/down</td></tr>
           <tr><td>.tower-pulse-item / -dot</td><td>label + mono value, optional pulsing 7 px dot</td><td>dot colour is set inline by <span class="tower-mono">updateStrip()</span>: green all-up, red otherwise</td></tr>
-          <tr><td>.tower-content</td><td>main column, 24/28 px padding, 20 px gap, max-width 1480</td><td><span class="tower-mono">aria-live="polite"</span> in the console</td></tr>
+          <tr><td>.tower-content</td><td>main column, 24/28 px padding, 20 px gap, fills the viewport (no max-width gutter)</td><td><span class="tower-mono">aria-live="polite"</span> in the console</td></tr>
         </table>
       </section>
 
@@ -396,17 +397,34 @@
 
       <section class="ds-section" id="cockpit">
         <h2>Cockpit</h2>
-        <p class="ds-lead">One Track N page merging send and sight: a conversation, not a form. The transcript is one scrollable column of message blocks; the composer grows with the text and sends on Enter. The rail appends redacted spans from <span class="ds-inline">GET /v1/events</span> as they land; your latest send pins amber. (#/try and #/live retired into it.)</p>
-        <div class="ds-frame"><div class="ds-frame-label">Chat — user messages right-aligned on surface-raised, assistant blocks left with an amber border on the latest, metadata (model, backend, reason, tokens, trace) under every answer. Used in pageCockpit()</div>
+        <p class="ds-lead">The workbench: a conversation column (max 780 px) with the composer docked at the bottom, and an inspector on the right that turns the thread's traces into totals, time-by-span bars and one card per run. Threads moved into a popover so the reading column stays the widest thing on screen; redacted live spans from <span class="ds-inline">GET /v1/events</span> sit collapsed under the inspector. Used in pageCockpit().</p>
+        <div class="ds-frame"><div class="ds-frame-label">Conversation + inspector: user turns as warm bubbles, assistant answers as plain text with model/backend/reason/tokens/trace underneath; the docked composer is one rounded control. Inspector: .tower-stat-grid, .tower-span-row bars, .tower-run-card. Used in pageCockpit()</div>
           <div class="tower-chat">
             <div class="tower-chat-log" style="max-height:none">
               <div class="tower-chat-msg user"><div class="tower-chat-role"><span>you</span><span>11:56:31</span></div><div class="tower-chat-body">Clause 7.2 says the supplier may suspend delivery without notice. Is that enforceable?</div><div class="tower-chat-meta"><a class="tower-link tower-mono" href="#">742966fc</a></div></div>
-              <div class="tower-chat-msg assistant latest"><div class="tower-chat-role"><span>assistant</span><span>11:57:06</span></div><div class="tower-chat-body">It is likely enforceable only if the contract ties suspension to a defined breach or event. An unconditional right can be read down as an abuse of right, and a notice requirement is usually implied for good faith.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:3b-instruct</span><span class="tower-chip">ollama</span><span class="tower-chip">long_prompt</span><span>134 tok</span><a class="tower-link tower-mono" href="#">3c795f68</a></div></div>
+              <div class="tower-chat-msg assistant latest"><div class="tower-chat-role"><span>assistant</span><span>11:57:06</span></div><div class="tower-chat-body">It is likely enforceable only if the contract ties suspension to a defined breach or event. An unconditional right can be read down as an abuse of right, and a notice requirement is usually implied for good faith.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:3b-instruct</span><span class="tower-chip">ollama</span><span class="tower-chip">reasoning-prompt</span><span>134 tok</span><a class="tower-link tower-mono" href="#">3c795f68</a><span class="tower-pop-anchor"><button class="tower-chip tower-chip-btn">why this model? ▾</button></span><span class="tower-pop-anchor"><button class="tower-chip tower-chip-btn">Retry with ▾</button></span></div></div>
+              <div class="tower-chat-msg assistant"><div class="tower-chat-role"><span>assistant</span><span>11:58:02</span></div><div class="tower-chat-body">Last model turn: qwen2.5:3b-instruct on the fast tier via ollama, because short-simple-prompt, answered in 0.52 s. This turn was routed to the quality tier because gateway-question; no model was called — the router answered it.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:7b-instruct-q4_K_M</span><span class="tower-chip">ollama</span><span class="tower-chip">gateway-question</span><span class="tower-chip">answered by router</span><a class="tower-link tower-mono" href="#">8f2a1c3d</a></div></div>
               <div class="tower-chat-msg assistant pending"><div class="tower-chat-role"><span class="tower-live-dot"></span><span>thinking</span></div><div class="tower-chat-body">Waiting for the model — the first answer loads it into VRAM.</div></div>
             </div>
             <div class="tower-chat-composer">
+              <div class="tower-model-pick"><span class="tower-model-pick-label">model</span><button class="tower-chip tower-chip-btn on">Auto</button><button class="tower-chip tower-chip-btn">fast</button><button class="tower-chip tower-chip-btn">quality</button><button class="tower-chip tower-chip-btn">cloud</button></div>
               <textarea class="tower-chat-input" rows="2" placeholder="Ask a question, or paste the clause you are working on…"></textarea>
               <div class="tower-chat-actions"><span class="tower-chat-hint">4 msgs · ~124 tokens</span><div class="tower-form-row"><button class="tower-btn secondary">Run as workflow</button><button class="tower-btn primary">Send</button></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="ds-frame" style="padding-top:210px"><div class="ds-frame-label">The same popover component answers both questions: tier, reason, and every candidate considered (chosen marked) for one reply; a list of tiers for a retry. One open at a time, closed by an outside click or Escape. Used in msgEl(), fillWhy() and popover()</div>
+          <div class="tower-pop-anchor">
+            <button class="tower-chip tower-chip-btn" aria-expanded="true">why this model? ▾</button>
+            <div class="tower-pop open">
+              <div class="tower-why-head">This turn</div>
+              <div class="tower-kv"><span class="k">tier</span><span class="v">quality</span><span class="k">reason</span><span class="v">reasoning-prompt</span></div>
+              <div class="tower-why-label">Candidates considered</div>
+              <div class="tower-pop-list">
+                <div class="tower-pop-item"><span>qwen2.5:7b-instruct-q4_K_M · chosen</span><span class="tower-mono">quality · local</span></div>
+                <div class="tower-pop-item"><span>qwen2.5:3b-instruct</span><span class="tower-mono">fast · local</span></div>
+                <div class="tower-pop-item"><span>openai/gpt-oss-20b</span><span class="tower-mono">cloud · cloud</span></div>
+              </div>
             </div>
           </div>
         </div>
@@ -414,7 +432,43 @@
           <tr><th>page</th><th>built from</th><th>used in</th></tr>
           <tr><td>#/cockpit</td><td>panel + tower-chat (log, message blocks, composer) + tower-grid-cockpit shell with tower-conv sidebar + shared rail (tower-ticket pinned tower-live-yours)</td><td>pageCockpit() in console/static/app.js; client-held messages[] capped at 4000 est. tokens (counts in tower-chat-hint); threads via GET/POST /v1/conversations (+messages, DELETE) with auto-title from the first user message; own trace pinned via mountRail pin hook; Run-as-workflow posts to POST /v1/workflows</td></tr>
           <tr><td>tower-chat-msg</td><td>user = right-aligned on surface-raised; assistant = left on ground; latest = amber border; pending = dashed with the live dot and the model-loading sentence</td><td>pageCockpit() · every turn</td></tr>
-          <tr><td>tower-chat-input</td><td>grows to 160 px, Enter sends, Shift+Enter newlines; disabled while a send is in flight; counts sit left of the buttons</td><td>pageCockpit() · composer</td></tr>
+          <tr><td>tower-chat-input</td><td>grows to 180 px, Enter sends, Shift+Enter newlines; round amber send disabled while empty or in flight; ~N tokens sits left of it</td><td>pageCockpit() · composer</td></tr>
+<tr><td>.tower-workbench</td><td>grid minmax(0,1fr) 340px; one column under 900 px, inspector hidden</td><td>pageCockpit() — the page shell</td></tr>
+<tr><td>.tower-insp / .tower-stat-grid / .tower-span-row / .tower-run-card</td><td>inspector flush right, full height, own scroll: 2-column stat tiles, span bars scaled to the largest span, run cards jump to their message</td><td>pageCockpit() — renderInspector(), built from GET /v1/traces/{id}</td></tr>
+<tr><td>.tower-thread-pop</td><td>absolute popover under the Threads button; closes on select, outside click or Escape</td><td>pageCockpit() — loadConvs()</td></tr>
+<tr><td>.tower-chat-meta (footer)</td><td>chips, in order: model · provider · route reason · tokens · "● N spans · time" · trace id. A chip is omitted only when the data is missing — a router answer has no provider or tokens and carries "answered by router" instead. Actions ("why this model?", "Retry with") are chip-buttons, not coloured chips</td><td>pageCockpit() — msgEl(); values come from the response (model, backend, reason, tier, candidates, answered_by) or from GET /v1/traces/{id} for a reloaded thread</td></tr>
+<tr><td>.tower-pop / .tower-pop-anchor</td><td>one popover component: absolute panel above its chip-button, one open at a time, closed by an outside click or Escape. Content: .tower-kv for tier/reason, .tower-pop-list of .tower-pop-item for candidates, .tower-pop-action for the retry tiers</td><td>pageCockpit() — popover(), fillWhy(), retryAt(); candidates come from the response's <span class="ds-inline">candidates[]</span> or the trace's route.decide attrs joined to GET /v1/models</td></tr>
+<tr><td>.tower-model-pick</td><td>the four composer choices (Auto / fast / quality / cloud) as chip-buttons, the active one amber; sends <span class="ds-inline">model:"fast"</span> etc., which the server resolves to that tier's model with reason explicit-tier</td><td>pageCockpit() — renderPicker()</td></tr>
+        </table>
+      </section>
+
+      <!-- ===================== METRICS & MODELS ===================== -->
+      <section class="ds-section" id="observe">
+        <h2>Metrics &amp; models</h2>
+        <p class="ds-lead">Two in-app pages replace the old sidebar links that opened raw <span class="ds-inline">/metrics</span> and <span class="ds-inline">/v1/models</span> in another tab. Both read <span class="ds-inline">GET /v1/overview</span> - traffic from spans, lifetime counters from the process - and render the same four states as every other page. The sidebar entries are <span class="ds-inline">tower-nav-btn</span> buttons with <span class="ds-inline">data-page</span>, so they are keyboard-reachable and share the active state.</p>
+        <div class="ds-frame"><div class="ds-frame-label">Metric row is 4 x 2 (eight cards fills both rows with no gap) - used in pageMetrics() and pageModels()</div>
+          <div class="tower-metric-row">
+            <div class="tower-metric"><div class="tower-metric-label">Requests / last hour</div><div class="tower-metric-value">128</div><div class="tower-metric-delta">3 in the last minute</div></div>
+            <div class="tower-metric"><div class="tower-metric-label">Errors / last hour</div><div class="tower-metric-value">2</div><div class="tower-metric-delta">1.56% of requests</div></div>
+            <div class="tower-metric"><div class="tower-metric-label">p50 latency</div><div class="tower-metric-value">740 ms</div><div class="tower-metric-delta">p99 2.10 s</div></div>
+            <div class="tower-metric"><div class="tower-metric-label">Tokens / last hour</div><div class="tower-metric-value">18,204</div><div class="tower-metric-delta">reported by the backend</div></div>
+          </div>
+          <div class="tower-panel" style="margin-top:14px">
+            <div class="tower-panel-head"><div><h3>Traffic by model - last hour</h3><div class="tower-panel-sub">Counted from spans; share is of every request in the window</div></div></div>
+            <table class="tower-table">
+              <thead><tr><th>Model</th><th>Tier</th><th>Requests</th><th>Share</th></tr></thead>
+              <tbody>
+                <tr><td class="tower-mono">qwen2.5:3b-instruct</td><td><span class="tower-chip">fast</span></td><td class="tower-mono">96</td><td class="tower-mono">75.0%</td></tr>
+                <tr><td class="tower-mono">qwen2.5:7b-instruct-q4_K_M</td><td><span class="tower-chip">quality</span></td><td class="tower-mono">30</td><td class="tower-mono">23.4%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <table class="ds-spec">
+          <tr><th>page</th><th>built from</th><th>used in</th></tr>
+          <tr><td>#/metrics</td><td>metric row (8) + tower-grid-2 of two panels + tower-table; Prometheus text stays one click away in the panel action</td><td>pageMetrics() in console/static/app.js; polls every 5 s with <span class="ds-inline">polling</span> so it does not flash; skeleton / live / empty-with-next-action / error-with-Retry; share is computed from <span class="ds-inline">traffic.by_model</span></td></tr>
+          <tr><td>#/models</td><td>metric row (8) + Served models panel + Backends panel, both tower-table; state is <span class="ds-inline">pill()</span>, facts are <span class="ds-inline">chip()</span> (tier, backend, local/cloud)</td><td>pageModels() in console/static/app.js; joins <span class="ds-inline">models[]</span>, <span class="ds-inline">backends[]</span>, <span class="ds-inline">since_start</span> and <span class="ds-inline">traffic.by_model</span> from GET /v1/overview; empty state names FAST_MODEL / QUALITY_MODEL / OLLAMA_MODELS</td></tr>
+          <tr><td>sidebar</td><td>Observe group: two tower-nav-btn buttons with data-page, not anchors</td><td>console/static/index.html</td></tr>
         </table>
       </section>
 

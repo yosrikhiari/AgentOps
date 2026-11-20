@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -1231,6 +1231,35 @@ func evalTimeout() time.Duration {
 	return 90 * time.Minute
 }
 
+// evalTally is the suite summary. A pair whose answer yields no scorable claim is
+// not a zero: the judge was never asked anything, so it is counted as unmeasured
+// and kept out of the mean (audit 2026-11-18 C4). Misses and unmeasured pairs are
+// different facts and stay separate.
+type evalTally struct {
+	sumF, sumP, sumR                              float64
+	scored, misses, refuted, noClaims, unsolvable int
+}
+
+func (t *evalTally) add(faithfulness float64, claims int, miss, unsolvable bool, precision, recall float64) {
+	switch {
+	case miss:
+		t.misses++
+	case claims == 0:
+		t.noClaims++
+	default:
+		t.sumF += faithfulness
+		t.scored++
+		if faithfulness == 0 {
+			t.refuted++
+		}
+	}
+	if unsolvable {
+		t.unsolvable++
+	}
+	t.sumP += precision
+	t.sumR += recall
+}
+
 func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), evalTimeout())
 	defer cancel()
@@ -1242,26 +1271,35 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 	if err != nil {
 		return err
 	}
-	var pairs []evals.Pair
-	for i, line := range bytes.Split(raw, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var p evals.Pair
-		if err := json.Unmarshal(line, &p); err != nil {
-			return fmt.Errorf("line %d: %w", i+1, err)
-		}
-		pairs = append(pairs, p)
-	}
-	if len(pairs) == 0 {
-		return fmt.Errorf("%s: no pairs", goldenPath)
-	}
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(ctx)
+	// The doc ids the validator must accept come from the ingested corpus, which
+	// is the same set retrieval can return. Reading them from the database rather
+	// than the clean/ folder keeps a binary-only deployment scoring.
+	known := map[string]bool{}
+	docRows, err := conn.Query(ctx, `SELECT DISTINCT doc_id FROM chunks`)
+	if err != nil {
+		return fmt.Errorf("read corpus doc ids: %w", err)
+	}
+	for docRows.Next() {
+		var id string
+		if err := docRows.Scan(&id); err != nil {
+			docRows.Close()
+			return fmt.Errorf("read corpus doc ids: %w", err)
+		}
+		known[id] = true
+	}
+	docRows.Close()
+	if err := docRows.Err(); err != nil {
+		return fmt.Errorf("read corpus doc ids: %w", err)
+	}
+	pairs, err := evals.LoadGolden(raw, known)
+	if err != nil {
+		return fmt.Errorf("%s: %w (is the corpus ingested? run --ingest)", goldenPath, err)
+	}
 	embedModel := os.Getenv("EMBED_MODEL")
 	if embedModel == "" {
 		embedModel = "nomic-embed-text"
@@ -1287,8 +1325,7 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		judge = evals.NewOllamaJudge(ollamaURL, judgeName)
 	}
 	topK := 5
-	var sumF, sumP, sumR float64
-	var scored, misses, refuted, noClaims, unsolvable int
+	var tally evalTally
 	auditLog := audit.SQLStore{Exec: pgAdapter{conn}, Query: pgAdapter{conn}}
 	if err := auditLog.Append(ctx, audit.EvalStarted(goldenVersion, scoreModel, len(pairs))); err != nil {
 		log.Printf("audit: %v", err)
@@ -1318,22 +1355,7 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 		done[p.Question] = true
 		// Fold what an earlier attempt already judged into this run's summary, so the
 		// number at the end covers the whole suite rather than only the tail.
-		if p.RetrievalMiss {
-			misses++
-		} else {
-			sumF += p.Faithfulness
-			scored++
-			if p.Claims == 0 {
-				noClaims++
-			} else if p.Faithfulness == 0 {
-				refuted++
-			}
-		}
-		if p.Unsolvable() {
-			unsolvable++
-		}
-		sumP += p.Precision
-		sumR += p.Recall
+		tally.add(p.Faithfulness, p.Claims, p.RetrievalMiss, p.Unsolvable(), p.Precision, p.Recall)
 	}
 	if run.Resumed {
 		log.Printf("resuming run %d: %d/%d pairs already judged (each pair is stored as it lands; a crash no longer loses the run)", run.ID, len(run.Pairs), len(pairs))
@@ -1364,40 +1386,25 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 			return fmt.Errorf("store pair %d (run %d): %w", i+1, run.ID, err)
 		}
 		done[res.Question] = true
-		if res.RetrievalMiss {
-			misses++
-		} else {
-			sumF += res.Faithfulness
-			scored++
-			if len(res.Claims) == 0 {
-				noClaims++ // the answer was too short to split into claims: unaffected by the judge
-			} else if res.Faithfulness == 0 {
-				refuted++
-			}
-		}
-		if evals.Unsolvable(res) {
-			unsolvable++
-		}
-		sumP += res.Precision
-		sumR += res.Recall
+		tally.add(res.Faithfulness, len(res.Claims), res.RetrievalMiss, evals.Unsolvable(res), res.Precision, res.Recall)
 		log.Printf("pair %d miss=%v faith=%.2f p=%.2f r=%.2f trimmed=%d q=%.60q", i+1, res.RetrievalMiss, res.Faithfulness, res.Precision, res.Recall, res.Trimmed, res.Question)
 	}
 	n := float64(len(pairs))
 	avgF := 0.0
-	if scored > 0 {
-		avgF = sumF / float64(scored) // faith where retrieved; misses excluded
+	if tally.scored > 0 {
+		avgF = tally.sumF / float64(tally.scored) // faith where retrieved; misses and unmeasured pairs excluded
 	} else {
 		// Nothing was judged, so there is no faithfulness measurement. The run is still
 		// recorded (its miss rows are evidence about retrieval), but drift and the gate
 		// ignore it - a 0.000 here would read as "everything was hallucinated" when the
 		// truth is "nothing was asked of the judge".
-		log.Printf("warning: no judged pairs - all %d were retrieval misses; is the corpus ingested? run --ingest. This run is evidence about retrieval, not a faithfulness score", misses)
+		log.Printf("warning: no judged pairs - all %d were retrieval misses; is the corpus ingested? run --ingest. This run is evidence about retrieval, not a faithfulness score", tally.misses)
 	}
 	// unsolvable = misses + fully refuted: the share of the suite no router could have
 	// rescued, which is the ceiling any routing policy is measured against. It is printed
 	// next to the score so a low faith number is never read as a routing opportunity.
 	log.Printf("suite n=%d scored=%d misses=%d refuted=%d no-claims=%d unsolvable=%d judge=%s prompt=%s faith=%.3f precision=%.3f recall=%.3f",
-		len(pairs), scored, misses, refuted, noClaims, unsolvable, judgeName, evals.JudgePromptVersion, avgF, sumP/n, sumR/n)
+		len(pairs), tally.scored, tally.misses, tally.refuted, tally.noClaims, tally.unsolvable, judgeName, evals.JudgePromptVersion, avgF, tally.sumP/n, tally.sumR/n)
 	if err := evals.FinishRun(ctx, pgAdapter{conn}, run.ID, avgF); err != nil {
 		return fmt.Errorf("finish run %d: %w", run.ID, err)
 	}
@@ -1496,6 +1503,69 @@ func runIngest(dsn, ollamaURL string) {
 	}
 	log.Printf("ingested %d chunks (cache hits=%d new=%d corrupt=%d model_changed=%d)",
 		n, cache.Hits, cache.New, cache.Corrupt, cache.ModelChanged)
+}
+
+// isLoopbackRemote reports whether a request came from this machine. It parses
+// the peer address rather than trusting a header, because a header is the thing
+// a remote client controls.
+func isLoopbackRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// consoleGuard keeps the operator surface on the machine that runs it. The
+// console returns stored prompts verbatim and can start GPU work, so a peer that
+// is not loopback is refused unless the operator set CONSOLE_REMOTE=true
+// deliberately. The refusal uses the same error envelope as every other gateway
+// error, so a client parses one shape.
+func consoleGuard(allowRemote bool, next http.Handler) http.Handler {
+	if allowRemote {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isLoopbackRemote(r.RemoteAddr) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+			"code":     "console_local_only",
+			"message":  "the console is reachable from this machine only; set CONSOLE_REMOTE=true to allow remote clients",
+			"trace_id": "",
+		}})
+	})
+}
+
+// securityHeaders is the console's browser contract: no framing, no MIME
+// sniffing, no referrer leakage, and no script or style the binary did not ship.
+// The two font hosts are the console's only third-party origins.
+func securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; " +
+		"style-src 'self' https://fonts.googleapis.com; " +
+		"font-src https://fonts.gstatic.com; " +
+		"img-src 'self' data:; " +
+		"connect-src 'self'; " +
+		"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withCrossOriginProtection rejects state-changing browser requests from another
+// origin (Sec-Fetch-Site, falling back to Origin vs Host). Non-browser clients —
+// curl, an SDK, an agent — send neither header and are unaffected.
+func withCrossOriginProtection(next http.Handler) http.Handler {
+	return http.NewCrossOriginProtection().Handler(next)
 }
 
 func main() {
@@ -1785,8 +1855,13 @@ func main() {
 			return nil
 		},
 	})
+	// The console reads stored prompts and starts GPU work, so it is local-only
+	// unless the operator opts in. ADDR being loopback makes this a second lock,
+	// not the only one.
+	consoleRemote := strings.EqualFold(os.Getenv("CONSOLE_REMOTE"), "true")
+	consoleUI := consoleGuard(consoleRemote, ui)
 	for _, pattern := range ui.Routes() {
-		mux.Handle(pattern, ui)
+		mux.Handle(pattern, consoleUI)
 	}
 	mux.HandleFunc("GET /v1/drift/report", func(w http.ResponseWriter, r *http.Request) {
 		data, err := queryDrift(pool, *driftGolden, evalThreshold())
@@ -1842,37 +1917,46 @@ func main() {
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": msg, "trace_id": traceID}})
 		}
-		if srv.RequireKey {
-			secret := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-			if secret == "" {
-				mcpErr(http.StatusUnauthorized, "missing_api_key", "Authorization: Bearer <api key> is required")
-				return
-			}
-			key, err := srv.Keys.Lookup(r.Context(), router.HashSecret(secret))
-			if err != nil {
-				mcpErr(http.StatusUnauthorized, "invalid_api_key", "api key not recognised")
-				return
-			}
-			if key.Disabled {
-				mcpErr(http.StatusForbidden, "api_key_disabled", "api key disabled")
-				return
-			}
+		// The same gate as the chat path — validity, disabled, budget and RPM —
+		// rather than a weaker copy that only checked that the key existed.
+		key, ok := srv.Authenticate(w, r, traceID)
+		if !ok {
+			return
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
 			mcpErr(http.StatusBadRequest, "bad_request", "unreadable body")
 			return
 		}
-		raw, status := mcpSrv.HandleOneHTTP(body, r.Header.Get("MCP-Protocol-Version"))
+		raw, status, tokens := mcpSrv.HandleOneHTTPUsage(body, r.Header.Get("MCP-Protocol-Version"))
+		// A tool that called a model is charged like a chat call; leaving it out
+		// made /mcp an unmetered door around the budget.
+		if key != nil && srv.Keys != nil && tokens > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := srv.Keys.AddUsage(ctx, key.ID, tokens); err != nil {
+				log.Printf("mcp usage for key %d: %v", key.ID, err)
+			}
+			cancel()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write(raw)
 	})
 	mux.Handle("/", srv)
+	// ReadTimeout closes a slow-trickled body; WriteTimeout is the model budget
+	// plus a margin, so a streaming answer is not cut off mid-flight; IdleTimeout
+	// reaps keep-alive connections that are doing nothing.
+	writeTimeout := srv.RequestTimeout + 30*time.Second
+	if srv.RequestTimeout <= 0 {
+		writeTimeout = 0
+	}
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mux,
+		Handler:           securityHeaders(withCrossOriginProtection(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       120 * time.Second,
 	}
 	// Graceful shutdown: stop accepting, let in-flight chats finish (up to the request
 	// timeout), then flush queued spans and close the pool.
@@ -1880,7 +1964,11 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()
-	log.Printf("tower %s router on %s fast=%s quality=%s backends=%d auth=%v", version, cfg.Addr, cfg.FastModel, cfg.QualityModel, len(backends), srv.RequireKey)
+	consoleScope := "local-only"
+	if consoleRemote {
+		consoleScope = "remote-allowed"
+	}
+	log.Printf("tower %s router on %s fast=%s quality=%s backends=%d auth=%v console=%s", version, cfg.Addr, cfg.FastModel, cfg.QualityModel, len(backends), srv.RequireKey, consoleScope)
 	select {
 	case err := <-errCh:
 		log.Fatal(err)

@@ -147,6 +147,7 @@
     <div class="tower-nav-label">Density &amp; help</div>
     <a class="tower-nav-btn" href="#ex19"><span>19 Smarter tables</span></a>
     <a class="tower-nav-btn" href="#ex20"><span>20 Glossary &amp; keys</span></a>
+<a class="tower-nav-btn" href="#ex21"><span>21 Router answers</span></a>
     <div class="tower-side-foot"><div class="tower-mono tower-muted">20 examples · Sep 2026</div></div>
   </nav>
 
@@ -576,6 +577,45 @@
               <div class="tower-metric"><div class="tower-metric-label"><span class="tower-term" data-def="Change in faithfulness between the two latest runs on the same golden version. If the judge model changed between them the delta is flagged, because it is not evidence of corpus drift.">Drift</span></div><div class="tower-metric-value">+0.014</div></div>
             </div>
             <div class="tower-empty" id="keysOut" style="padding:14px 0 0">Press <kbd>?</kbd> for the shortcut sheet.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 21 ============ -->
+      <section class="tower-panel x-ex" id="ex21" style="position:relative">
+        <div class="x-head"><span class="x-num">21</span><h2>Show the routing, and let the router answer for it</h2><div class="x-tags"><span class="x-tag hi">shipped</span><span class="x-tag">api + ui</span></div></div>
+        <div class="x-cols">
+          <div>
+            <div class="x-kicker">Today</div>
+            <p class="x-p">The footer said which model answered and why, but a reader could not ask "why not another one" without getting a model's guess, and there was no way to re-ask a turn on a different tier. The gateway now answers questions about itself from the last model turn — <span class="x-cite">answered_by:"router"</span>, no model call — and every reply carries <span class="x-cite">tier</span> and <span class="x-cite">candidates[]</span>.</p>
+            <div class="x-kicker">Proposal</div>
+            <p class="x-p">Four chips in order (model · provider · reason · tokens · spans) and two chip-button popovers: <b>why this model?</b> for tier, reason and every candidate considered, and <b>Retry with ▾</b> to re-send the same user turn on Auto / fast / quality / cloud. A retry is a review action and is marked <span class="x-cite">not saved</span>, so comparing two answers never rewrites the stored thread.</p>
+          </div>
+          <div class="x-demo"><span class="x-demo-label">The footer, and the popover opened</span>
+            <div class="tower-chat">
+              <div class="tower-chat-log" style="max-height:none">
+                <div class="tower-chat-msg user"><div class="tower-chat-body">why are you using this model?</div></div>
+                <div class="tower-chat-msg assistant"><div class="tower-chat-body">Last model turn: qwen2.5:3b-instruct on the fast tier via ollama, because short-simple-prompt, answered in 0.52 s. This turn was routed to the quality tier because gateway-question; no model was called — the router answered it.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:7b-instruct-q4_K_M</span><span class="tower-chip">ollama</span><span class="tower-chip">gateway-question</span><span class="tower-chip">answered by router</span><a class="tower-link tower-mono" href="#">8f2a1c3d</a></div></div>
+              </div>
+              <div class="tower-chat-composer">
+                <div class="tower-model-pick"><span class="tower-model-pick-label">model</span><button class="tower-chip tower-chip-btn on">Auto</button><button class="tower-chip tower-chip-btn">fast</button><button class="tower-chip tower-chip-btn">quality</button><button class="tower-chip tower-chip-btn">cloud</button></div>
+                <textarea class="tower-chat-input" rows="2" placeholder="Ask a question…"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="x-demo" style="margin-top:14px;padding-top:150px">
+          <div class="tower-pop-anchor">
+            <button class="tower-chip tower-chip-btn" aria-expanded="true">why this model? ▾</button>
+            <div class="tower-pop open">
+              <div class="tower-why-head">This turn</div>
+              <div class="tower-kv"><span class="k">tier</span><span class="v">quality</span><span class="k">reason</span><span class="v">gateway-question</span></div>
+              <div class="tower-why-label">Candidates considered</div>
+              <div class="tower-pop-list">
+                <div class="tower-pop-item"><span>qwen2.5:7b-instruct-q4_K_M · chosen</span><span class="tower-mono">quality · local</span></div>
+                <div class="tower-pop-item"><span>qwen2.5:3b-instruct</span><span class="tower-mono">fast · local</span></div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

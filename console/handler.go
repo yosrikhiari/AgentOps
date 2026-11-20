@@ -73,6 +73,7 @@ func New(deps Deps) *Handler {
 		http.ServeFileFS(w, r, sub, "index.html")
 	})
 	h.mux.HandleFunc("GET /v1/overview", h.overview)
+	h.mux.HandleFunc("GET /v1/metrics/series", h.metricSeries)
 	h.mux.HandleFunc("GET /v1/requests", h.requests)
 	h.mux.HandleFunc("GET /v1/evals/runs", h.evalRuns)
 	h.mux.HandleFunc("GET /v1/benchmarks", h.benchmarks)
@@ -96,7 +97,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.Serv
 // Routes lists the paths this handler owns, so main.go can mount them individually
 // next to the router's own /v1 endpoints.
 func (h *Handler) Routes() []string {
-	return []string{"GET /{$}", "GET /favicon.ico", "GET /static/", "GET /v1/overview", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks", "GET /v1/activity",
+	return []string{"GET /{$}", "GET /favicon.ico", "GET /static/", "GET /v1/overview", "GET /v1/metrics/series", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks", "GET /v1/activity",
 		"GET /v1/evals/status", "POST /v1/evals/run", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume",
 		"GET /v1/gpu",
 		"GET /v1/conversations", "POST /v1/conversations", "GET /v1/conversations/{id}/messages",
@@ -168,6 +169,46 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// metricSeries is the Metrics page's only data source: a bounded window of
+// buckets aggregated from spans. Windows are a closed set and the step is
+// derived server-side, so a client cannot ask for a million points.
+func (h *Handler) metricSeries(w http.ResponseWriter, r *http.Request) {
+	window := r.URL.Query().Get("window")
+	label := "1h"
+	var span time.Duration
+	switch window {
+	case "", "1h":
+		span = time.Hour
+	case "6h":
+		span = 6 * time.Hour
+		label = "6h"
+	case "24h":
+		span = 24 * time.Hour
+		label = "24h"
+	default:
+		writeErr(w, http.StatusBadRequest, "bad_request", "window must be 1h, 6h or 24h")
+		return
+	}
+	step := time.Minute
+	switch {
+	case span >= 24*time.Hour:
+		step = 15 * time.Minute
+	case span >= 6*time.Hour:
+		step = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	now := time.Now()
+	points, err := h.deps.Store.MetricSeries(ctx, now.Add(-span), now, step)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "store_unavailable", "span store unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"window": label, "step_s": int(step.Seconds()), "points": points,
+	})
 }
 
 func (h *Handler) requests(w http.ResponseWriter, r *http.Request) {

@@ -108,12 +108,12 @@ STRIDE-lite, each threat with the control and where it is enforced.
 | Tampering with keys at rest | Only SHA-256 of the secret stored; secret printed once | `router/keys.go`, review |
 | Repudiation | `X-Trace-ID` on every response; every request has spans; key name on per-key counters | `TestHandleChatRoutesFast` (header), spans tests |
 | Information disclosure | Prompts never in spans; read paths redact `prompt/input/text/output`; **sensitive requests never reach a cloud backend** | `TestPolicyPromptsNeverReachSpans`, `TestPolicyMCPToolSpansRedacted`, `TestListSpansRedacted`, `TestSensitiveNeverLeavesBox`, `TestPolicySensitiveHasNoCloudCandidate` |
-| Denial of service | Per-key RPM + token budget; `REQUEST_TIMEOUT`; `ReadHeaderTimeout`; bounded span queue; eval single-flight; body size implicitly bounded by Ollama context | `TestAPIKeyRateLimit`, `TestAPIKeyBudget`, `TestEvalRunSingleFlight` |
-| Elevation of privilege | Container runs as `nonroot` on distroless; no admin endpoints; key creation is CLI-only on the box | `Dockerfile`, review |
+| Denial of service | Per-key RPM + token budget; `REQUEST_TIMEOUT`; `ReadHeaderTimeout`; bounded span queue; eval single-flight; 4 MiB body cap; `ReadTimeout`/`WriteTimeout`/`IdleTimeout`; client `options` bounded (`num_ctx` ≤ 32768, `num_gpu` ≤ 99, `keep_alive` ≤ 1h) | `TestAPIKeyRateLimit`, `TestAPIKeyBudget`, `TestEvalRunSingleFlight` |
+| Elevation of privilege | Container runs as `nonroot` on distroless; the console — the only admin surface, and the one that returns prompts — refuses non-loopback peers unless `CONSOLE_REMOTE=true`; key creation is CLI-only on the box | `TestPolicyConsoleIsLocalOnly`, `TestConsoleGuardKeepsRemoteClientsOut`, `Dockerfile` |
 | Supply chain | One direct dependency; Dependabot weekly; `govulncheck` in CI (found and fixed GO-2026-5970 in `x/text` on first run); `staticcheck` in CI; release binaries with `SHA256SUMS` | `TestPolicySingleDirectDependency`, `ci.yml` policy job |
 | Secrets | Env vars only (`GROQ_API_KEY`, `POSTGRES_DSN`); never logged; `.env` git-ignored | review; `.gitignore` |
 
-Known gap, stated: the console and `/metrics` are unauthenticated. They expose routing metadata and step snippets, never prompts. Run them on localhost or behind a proxy. A threat model beyond this table is backlog (§7).
+Known gaps, stated: `/metrics` is unauthenticated (routing metadata and per-key counters, never prompts). The console is loopback-only by default but returns stored prompts to that loopback client, so `CONSOLE_REMOTE=true` is a deliberate opt-out — put an authenticating proxy in front when you use it. A threat model beyond this table is backlog (A7).
 
 ## 10. Guardrails (runtime)
 
@@ -123,9 +123,14 @@ Known gap, stated: the console and `/metrics` are unauthenticated. They expose r
 | Unknown model | 400 `unknown_model`, never a silent fallback to "auto" | `TestExplicitModel` |
 | Not on disk | explicit or tier model missing from Ollama → 503 `model_not_pulled` with the pull hint; `/v1/models` shows `up:false` + `reason:not_pulled`; presence refreshed every probe tick, gaps logged | `TestPresenceSkipsUnpulled`, `TestPolicyModelNotPulledIsOneErrorShape` |
 | Backend health | Known-down fallbacks skipped, not tried | `TestHealthProberGaugeAndModels` |
-| Budgets and rates | 403 `budget_exceeded`, 429 `rate_limited` + `Retry-After` | `TestAPIKeyBudget`, `TestAPIKeyRateLimit` |
+| Budgets and rates | 403 `budget_exceeded`, 429 `rate_limited` + `Retry-After`; `/mcp` uses the same gate and charges the tokens a tool consumed | `TestAPIKeyBudget`, `TestAPIKeyRateLimit`, `TestToolCallReportsUsage` |
+| Body size | > 4 MiB → 413 `request_too_large` on both chat ingresses | `TestChatRejectsOversizedBody` |
+| Resource options | `num_ctx`/`num_gpu`/`num_predict`/`num_thread`/`repeat_last_n` above their ceiling, or `keep_alive` negative/over 1h → 400 `option_out_of_range` | `TestParamsRejectResourceOptionsOutOfRange`, `TestChatRejectsUnboundedOption` |
 | One eval at a time | 409 `eval_running` | `TestEvalRunSingleFlight` |
 | Golden hygiene | Freeze rejects empty fields, unknown docs, duplicate questions, zero-claim and subordinate-clause answers | `TestValidateGolden` |
+| Questions about the gateway | `which model` / `why this model` / `how does routing work` (and a short follow-up to one) is answered by the router from the last model turn and the roster, with `answered_by:"router"` and no model call; the trace is `route.decide → router.answer → router.respond` | `TestRouterGoldenMetaQuestions`, `TestGatewayQuestionTraceShape`, `TestGatewayFollowUpNeedsTheThread` |
+| System prompt | Built server-side on every request: roster with tier and locality, the routing rule, and this turn's model and reason. Rebuilt, never stored, never spanned; sensitivity is decided on the client's messages before injection | `TestSystemPromptNamesRosterAndRoute`, `TestSystemPromptDoesNotChangeSensitivity` |
+| Trace shape | Every chat trace has three spans; the failure path emits `router.respond` carrying the error, and `router.answer` replaces `model.generate` when no model ran | `TestFailurePathEmitsRespond`, `TestChatEmitsThreeSpans` |
 | Judge determinism | Temperature 0 on every local judge call; judge model + prompt version stored per run; `judge_changed` flag in drift | `TestOllamaJudgeSendsTemperatureZero`, `TestRecordAndDriftReport` |
 | Atomic eval runs | Header + pair rows in one transaction; a failed run writes nothing | `scoreOnce` (review) — observed live 2026-09-15 |
 | Stale corpus | Ingest prunes chunks the cleaner no longer emits | `TestIngestPrunesStaleChunks` |
@@ -210,5 +215,6 @@ These fail the build when a rule above is broken. Names are the rules.
 | `TestPolicyConsoleColoursAreTokens` | no hex colour in `app.js` / `index.html`, none in `tower.css` outside `:root` — the console uses `--tower-*` tokens |
 | `TestPolicyConsoleClassesExist` | every `tower-*` name the console references is defined in `tower.css` |
 | `TestPolicyAgentFilesPointHere` | `AGENTS.md` cites this document and the design system; every per-tool agent file that exists (Copilot is tracked; `CLAUDE.md`, `GEMINI.md`, `opencode.json`, Cursor are local and git-ignored) points at `AGENTS.md` and carries no rules of its own |
+| `TestPolicyConsoleIsLocalOnly` | the console (prompt history, eval runs, workflows) is mounted behind `consoleGuard`, its routes use the guarded handler, the browser defences are wired around the mux, and the default `ADDR` is `127.0.0.1:8080` |
 
 Adding a rule: write the test first, watch it fail on the current code or a scratch breakage, then add the row here. A rule that cannot be tested gets the word **review** in its enforcement column above and a reviewer, not a wish.

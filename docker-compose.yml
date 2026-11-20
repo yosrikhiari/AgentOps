@@ -38,8 +38,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-tower}
       FAST_MODEL: ${FAST_MODEL:-qwen2.5:3b-instruct}
       QUALITY_MODEL: ${QUALITY_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      # The binary defaults to 127.0.0.1; inside a container that would be the
+      # container's own loopback, so the bind is widened here while the published
+      # port below stays on the host's loopback. CONSOLE_REMOTE is safe only
+      # because of that host-only port binding — do not widen both.
+      ADDR: 0.0.0.0:8080
+      CONSOLE_REMOTE: "true"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

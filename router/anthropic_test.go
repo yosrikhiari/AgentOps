@@ -79,7 +79,10 @@ func TestMessagesReturnsAnthropicShape(t *testing.T) {
 	if out.Usage.Input != 5 || out.Usage.Output != 5 {
 		t.Fatalf("usage = %+v", out.Usage)
 	}
-	if len(be.lastMsgs) != 2 || be.lastMsgs[0].Role != "system" || be.lastMsgs[0].Content != "be brief" {
+	if len(be.lastMsgs) != 3 || !strings.HasPrefix(be.lastMsgs[0].Content, "You are the assistant behind Tower") {
+		t.Fatalf("gateway system prompt not prepended: %+v", be.lastMsgs)
+	}
+	if be.lastMsgs[1].Role != "system" || be.lastMsgs[1].Content != "be brief" {
 		t.Fatalf("system prompt not carried: %+v", be.lastMsgs)
 	}
 	if be.lastMaxTokens != 256 {

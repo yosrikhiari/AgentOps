@@ -28,11 +28,11 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 
 <sub>Tower, the console embedded in the binary (no build step): the same k6 run seen from the span store — 3,738 requests in the hour, p50 142 ms / p99 261 ms, every request routed with its reason and traceable. The [Evals & drift page](docs/img/tower-evals.png) shows the golden v3 history against the 0.70 alert threshold and the worst-scoring pairs of the latest run.</sub>
 
-![Tower Router dashboard in Grafana: requests/s and p99 latency by model, tokens, eval faithfulness 0.972, error rate](docs/img/grafana-router.png)
+![Tower Router dashboard in Grafana: requests/s and p99 latency by model, tokens, eval faithfulness 0.972 at the time, error rate](docs/img/grafana-router.png)
 
-<sub>The provisioned Grafana board during a 5-minute k6 run on 2026-09-19 (2 VUs of short prompts routed to `qwen2.5:3b-instruct`, 1 VU of long prompts routed to `qwen3:8b`): 3,737 requests, 1 failure — the quality-tier request that hit the 180 s client timeout, which is the 100 % error step on the yellow line. Faithfulness 0.972 is the golden v3 suite (72 pairs) scored minutes earlier with `--score`.</sub>
+<sub>The provisioned Grafana board during a 5-minute k6 run on 2026-09-19 (2 VUs of short prompts routed to `qwen2.5:3b-instruct`, 1 VU of long prompts routed to `qwen3:8b`): 3,737 requests, 1 failure — the quality-tier request that hit the 180 s client timeout, which is the 100 % error step on the yellow line. The 0.972 on the board is the golden v3 suite scored minutes earlier with `--score`, before the refuted/unmeasurable split; today's gated v3 baseline is **0.914** (8/72 unsolvable, see `docs/EVALS.md`).</sub>
 
-**Current release: [v1.0.0](https://github.com/yosrikhiari/AgentOps/releases/tag/v1.0.0)** — 68 tests, `go vet` + `-race` + `staticcheck` + `govulncheck` in CI, plus 11 **executable policies** that fail the build when a rule in [`docs/RULES.md`](docs/RULES.md) is broken. See [`CHANGELOG.md`](CHANGELOG.md).
+**Current release: [v1.0.0](https://github.com/yosrikhiari/AgentOps/releases/tag/v1.0.0)** - 244 tests, `go vet` + `-race` + `staticcheck` + `govulncheck` in CI, plus 19 **executable policies** that fail the build when a rule in [`docs/RULES.md`](docs/RULES.md) is broken. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## What it does
 
@@ -44,14 +44,14 @@ Built solo, on an RTX 4060 (8 GB VRAM), against local [Ollama](https://ollama.co
 | Virtual API keys with per-minute limits and token budgets | `router/keys.go`, `--create-key` | live 200/429/429/429 on a 2-rpm key |
 | Hand-written Prometheus exposition + Tower-native dashboard panels (per-model counts, p50/p99, tokens, error rate) | `router/metrics.go`, `console/` `#/overview` | k6: 0/2725 failed at 50 RPS, p99 70 ms |
 | Keep a multi-step agent alive through `kill -9` and resume without repeating work | `tracker/` | `TestKillResume` + a recorded live kill |
-| Score answers claim-by-claim against retrieved sources, store every run, alert on drift | `evals/` | golden v3 (72 pairs) **0.972** — 70/70 faithful where retrieval hit, 2 retrieval misses; v2 (48) 1.000 |
+| Score answers claim-by-claim against retrieved sources, store every run, alert on drift | `evals/` | golden v3 (72 pairs) **0.914** — 8/72 unsolvable (2 retrieval misses + 6 refuted where retrieval hit), 70/72 judged; v2 (48) 1.000 |
 | One trace per request: `trace_id / span_id / parent_id`, prompts never stored | `GET /v1/traces/{id}`, `--trace`, MCP | 3 chained spans per chat |
 | Let Claude (or any MCP client) ask "which model handled the most traffic?" | `mcp/` | 5 tools, live handshake |
-| Show it all to a human and let them run an eval or resume a workflow | `console/` → `http://localhost:8080` | verified page by page in the browser |
+| Show it all to a human and let them run an eval or resume a workflow | `console/` -> `http://localhost:8080` | nine pages in-app: overview, traces, cockpit, GPU, evals & drift, benchmarks, workflows, metrics, models |
 
 ## Quickstart
 
-Requirements: Go 1.22+, Docker, [Ollama](https://ollama.com) with `nomic-embed-text` and one chat model (`qwen2.5:3b-instruct` / `qwen2.5:7b-instruct-q4_K_M` by default, or set `FAST_MODEL`/`QUALITY_MODEL`), Python 3 for the corpus cleaner.
+Requirements: Go 1.26.11+ (the patch pin is deliberate; see CHANGELOG), Docker, [Ollama](https://ollama.com) with `nomic-embed-text` and one chat model (`qwen2.5:3b-instruct` / `qwen2.5:7b-instruct-q4_K_M` by default, or set `FAST_MODEL`/`QUALITY_MODEL`), Python 3 for the corpus cleaner.
 
 ```bash
 docker compose up -d                      # Postgres 16 + pgvector on :5432
@@ -68,7 +68,7 @@ docker compose --profile app up -d --build   # gateway on :8080 + postgres
 docker compose run --rm tower --migrate   # once
 ```
 
-Releases ship `tower-vX.Y.Z-{linux,windows,darwin}-amd64` binaries built by CI on every `v*` tag.
+Releases ship `tower-vX.Y.Z-{linux,windows,darwin}-{amd64,arm64}` binaries built by CI on every `v*` tag.
 
 Releasing (Track T checklist — all local, CI has no GPU/Postgres):
 1. `bash scripts/verify.sh` green.
@@ -80,11 +80,12 @@ Then:
 ```bash
 curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}]}'
 # OpenAI shape: {"id":"chatcmpl-…","object":"chat.completion","model":"qwen2.5:3b-instruct","choices":[…],"usage":{…},
-#                "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}   ← Tower extensions
+#                "reason":"short-simple-prompt","backend":"ollama","tier":"fast","candidates":[…],"trace_id":"598d…"}   ← Tower extensions
 curl -s -N localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}],"stream":true}'   # SSE
 curl -s localhost:8080/v1/messages -H 'x-api-key: ak_…' -d '{"model":"auto","max_tokens":128,"messages":[{"role":"user","content":"hi"}]}'   # Anthropic shape
 curl -s localhost:8080/v1/models           # served models with tier, backend, health
 curl -s localhost:8080/v1/traces/598d…     # 3 spans: route.decide → model.generate → router.respond
+curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"why are you using this model"}]}'   # answered by the router: answered_by:"router"
 curl -s localhost:8080/metrics             # router_*, router_backend_up, router_key_*, eval_faithfulness, gpu_*
 ```
 
@@ -152,11 +153,11 @@ tracker/     workflows/steps row-status durability, spans   (Store iface: SQLSto
 evals/       corpus ingest, pgvector search, golden validation, judge, retry/backoff, drift, migrations
 mcp/         JSON-RPC 2.0 over stdio, 5 tools
 console/     Tower web UI (embedded static/) + its JSON endpoints
-migrations/  0001_init.sql, 0002_drift.sql, 0003_api_keys.sql   (applied once each, recorded in schema_migrations)
-corpus/      15 short docs describing this system — the RAG target; golden sets in evals/golden/
+migrations/  0001..0015 (applied once each, recorded in schema_migrations)
+corpus/      17 short docs describing this system — the RAG target; golden sets in evals/golden/
 load-tests/  router.js (k6: 50 RPS on /health, p99 gate)
 lessons/     33 plain-language HTML lessons on this repo — open lessons/index.html
-docs/        MARKET.md (market study + roadmap) · RULES.md (engineering rules) · API.md · VRAM.md · adr/ (8 decision records) · tower-design-system.html (the console design system, live against console/static/tower.css) · tower-enhancements.html (20 worked UI/UX enhancements with demos)
+docs/        MARKET.md (market study + roadmap) · RULES.md (engineering rules) · API.md · VRAM.md · adr/ (13 decision records) · tower-design-system.html (the console design system, live against console/static/tower.css) · tower-enhancements.html (20 worked UI/UX enhancements with demos)
 policy/      executable policies: tests that fail the build when a rule in docs/RULES.md is broken
 AGENTS.md    what a coding agent must read first (rules, the Tower design system, the traps). OpenCode/Codex read it natively;
              per-tool pointers to it (CLAUDE.md, GEMINI.md, …) are local and git-ignored; .github/copilot-instructions.md is tracked
@@ -179,7 +180,7 @@ Windows without bash: run the same five commands by hand (`gofmt -l .`, `go vet 
 - **Postgres-native durability, not DBOS/Temporal** — `(workflow_id, seq)` idempotency keys + `pending→running→done` rows; resume = re-run the same id and skip `done`. (ADR-0003)
 - **Scheduler is a flag, not a service** — `--schedule-evals 24h` loops the same `scoreOnce` that `--score` and the console call. (ADR-0006)
 - **Per-question eval rows** — `eval_pair_scores` lets the drift report name the worst cases without re-running judges. (ADR-0005)
-- **Heuristic router first** — `len > 200` or a complexity keyword → quality tier. One `if` you can explain beats a classifier you can't demo.
+- **Heuristic router first** — a reasoning word (`why`, `explain`, `compare`, `reason`) or `len > 200` → quality tier; a question about the gateway is answered by the router itself, from the last trace and the roster, with no model call. One `if` you can explain beats a classifier you can't demo.
 - **Fail-closed on sensitive data** — the routing plan is built once; a sensitive request has no cloud candidate, ever. (ADR-0007)
 - **Judge bias guards** — justification before verdict, negative verdicts parsed first, temperature 0, judge model + prompt version logged, `judge_changed` flag in the drift report.
 - **Golden answers are standalone propositions** — the judge never sees the question, so one-word, list-fragment and "Because…" answers score 0 regardless of truth; `--freeze-golden` rejects them. Learned from v1 (0.969) → v2 (1.000).

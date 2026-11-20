@@ -67,6 +67,10 @@ func (h *eventHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "events_unavailable", "message": "streaming not supported"}})
 		return
 	}
+	// A rail is live by design: the connection's lifetime is the client's, not a
+	// server write deadline. Without this the global WriteTimeout would cut every
+	// stream at the chat budget.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")

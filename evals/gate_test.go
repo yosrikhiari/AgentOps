@@ -85,6 +85,15 @@ func TestGateRunCarriesItsWindow(t *testing.T) {
 	if r.StartedAt.IsZero() || r.FinishedAt.IsZero() || !r.FinishedAt.After(r.StartedAt) {
 		t.Fatalf("window = %v .. %v", r.StartedAt, r.FinishedAt)
 	}
+	// The window must be the finish column, not created_at: a run whose answers
+	// took four minutes occupied four minutes. Scanning created_at made this
+	// zero-width and the GPU check always reported "no samples" (audit C1).
+	if got := r.FinishedAt.Sub(r.StartedAt); got != 4*time.Minute {
+		t.Fatalf("window width = %v, want the 4m from finished_at", got)
+	}
+	if !strings.Contains(db.sql, "COALESCE(finished_at") {
+		t.Fatalf("gate must read finished_at (coalesced for pre-0014 rows): %s", db.sql)
+	}
 }
 
 func TestReleaseGatePass(t *testing.T) {

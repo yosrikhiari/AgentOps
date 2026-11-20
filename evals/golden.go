@@ -26,6 +26,30 @@ func leadingSubordinator(answer string) string {
 	return ""
 }
 
+// LoadGolden is the only way a caller should read a golden file for scoring: it
+// validates with the same rules --freeze-golden applies, then parses. The scored
+// path used to parse on its own and skip every check, so a duplicate question
+// silently overwrote the earlier pair and an unknown doc id made recall
+// meaningless (audit 2026-11-18 C3).
+func LoadGolden(raw []byte, knownDocs map[string]bool) ([]Pair, error) {
+	if _, err := ValidateGolden(raw, knownDocs); err != nil {
+		return nil, err
+	}
+	var out []Pair
+	for i, line := range bytes.Split(raw, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var p Pair
+		if err := json.Unmarshal(line, &p); err != nil {
+			return nil, fmt.Errorf("line %d: %w", i+1, err)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 func ValidateGolden(raw []byte, knownDocs map[string]bool) (int, error) {
 	n := 0
 	seen := map[string]int{}

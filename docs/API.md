@@ -35,7 +35,7 @@ Per-key counters: `router_key_requests_total{key}` and `router_key_rejected_tota
 
 ## `POST /v1/chat/completions`
 
-OpenAI-compatible. `model` is optional — `"auto"` (default) lets the router pick a tier from the prompt; a served model name (or `backend/model`) is used as-is.
+OpenAI-compatible. `model` is optional — `"auto"` (default) lets the router pick a tier from the prompt; a served model name (or `backend/model`) is used as-is. A **tier name** — `"fast"`, `"quality"` or `"cloud"` — picks the first registered model serving that tier (`reason: "explicit-tier"`), which is what the console's model picker sends; a model that is really named `fast` still wins over the alias.
 
 ```bash
 curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{
@@ -51,19 +51,28 @@ curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Cont
   "model": "qwen2.5:3b-instruct",
   "choices": [{"index":0,"message":{"role":"assistant","content":"Blue"},"finish_reason":"stop"}],
   "usage": {"prompt_tokens":24,"completion_tokens":2,"total_tokens":26},
-  "text": "Blue", "reason": "short-simple-prompt", "backend": "ollama", "trace_id": "aa67895ea5dd4b8e"
+  "text": "Blue", "reason": "short-simple-prompt", "backend": "ollama", "trace_id": "aa67895ea5dd4b8e",
+  "tier": "fast",
+  "candidates": [{"model":"qwen2.5:3b-instruct","tier":"fast","local":true},
+                 {"model":"qwen2.5:7b-instruct-q4_K_M","tier":"quality","local":true}]
 }
 ```
 
-`text`, `reason`, `backend`, `trace_id` and (when a fallback happened) `fallback` are Tower extensions; OpenAI clients ignore them. The MVP body `{"prompt":"…","max_tokens":N}` is still accepted.
+`text`, `reason`, `backend`, `trace_id`, `tier`, `candidates` and (when a fallback happened) `fallback` are Tower extensions; OpenAI clients ignore them. The MVP body `{"prompt":"…","max_tokens":N}` is still accepted. `candidates` is the whole eligible chain in the order it would be tried, so a UI can show what was considered without re-deriving the decision.
 
-**Streaming** — `"stream": true` returns `text/event-stream` in the OpenAI chunk shape; the last chunk has `finish_reason:"stop"` plus `usage`, `reason`, `backend`, `trace_id`, then `data: [DONE]`. A failure after the first delta is sent as a `data: {"error":…}` event.
+**Streaming** — `"stream": true` returns `text/event-stream` in the OpenAI chunk shape; the last chunk has `finish_reason:"stop"` plus `usage`, `reason`, `backend`, `trace_id`, `tier`, `candidates`, `answered_by`, then `data: [DONE]`. A failure after the first delta is sent as a `data: {"error":…}` event.
 
-**Routing** — `reason` is one of `short-simple-prompt` (≤200 chars, no complexity keyword → fast tier), `long-or-complex-prompt` (→ quality tier), `explicit-model`. If the chosen backend fails, the router tries the other local tier, then — for non-sensitive requests only — the cloud model; the response's `fallback` field and the `model.generate` span record what happened. Backends the health prober last saw down are skipped as fallbacks.
+**Routing** — `reason` is one of `short-simple-prompt` (≤200 chars, no reasoning word, no complexity keyword → fast tier), `long-or-complex-prompt` (→ quality tier), `reasoning-prompt` (contains `why`, `explain`, `compare`, `reason`, `analyse`, `justify`, … → quality tier even when short), `gateway-question` (a question about this gateway's models or routing → quality tier, answered by the router with no model call), `explicit-model` and `explicit-tier`. If the chosen backend fails, the router tries the other local tier, then — for non-sensitive requests only — the cloud model; the response's `fallback` field and the `model.generate` span record what happened. Backends the health prober last saw down are skipped as fallbacks.
+
+**Questions about the gateway** — a prompt that asks which model is used, why, or how routing works is answered by the router itself, from the last model turn (model, tier, reason, latency) and the registered roster with tiers. The response carries `"answered_by": "router"` and no model is called; the trace is `route.decide → router.answer → router.respond`. A short follow-up ("why not another one") counts when the previous user turn was a gateway question — the thread is the only context a stateless gateway has.
+
+**System prompt (server-built, every request)** — before a model is called the gateway prepends one system message: it names the registered models with tier and locality, states the routing rule, and names the model and reason this turn was routed to, with an instruction to answer from those facts. It is rebuilt per request and never stored, so a client-held thread (ADR-0010) does not accumulate copies. A client's own system message is kept after it. Sensitivity is decided on what the client sent, before the injection.
 
 **Sensitive data (fail-closed)** — mark a request with header `X-Tower-Sensitive: true` or body `"sensitive": true`; a small keyword list (`password`, `iban`, `passport`, `confidentiel`, …; override with `SENSITIVE_KEYWORDS=a,b,c`) also flags it. A sensitive request never reaches a non-local model: every non-local candidate is removed from the chain — the classified tier included — and naming a non-local model explicitly returns `403 sensitive_cloud_blocked`. **Locality is per model, not per backend:** Ollama's hosted models (`name:cloud`) are served through the local API but count as non-local (`GET /v1/models` shows `local:false`). If no local model remains, the request is refused with the same 403 rather than sent anywhere.
 
-Other errors: `400 bad_request` / `unknown_model`, `502 ollama_unavailable` (every candidate failed), `503 model_not_pulled` (the named or tier model is served on paper but not on disk — `run: ollama pull <model>` in the message; 403 still wins for sensitive-to-cloud), `504 timeout` (`REQUEST_TIMEOUT`, default 300s).
+Other errors: `400 bad_request` / `unknown_model` / `option_out_of_range`, `413 request_too_large`, `502 ollama_unavailable` (every candidate failed), `503 model_not_pulled` (the named or tier model is served on paper but not on disk — `run: ollama pull <model>` in the message; 403 still wins for sensitive-to-cloud), `504 timeout` (`REQUEST_TIMEOUT`, default 300s).
+
+**Limits (both chat ingresses)** — a request body is capped at **4 MiB** (`413 request_too_large`), because the JSON is materialised before any backend is chosen. The resource knobs a client may set are bounded, since they land on the machine that hosts the model: `num_ctx` ≤ 32768, `num_gpu` ≤ 99, `num_predict` ≤ 8192, `num_thread` ≤ 256, `repeat_last_n` ≤ 4096, and `keep_alive` must be between 0 and 1h (`-1`, “never unload”, is refused). An out-of-range value is `400 option_out_of_range` with the option named, never a silent clamp. Unknown option keys pass through: Ollama ignores what it does not know.
 
 **Generation parameters (v1.1, ADR-0009)** — beyond `max_tokens`, the request may carry `temperature`, `top_p`, `seed`, `stop` (string or list) and `response_format` (`{"type":"json_object"}` or `{"type":"json_schema","json_schema":{"schema":{…}}}`) in the OpenAI shape, plus the Ollama-native `format` (`"json"` or a schema), `options` (passthrough: `num_ctx`, `num_gpu`, `repeat_penalty`, …), `keep_alive` and `think` (`false` stops a reasoning model such as qwen3 from spending `num_predict` on chain-of-thought). All are optional; absent means model default. The Ollama backend merges the named parameters into `options` (named ones win over duplicates in the passthrough map) and sends `format` / `keep_alive` as top-level fields; the OpenAI backend forwards `temperature`/`top_p`/`seed`/`stop`/`response_format` and drops the Ollama-only knobs. The `model.generate` span records the values under `params` (kind of format, never the schema itself) and `params_forwarded: true|false` (false for a backend that only implements the v1.0 interface).
 
@@ -93,7 +102,8 @@ curl localhost:8080/v1/messages \
 {"id":"msg_598d…","type":"message","role":"assistant","model":"qwen2.5:3b-instruct",
  "content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","stop_sequence":null,
  "usage":{"input_tokens":12,"output_tokens":3},
- "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}
+ "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…",
+ "tier":"fast","candidates":[{"model":"qwen2.5:3b-instruct","tier":"fast","local":true}]}
 ```
 
 - **Credentials:** `x-api-key: <key>` (what Claude Code and the Anthropic SDK send) or
@@ -144,7 +154,8 @@ for its models directory).
 | `REQUIRE_API_KEY` | `false` | reject anonymous requests |
 | `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |
 | `SENSITIVE_KEYWORDS` | built-in list | comma-separated override |
-| `ADDR` | `:8080` | listen address |
+| `ADDR` | `127.0.0.1:8080` | listen address. Loopback by default: the gateway is a local appliance, and a fresh install must not be reachable from the LAN. Set `ADDR=0.0.0.0:8080` to publish it |
+| `CONSOLE_REMOTE` | `false` | the console (pages, conversations, workflows, eval runs) answers loopback clients only. `true` allows any client — required when the console is reached through a container port mapping or a reverse proxy. The console is where prompts are readable and GPU work is started, so this is an explicit act |
 | `POSTGRES_DSN` | built from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` (defaults `tower` / `tower` / `localhost` / `5432` / `tower`, the same ones `docker-compose.yml` uses) | spans, traces, evals, workflows, api keys |
 | `GPU_SMI` | `nvidia-smi` | path to the driver CLI the GPU prober shells out to. On a box without a working driver every `gpu_*` series reports `gpu_up 0` and no utilisation is published, rather than a fabricated zero |
 | `GPU_POLL_INTERVAL` | `10s` | how often the driver and Ollama's `/api/ps` are read; clamped to ≥1s, parse errors fall back to the default |
@@ -205,7 +216,9 @@ Stored threads. Prompts and answers are kept verbatim — see `PRIVACY.md`
   `MCP-Protocol-Version` header; an unsupported one gets `400` with JSON-RPC error
   `-32022` and the supported list. With `REQUIRE_API_KEY=true` a valid Bearer key
   is required (`401 missing_api_key` / `invalid_api_key`, `403 api_key_disabled`,
-  one error shape); RPM/budget accounting stays on the chat path. Every call emits
+  one error shape); the gate is the chat gate — validity, disabled, budget and RPM —
+  and the tokens a model-calling tool consumed are charged to the key, so `/mcp` is
+  not a way around a quota. Every call emits
   a redacted `mcp.tool` span. Bodies over 1 MB are refused with `400 bad_request`.
 - `GET /v1/events` — redacted spans as server-sent events (`data: {trace_id,
   span_id, parent_id, name, attrs}` + `: ping` heartbeats) for the Tower `#/live`
@@ -226,6 +239,7 @@ The web UI is served by the same binary from embedded files — no build step, n
 |---|---|
 | `GET /v1/overview` | KPI header: last-hour traffic (`requests_last_hour/minute`, `p50/p99_latency_s`, `tokens_last_hour`, `errors_last_hour`, `by_model`) from spans, `models` + `backends` with health, `since_start` counters, latest `drift` for the default golden, `judge_cost_usd` (0 — local + Groq free tier), `version` |
 | `GET /v1/requests?limit=30` | newest router chats first, one row per trace assembled from its `route.decide` + `model.generate` spans: model, backend, tier, reason, sensitive, latency, tokens, fallback, error |
+| `GET /v1/metrics/series?window=1h\|6h\|24h` | the Metrics page's data: spans bucketed by time (1m / 5m / 15m respectively), each point carrying requests (`route.decide`), errors (`model.generate` with an error attribute), **p50/p99** latency (`percentile_cont`, never a mean) and input/output tokens. Windows are a closed set and the step is derived server-side, so a client cannot request an unbounded scan. Empty buckets are returned as zeros rather than holes; a bad window is `400 bad_request`. The query is read-only over `spans` — there is no metric store, and the measured latency is recorded in `docs/CONSOLE-REDESIGN.md` |
 | `GET /v1/evals/runs?golden=v2&limit=50` | every `eval_runs` row for a golden version (`id`, `judge_model`, `judge_prompt`, `model`, `score`, `status` = `complete` / `running` / `failed`, `judged` = pairs the judge actually scored, `started_at`, `created_at`, and `gpu` when the prober sampled the run's window: sample count, mean/peak utilisation, peak and installed VRAM, swaps, `max_temp_c` and `throttled_samples` — a window where the driver had cut clocks for heat is visible as such) + its drift report. Only `complete` runs carry a score anything else may quote; an interrupted suite keeps its pair rows as evidence and the page says *incomplete* (worst cases included). A run with `judged: 0` (every pair a retrieval miss) is shown as *unmeasured* and is ignored by drift and the release gate |
 | `GET /v1/benchmarks?golden=v3` | Track L comparison: latest scored run per model (same golden version), per-scenario faithfulness split by routing reason, verdict (`winner` only at n≥100 / p<0.05, else `tied — route on cost`), plus recent model-run history; differing judges invalidate |
 | `GET /v1/activity?entity=&id=&limit=100` | Track S transition trail (append-only): workflow created/resumed/step_done/completed/failed and eval started/finished with ids, counts and scores — never prompts. Writers live in CLI/console call sites and never abort on failure; `0007_audit_log.sql` |

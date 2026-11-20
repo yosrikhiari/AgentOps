@@ -1183,28 +1183,55 @@ func runCreateKey(dsn, name string, rpm int, budget int64) {
 	fmt.Println("store it now — only its SHA-256 is kept")
 }
 
-// buildBackends wires the local Ollama backend plus an optional OpenAI-compatible cloud
-// backend (Groq by default) from the environment.
+// buildBackends wires the local Ollama backend plus cloud backends from the environment.
+// CLOUD_LADDER (preferred) is a comma-separated list of name:key:url:model rungs, best
+// first. When it is unset, the legacy GROQ_API_KEY / CLOUD_* variables form a single
+// rung, so existing deployments keep working unchanged.
 func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 	local := router.NewOllamaClient(cfg.OllamaURL)
 	srv := router.NewServer(cfg.FastModel, cfg.QualityModel, local)
 	backends := []router.Backend{local}
-	if key := os.Getenv("GROQ_API_KEY"); key != "" {
-		model := os.Getenv("CLOUD_MODEL")
-		if model == "" {
-			model = defaultGroqModel
+	tracker := router.NewExhaustionTracker(srv.Metrics)
+	srv.Exhaustion = tracker
+
+	addCloud := func(name, key, base, model string) {
+		if strings.TrimSpace(key) == "" {
+			return
 		}
-		base := os.Getenv("CLOUD_BASE_URL")
-		if base == "" {
+		if strings.TrimSpace(base) == "" {
 			base = "https://api.groq.com/openai/v1"
 		}
-		name := os.Getenv("CLOUD_BACKEND_NAME")
-		if name == "" {
-			name = "groq"
+		if strings.TrimSpace(name) == "" {
+			name = "cloud"
+		}
+		if strings.TrimSpace(model) == "" {
+			model = defaultGroqModel
 		}
 		cloud := router.NewOpenAIBackend(name, base, key)
 		srv.AddModel(router.ModelRef{Tier: "cloud", Model: model, Backend: cloud})
 		backends = append(backends, cloud)
+	}
+
+	if ladder := os.Getenv("CLOUD_LADDER"); strings.TrimSpace(ladder) != "" {
+		for _, rung := range strings.Split(ladder, ",") {
+			rung = strings.TrimSpace(rung)
+			if rung == "" {
+				continue
+			}
+			// Fields are separated by "|" (URLs and model names contain colons).
+			parts := strings.Split(rung, "|")
+			if len(parts) != 4 {
+				log.Printf("CLOUD_LADDER: skipping malformed rung %q (want name|key|url|model)", rung)
+				continue
+			}
+			addCloud(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]),
+				strings.TrimSpace(parts[2]), strings.TrimSpace(parts[3]))
+		}
+	} else if key := os.Getenv("GROQ_API_KEY"); key != "" {
+		model := os.Getenv("CLOUD_MODEL")
+		base := os.Getenv("CLOUD_BASE_URL")
+		name := os.Getenv("CLOUD_BACKEND_NAME")
+		addCloud(name, key, base, model)
 	}
 	// OLLAMA_MODELS: extra local models a client may name explicitly (`"model": "qwen2.5:3b-instruct"`).
 	// A multi-agent client places different roles on different models; without this the

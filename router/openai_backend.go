@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,8 +63,20 @@ func (b *OpenAIBackend) post(ctx context.Context, model string, msgs []Message, 
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
+		// Read a small body for the error message and capture Retry-After so the
+		// router can bench the backend for the provider's reset window.
+		buf := make([]byte, 4096)
+		n, _ := resp.Body.Read(buf)
 		resp.Body.Close()
-		return nil, fmt.Errorf("%s status %d", b.BackendName, resp.StatusCode)
+		body := string(buf[:n])
+		ra := parseRetryAfter(resp.Header.Get("Retry-After"))
+		if ra == 0 {
+			// OpenRouter uses X-RateLimit-Reset (seconds or unix).
+			if v := resp.Header.Get("X-RateLimit-Reset"); v != "" {
+				ra = parseResetHeader(v)
+			}
+		}
+		return nil, &HTTPStatusError{Backend: b.BackendName, Status: resp.StatusCode, Body: strings.TrimSpace(body), RetryAfter: ra}
 	}
 	return resp, nil
 }
@@ -148,6 +161,44 @@ func (b *OpenAIBackend) StreamWith(ctx context.Context, model string, msgs []Mes
 	return u, nil
 }
 
+// parseRetryAfter parses a Retry-After header value (seconds or HTTP-date).
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		return time.Duration(n) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// parseResetHeader parses X-RateLimit-Reset (seconds or unix timestamp).
+func parseResetHeader(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		// Heuristic: values > 1e9 are unix timestamps.
+		if n > 1_000_000_000 {
+			d := time.Until(time.Unix(int64(n), 0))
+			if d > 0 {
+				return d
+			}
+			return 0
+		}
+		return time.Duration(n) * time.Second
+	}
+	return 0
+}
+
 // Health lists models — the cheapest authenticated call every OpenAI-compatible API has.
 func (b *OpenAIBackend) Health(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.BaseURL+"/models", nil)
@@ -163,7 +214,7 @@ func (b *OpenAIBackend) Health(ctx context.Context) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s status %d", b.BackendName, resp.StatusCode)
+		return &HTTPStatusError{Backend: b.BackendName, Status: resp.StatusCode, Body: ""}
 	}
 	return nil
 }

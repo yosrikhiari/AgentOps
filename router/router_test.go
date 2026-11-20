@@ -304,16 +304,27 @@ func twoBackends(localErr error) (*Server, *fakeBackend, *fakeBackend) {
 	return srv, local, cloud
 }
 
-func TestFallsBackToCloudWhenLocalFails(t *testing.T) {
-	srv, local, cloud := twoBackends(errors.New("ollama down"))
+// When every cloud rung is exhausted, the gateway falls through to local Ollama.
+func TestFallsBackToLocalWhenCloudExhausted(t *testing.T) {
+	local := &fakeBackend{name: "ollama", local: true, text: "local", tokens: 1}
+	cloud := &fakeBackend{name: "groq", local: false, text: "cloud", tokens: 1, err: errors.New("rate limit exceeded: free-models-per-day")}
+	srv := NewServer("fast-m", "quality-m", local)
+	srv.AddModel(ModelRef{Tier: "cloud", Model: "cloud-m", Backend: cloud})
+	srv.Exhaustion = NewExhaustionTracker(srv.Metrics)
+	// Bench the cloud rung up front to simulate an already-exhausted provider.
+	srv.Exhaustion.Bench("groq", time.Now().Add(time.Hour), "quota")
+
 	rec := post(srv, `{"prompt":"hi"}`, nil)
 	var out ChatResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if rec.Code != 200 || out.Backend != "groq" || out.Text != "cloud" || out.Fallback == "" {
-		t.Fatalf("expected cloud fallback: %d %+v", rec.Code, out)
+	if rec.Code != 200 || out.Backend != "ollama" || out.Text != "local" || out.Fallback == "" {
+		t.Fatalf("expected local fallback: %d %+v", rec.Code, out)
 	}
-	if local.calls != 2 || cloud.calls != 1 { // fast-m, quality-m both local and failing, then cloud
-		t.Fatalf("calls local=%d cloud=%d", local.calls, cloud.calls)
+	if cloud.calls != 0 {
+		t.Fatalf("exhausted cloud backend should not be called, got %d", cloud.calls)
+	}
+	if local.calls != 1 {
+		t.Fatalf("local calls = %d, want 1", local.calls)
 	}
 }
 
@@ -457,9 +468,12 @@ func TestHealthProberGaugeAndModels(t *testing.T) {
 	if len(list.Data) != 3 || list.Data[2].ID != "llama-8b" || list.Data[2].Local || list.Data[2].Up == nil || *list.Data[2].Up {
 		t.Fatalf("models: %s", rec.Body.String())
 	}
-	// a fallback known to be down is skipped instead of timing out
+	// With the ladder, the cloud rung is primary: it is always tried (the prober
+	// skip applies to fallbacks, i > 0). When it fails, the gateway falls through
+	// to local, which is also down here, so the request fails closed.
 	local.err = errors.New("down")
-	if rec := post(srv, `{"prompt":"hi"}`, nil); rec.Code != http.StatusBadGateway || cloud.calls != 0 {
-		t.Fatalf("down fallback should be skipped: %d cloud calls=%d", rec.Code, cloud.calls)
+	cloud.err = errors.New("down")
+	if rec := post(srv, `{"prompt":"hi"}`, nil); rec.Code != http.StatusBadGateway {
+		t.Fatalf("all rungs down: %d", rec.Code)
 	}
 }

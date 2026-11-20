@@ -234,25 +234,32 @@ func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Ro
 		return route, nil
 	}
 	route.Tier, route.Reason = ClassifyThread(prompt, msgs)
-	// Candidate order: the classified tier, then the other local models, then non-local
-	// ones. A sensitive request then drops every non-local candidate — primary included, so
-	// a quality tier that happens to be a hosted model is skipped, not merely de-prioritised.
+	// Candidate order. For non-sensitive requests the operator's cloud ladder
+	// takes precedence (best available cloud first, then next best, then local) —
+	// the ladder is the primary decision, not a fallback. Sensitive requests drop
+	// every non-local candidate (fail-closed), so the ladder is bypassed entirely.
 	var primary []ModelRef
-	var locals, remote []ModelRef
+	var locals []ModelRef
+	var cloud []ModelRef
 	for _, r := range refs {
 		switch {
-		case r.Tier == route.Tier && len(primary) == 0:
+		case r.Tier == route.Tier && r.local() && len(primary) == 0:
 			primary = append(primary, r)
 		case r.local():
 			locals = append(locals, r)
 		default:
-			remote = append(remote, r)
+			cloud = append(cloud, r) // already in registration (ladder) order
 		}
 	}
-	if len(primary) == 0 {
+	if len(primary) == 0 && len(cloud) == 0 {
 		return route, fmt.Errorf("no model serves tier %q", route.Tier)
 	}
-	chain := append(append(primary, locals...), remote...)
+	var chain []ModelRef
+	if sensitive {
+		chain = append(primary, locals...)
+	} else {
+		chain = append(append(cloud, primary...), locals...)
+	}
 	for _, r := range chain {
 		if sensitive && !r.local() {
 			continue
@@ -260,7 +267,10 @@ func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Ro
 		route.Candidates = append(route.Candidates, r)
 	}
 	if len(route.Candidates) == 0 {
-		return route, ErrSensitiveCloud{Model: primary[0].Model}
+		if len(primary) > 0 {
+			return route, ErrSensitiveCloud{Model: primary[0].Model}
+		}
+		return route, ErrSensitiveCloud{Model: refs[0].Model}
 	}
 	return route, nil
 }

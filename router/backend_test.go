@@ -107,7 +107,7 @@ func TestPlanCandidateOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := names(r.Candidates); got != "f,q,c" || r.Tier != "fast" {
+	if got := names(r.Candidates); got != "c,f,q" || r.Tier != "fast" {
 		t.Fatalf("auto: %s tier=%s", got, r.Tier)
 	}
 	r, _ = Plan("", msgs, true, refs)

@@ -684,6 +684,7 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		if s.Exhaustion != nil {
 			if benched, until := s.Exhaustion.Benched(cand.Backend.Name()); benched {
 				log.Printf("trace %s: %s/%s benched until %s, skipping", traceID, cand.Backend.Name(), cand.Model, until.Format(time.RFC3339))
+				fallback = append(fallback, cand.Backend.Name()+"/"+cand.Model+" (benched)")
 				continue
 			}
 		}

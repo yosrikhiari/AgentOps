@@ -74,7 +74,7 @@ Streaming is the one place the request path is long-lived: the connection stays 
 | Where | Policy | Why | Enforced |
 |---|---|---|---|
 | Judge calls (Ollama, Groq) | Exponential backoff with jitter, `attempts` 3–4; **429 waits for `Retry-After`; other 4xx never retried**; respects context cancellation | 5xx/timeouts are transient; 4xx means *our* request is wrong | `TestWithRetryNeverRetries4xx` |
-| Router → backend | **No retry of the same backend.** On failure move to the next candidate in the plan (other local tier, then cloud if allowed); known-down backends skipped | Retrying a model call doubles GPU time for the same likely outcome; a fallback answers | `TestPolicyRouterDoesNotRetrySameBackend`, `TestFallsBackToCloudWhenLocalFails` |
+| Router → backend | **No retry of the same backend.** On failure move to the next candidate in the plan (other local tier, then cloud if allowed); known-down backends skipped | Retrying a model call doubles GPU time for the same likely outcome; a fallback answers | `TestPolicyRouterDoesNotRetrySameBackend`, `TestFallsBackToLocalWhenCloudExhausted` |
 | Span writes | None. Drop + count, first failure logged once | Telemetry must never cost the request | `TestPolicySpanSinkIsNonBlocking` |
 | Usage charge | None (one attempt, 5 s timeout) | Budget precision of one request is acceptable | review |
 | Console → API | One retry on 5xx after 400 ms, then inline error + Retry button | Transient store hiccups; the human decides after that | browser check (plan §9 C) |

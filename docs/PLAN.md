@@ -115,6 +115,34 @@ worth touching yet) so that doesn't get lost again.
 > [`CONSOLE-REDESIGN.md`](CONSOLE-REDESIGN.md). Open decisions: which judge owns the
 > baseline (local 0.914 vs Groq 0.986), rotating the three `.env` keys, Dependabot
 > #8/#9, cutting v1.1, corpus v4 + golden v4.
+>
+> **Current state (v28, 2026-11-20 — the gateway explains its own routing).** A question
+> about the gateway ("which models do you have", "why are you using this model", and a
+> short follow-up such as "why not another one" when the previous user turn was one) is
+> answered by the router from the last model-answered turn and the roster, with
+> `answered_by:"router"` and **no model call** (`40b996e`). Every other request carries
+> one server-built system prompt: roster as `name · tier · local/cloud`, the routing
+> rule, this turn's model and reason, "answer from this information and do not guess".
+> Rebuilt per request, never stored, never spanned; sensitivity is decided before it is
+> added. `why`/`explain`/`compare`/`reason` now go to the quality tier even when short
+> (`reasoning-prompt`), gateway questions get `gateway-question`, and `model` accepts
+> `fast`/`quality`/`cloud` (`explicit-tier`); responses carry `tier`, `candidates` and
+> `answered_by`. The Cockpit footer shows model · provider · reason · tokens · `N spans ·
+> time`, with a "why this model?" popover (tier, reason, every candidate), a four-tier
+> composer picker and "Retry with ▾" (`b90b120`).
+>
+> **The 2-span defect, and what it really was.** The trace named in the report had three
+> spans. Three separate defects were behind the symptom: (1) the Cockpit read
+> `/v1/traces/{id}` the instant a reply landed, while spans were still in the async
+> writer's queue — on a router answer (<1 ms) only `route.decide` had been persisted, so
+> the footer said "1 span"; it now re-reads once and shows `spans · …` rather than a
+> number it does not have. (2) The failure path returned before `router.respond`, so a
+> failed request looked like a dropped telemetry write. (3) Spans emitted back-to-back
+> share `started_at` to the microsecond and `ORDER BY started_at, span_id` broke the tie
+> on a random id; `ListSpans` now orders parents before children. **Follow-up:** the
+> frozen `corpus/01-router.md` + golden v3 still describe the old length-only rule, so a
+> corpus v4 + golden v4 run is now needed to score against the shipped policy (do not
+> edit a frozen file).
 
 ---
 

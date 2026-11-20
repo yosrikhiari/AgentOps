@@ -52,6 +52,7 @@
     <a class="tower-nav-btn" href="#principles" data-active="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg><span>Principles</span></a>
     <a class="tower-nav-btn" href="#tokens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/><path d="M13 3h8v8M3 13v8h8"/></svg><span>Tokens</span></a>
     <a class="tower-nav-btn" href="#shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M3 9h6"/></svg><span>Shell</span></a>
+    <a class="tower-nav-btn" href="#a11y"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c1.4-3.6 3.9-5 7-5s5.6 1.4 7 5"/></svg><span>Accessibility</span></a>
     <div class="tower-nav-label">Components</div>
     <a class="tower-nav-btn" href="#primitives"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="8" width="18" height="8" rx="4"/></svg><span>Primitives</span></a>
     <a class="tower-nav-btn" href="#feedback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Feedback states</span></a>
@@ -165,8 +166,67 @@
           <tr><td>.tower-side-foot</td><td>router pulse + version, centred; hidden under 900 px</td><td>mirrors the strip so the state survives collapse</td></tr>
           <tr><td>.tower-statusstrip</td><td>sticky header, 92 % ground + blur(6px)</td><td>h1 = page title (set by the router), then pulse items: models · faithfulness · p50 · router live/down</td></tr>
           <tr><td>.tower-pulse-item / -dot</td><td>label + mono value, optional pulsing 7 px dot</td><td>dot colour is set inline by <span class="tower-mono">updateStrip()</span>: green all-up, red otherwise</td></tr>
-          <tr><td>.tower-content</td><td>main column, 24/28 px padding, 20 px gap, fills the viewport (no max-width gutter)</td><td><span class="tower-mono">aria-live="polite"</span> in the console</td></tr>
+          <tr><td>.tower-content</td><td>main column, 24/28 px padding, 20 px gap, fills the viewport (no max-width gutter)</td><td>no <span class="tower-mono">aria-live</span> here: every poll replaces the region, so announcements go through <span class="tower-mono">#announcer</span>. <span class="tower-mono">tabindex="-1"</span> lets the skip link land on it</td></tr>
         </table>
+      </section>
+
+      <!-- ===================== ACCESSIBILITY ===================== -->
+      <section class="ds-section" id="a11y">
+        <h2>Accessibility</h2>
+        <p class="ds-lead">Keyboard-first and quiet. A skip link is the first tab stop. A route change moves focus to the page heading and rewrites <span class="tower-mono">document.title</span>. Anything that toggles carries <span class="tower-mono">aria-pressed</span> or <span class="tower-mono">aria-expanded</span>, and one narrow live region speaks only what cannot move focus. Nothing is re-announced by the five-second poll: a live region on the content column would read the whole page on every tick.</p>
+        <div class="tower-grid-2">
+          <div class="ds-frame"><div class="ds-frame-label">Skip link — first tab stop, visible only while focused</div>
+            <div class="ds-row">
+              <a class="tower-skip" href="#a11y">Skip to content</a>
+              <span style="color:var(--tower-ink-muted);font-size:13px">Tab to it, then Enter: focus lands on <span class="ds-inline">&lt;main id="content"&gt;</span>, which is <span class="ds-inline">tabindex="-1"</span> so it can take focus without joining the tab order.</span>
+            </div>
+            <div class="ds-code">&lt;a class="tower-skip" href="#content"&gt;Skip to content&lt;/a&gt;
+&lt;main class="tower-content" id="content" tabindex="-1"&gt;&lt;/main&gt;</div>
+            <div class="tower-panel-sub" style="margin-top:10px">The skip link sets a bare <span class="tower-mono">#content</span> hash. <span class="tower-mono">route()</span> ignores hashes that do not start with <span class="tower-mono">#/</span> after the first paint, so skipping does not tear down the page — or its poll.</div>
+          </div>
+          <div class="ds-frame"><div class="ds-frame-label">Rail — exactly one <span class="tower-mono">aria-current="page"</span>, painted by data-active</div>
+            <div class="ds-row">
+              <button class="tower-nav-btn" data-active="true" aria-current="page" title="Overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Overview</span></button>
+              <button class="tower-nav-btn" title="Traces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/></svg><span>Traces</span></button>
+            </div>
+            <div class="ds-code">b.dataset.active = String(on);          // paint only
+if (on) b.setAttribute('aria-current', 'page');   // announced state
+const pt = document.getElementById('page-title'); pt.focus();</div>
+            <div class="tower-panel-sub" style="margin-top:10px">The name inside each rail button is clipped, not <span class="tower-mono">display:none</span>: it stays in the accessibility tree and in the tooltip. Every rail <span class="tower-mono">svg</span> is <span class="tower-mono">aria-hidden</span>, because the name beside it is the label.</div>
+          </div>
+          <div class="ds-frame"><div class="ds-frame-label">Pressed, not just painted — every toggle states itself</div>
+            <div class="ds-row">
+              <div class="tower-seg" role="group" aria-label="Time range">
+                <button class="on" aria-pressed="true">1 h</button><button aria-pressed="false">6 h</button><button aria-pressed="false">24 h</button>
+              </div>
+              <button class="tower-chip tower-chip-btn" type="button" aria-expanded="false"><span aria-hidden="true">×9</span><span class="tower-sr">Show 8 more runs of this question</span></button>
+            </div>
+            <div class="tower-panel-sub" style="margin-top:10px">The chip's visible <span class="tower-mono">×9</span> is a count, not a name, so the button is named for what it does and its state is <span class="tower-mono">aria-expanded</span>. Both flip on click; the count and name are updated together.</div>
+          </div>
+          <div class="ds-frame"><div class="ds-frame-label">Two live regions — a filter count, and the toast</div>
+            <div class="ds-code">&lt;div class="tower-sr" id="announcer" role="status" aria-live="polite"&gt;&lt;/div&gt;
+&lt;div class="tower-toast" id="toast" role="status" aria-live="polite"
+     aria-atomic="true" hidden&gt;&lt;/div&gt;</div>
+            <div class="ds-row" style="margin-top:10px">
+              <span class="tower-chip">announcer says</span>
+              <span class="tower-mono" style="font-size:12px;color:var(--tower-ink-muted)">“Errors: 3 traces”</span>
+            </div>
+            <div class="tower-panel-sub" style="margin-top:10px">Only filters announce, through <span class="tower-mono">announce()</span>: the list is replaced, so a screen reader would otherwise hear nothing. The toast lives bottom-right, <span class="tower-mono">aria-atomic</span>, and switches to <span class="tower-mono">assertive</span> when the message is a failure — a confirmation waits its turn, an error interrupts.</div>
+          </div>
+        </div>
+        <table class="ds-spec">
+          <tr><th>hook</th><th>what it does</th><th>where it is set</th></tr>
+          <tr><td>.tower-skip</td><td>fixed, off-screen until <span class="tower-mono">:focus</span>; stays in the tab order</td><td>first element in <span class="tower-mono">&lt;body&gt;</span>; target <span class="tower-mono">#content</span></td></tr>
+          <tr><td>.tower-sr</td><td>1 px clip — invisible, still read</td><td><span class="tower-mono">#announcer</span>; the spoken name inside the <span class="tower-mono">×N</span> toggle</td></tr>
+          <tr><td>#announcer</td><td>the one narrow live region</td><td><span class="tower-mono">announce()</span>; called by <span class="tower-mono">pageTraces</span> and <span class="tower-mono">pageWorkflows</span> filter chips</td></tr>
+          <tr><td>#toast</td><td>status + atomic; <span class="tower-mono">assertive</span> on failure</td><td><span class="tower-mono">toast(msg, isErr)</span></td></tr>
+          <tr><td>aria-current="page"</td><td>one rail button at a time; announced position</td><td><span class="tower-mono">route()</span>, beside <span class="tower-mono">data-active</span></td></tr>
+          <tr><td>aria-pressed</td><td>toggle state for segments and filter chips</td><td><span class="tower-mono">pageTraces</span>, <span class="tower-mono">pageWorkflows</span>, <span class="tower-mono">pageMetrics</span>, <span class="tower-mono">pageGPU</span></td></tr>
+          <tr><td>aria-expanded</td><td>the <span class="tower-mono">×N</span> group toggle</td><td><span class="tower-mono">pageWorkflows</span>; flips with the hidden rows</td></tr>
+          <tr><td>#page-title[tabindex="-1"]</td><td>focus target on a page change; <span class="tower-mono">document.title</span> becomes “Page · Tower”</td><td><span class="tower-mono">route()</span> — skipped on first paint and when re-routing to the same page, so a typed query keeps the caret</td></tr>
+          <tr><td>svg[aria-hidden]</td><td>decorative icon, name comes from the adjacent text</td><td><span class="tower-mono">index.html</span> rail, all nine buttons</td></tr>
+        </table>
+        <p class="ds-lead" style="margin-top:14px;max-width:760px">Measured, not asserted: 32 browser checks (skip link reachable and visible on focus, one <span class="tower-mono">aria-current</span> after navigation, focus on <span class="tower-mono">#page-title</span>, every segment pressed-state following the click, <span class="tower-mono">aria-expanded</span> and the toggle's name flipping together, and the announcer still empty after six idle seconds) pass with zero console errors.</p>
       </section>
 
       <!-- ===================== PRIMITIVES ===================== -->

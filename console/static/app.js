@@ -5,6 +5,7 @@
 
   const content = document.getElementById('content');
   const toastEl = document.getElementById('toast');
+  const announcer = document.getElementById('announcer');
   let pageCtl = null;       // AbortController of the current page
   let pollTimer = null;
   let railCleanup = null;   // live rail feed hookup; one rail mounted at a time
@@ -33,10 +34,16 @@
   function toast(msg, isErr) {
     toastEl.textContent = msg;
     toastEl.className = 'tower-toast' + (isErr ? ' err' : '');
+    // A failure interrupts; a confirmation waits its turn.
+    toastEl.setAttribute('aria-live', isErr ? 'assertive' : 'polite');
     toastEl.hidden = false;
     clearTimeout(toast.t);
     toast.t = setTimeout(() => { toastEl.hidden = true; }, 4000);
   }
+
+  // Spoken without moving the caret. Route changes do not use this: they move
+  // focus to the page heading, which every screen reader reads reliably.
+  function announce(msg) { if (announcer) announcer.textContent = msg; }
 
   // ---------- fetch with abort + one retry on 5xx ----------
   async function api(path, opts, signal) {
@@ -415,10 +422,11 @@
       metric('p50 / p99', fmt.dur(last.p50_s), 'p99 ' + fmt.dur(last.p99_s) + ' · latest measured bucket'),
       metric('Tokens', (tin + tout).toLocaleString(), tin.toLocaleString() + ' in · ' + tout.toLocaleString() + ' out'));
 
-    const rangeSeg = h('div', { class: 'tower-seg' },
+    const rangeSeg = h('div', { class: 'tower-seg', role: 'group', 'aria-label': 'Time range' },
       ...[['1h', '1 h'], ['6h', '6 h'], ['24h', '24 h']].map(([k, text]) =>
         h('button', {
           class: metricsRange === k ? 'on' : '',
+          'aria-pressed': String(metricsRange === k),
           onclick: () => { if (metricsRange === k) return; metricsRange = k; clearTimeout(pollTimer); pageMetrics(signal, '', true); },
         }, text)));
     const prom = h('a', { class: 'tower-btn ghost', href: '/metrics', target: '_blank', rel: 'noopener' }, 'Prometheus text');
@@ -549,7 +557,7 @@
     const input = h('input', { class: 'tower-input', placeholder: 'Search or paste a trace id...', value: id || '', 'aria-label': 'Trace id' });
     const go = () => { const v = input.value.trim(); if (v) location.hash = '#/traces/' + v; };
     input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
-    const filters = h('div', { class: 'tower-filters' });
+    const filters = h('div', { class: 'tower-filters', role: 'group', 'aria-label': 'Filter traces' });
     const listBody = h('div', { class: 'tower-trace-list' }, skeleton(6));
     const detail = h('div', null, h('div', { class: 'tower-empty' }, 'Pick a trace on the left, or paste an id above.'));
     // One master-detail surface: the old separate "Trace inspector" card is gone;
@@ -565,11 +573,22 @@
     let items = [];
     function renderFilters() {
       filters.replaceChildren(...[['all', 'All'], ['chat', 'Chats'], ['workflow', 'Workflows'], ['error', 'Errors'], ['sensitive', 'Sensitive'], ['fallback', 'Fallbacks']].map(([k, label]) =>
-        h('button', { class: 'tower-chip tower-chip-btn' + (filter === k ? ' on' : ''), onclick: () => { filter = k; renderList(); renderFilters(); } }, label)));
+        h('button', {
+          class: 'tower-chip tower-chip-btn' + (filter === k ? ' on' : ''),
+          'aria-pressed': String(filter === k),
+          onclick: () => {
+            filter = k;
+            const n = renderList();
+            renderFilters();
+            // The list is replaced, so nothing else tells a screen reader that
+            // the filter took: say how many rows are left.
+            announce(label + ': ' + n + (n === 1 ? ' trace' : ' traces'));
+          },
+        }, label)));
     }
     function renderList() {
       const shown = items.filter(it => filter === 'all' || (filter === 'chat' && it.kind === 'chat') || (filter === 'workflow' && it.kind === 'workflow') || (filter === 'error' && it.error) || (filter === 'sensitive' && it.sensitive) || (filter === 'fallback' && it.fallback));
-      if (!shown.length) { listBody.replaceChildren(h('div', { class: 'tower-empty' }, items.length ? 'Nothing matches this filter.' : 'No traces yet — send a request: curl localhost:8080/v1/chat/completions -d \'{"prompt":"hi"}\'')); return; }
+      if (!shown.length) { listBody.replaceChildren(h('div', { class: 'tower-empty' }, items.length ? 'Nothing matches this filter.' : 'No traces yet — send a request: curl localhost:8080/v1/chat/completions -d \'{"prompt":"hi"}\'')); return 0; }
       listBody.replaceChildren(...shown.map(it => h('div', { class: 'tower-trace-item' + (it.id === id ? ' selected' : ''), onclick: () => { location.hash = '#/traces/' + it.id; } },
         h('div', { class: 'tower-trace-item-top' },
           h('span', null, chip(it.kind), ' ', h('span', { class: 'tower-mono' }, fmt.short(it.id))),
@@ -583,6 +602,7 @@
           it.fallback ? chip('fallback') : null,
           it.role ? chip(it.role) : null,
           it.status ? (it.status === 'done' ? pill('healthy', 'done') : pill('degraded', it.status)) : null))));
+      return shown.length;
     }
     async function loadList() {
       try {
@@ -806,15 +826,28 @@
   }
 
   async function pageWorkflows(signal) {
-    const input = h('input', { class: 'tower-input', placeholder: 'question for the Researcher → Drafter → Reviewer agent', value: 'what does tower do?' });
+    const input = h('input', { class: 'tower-input', placeholder: 'question for the Researcher → Drafter → Reviewer agent', 'aria-label': 'Workflow question', value: 'what does tower do?' });
     const startBtn = h('button', { class: 'tower-btn primary' }, 'Start workflow');
     const listBody = h('div', null, skeleton(5));
     let filter = 'all';
     let cache = [];
 
-    const filterBar = h('div', { class: 'tower-seg', style: 'margin-bottom:10px' },
+    const filterBar = h('div', { class: 'tower-seg', role: 'group', 'aria-label': 'Filter workflows', style: 'margin-bottom:10px' },
       ...[['all', 'All'], ['running', 'Running'], ['failed', 'Failed'], ['done', 'Done']].map(([k, text]) =>
-        h('button', { class: filter === k ? 'on' : '', onclick: () => { filter = k; filterBar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.textContent === text)); render(); } }, text)));
+        h('button', {
+          class: filter === k ? 'on' : '',
+          'aria-pressed': String(filter === k),
+          onclick: (e) => {
+            filter = k;
+            filterBar.querySelectorAll('button').forEach(b => {
+              const on = b === e.currentTarget;
+              b.classList.toggle('on', on);
+              b.setAttribute('aria-pressed', String(on));
+            });
+            const n = render();
+            announce(text + ': ' + n + (n === 1 ? ' workflow' : ' workflows'));
+          },
+        }, text)));
 
     content.replaceChildren(
       panel('Durable workflows', 'Each step is a Postgres row; kill the process mid-step and resume the same id — done steps are never re-run.',
@@ -846,7 +879,7 @@
       const shown = cache.filter(w => filter === 'all' || w.status === filter);
       if (!shown.length) {
         listBody.replaceChildren(h('div', { class: 'tower-empty' }, cache.length ? 'Nothing matches this filter.' : 'No workflows yet'));
-        return;
+        return 0;
       }
       // Group by input: one visible row per distinct question, with the others
       // tucked behind a ×N chip so a repeated question cannot fill the page.
@@ -862,10 +895,19 @@
         if (g.length > 1) {
           const extras = g.slice(1).map(w => { const tr = runRow(w); tr.hidden = true; return tr; });
           const cell = first.querySelector('td:nth-child(3)');
-          const toggle = h('button', { class: 'tower-chip tower-chip-btn', type: 'button', style: 'margin-left:6px' }, '×' + g.length);
+          // The visible "×3" is a count, not a name: the control is named for
+          // what it does, and its state is aria-expanded.
+          const hidden = g.length - 1;
+          const moreLabel = h('span', { class: 'tower-sr' }, 'Show ' + hidden + ' more run' + (hidden === 1 ? '' : 's') + ' of this question');
+          const toggle = h('button', {
+            class: 'tower-chip tower-chip-btn', type: 'button', style: 'margin-left:6px',
+            'aria-expanded': 'false',
+          }, h('span', { 'aria-hidden': 'true' }, '×' + g.length), moreLabel);
           toggle.addEventListener('click', () => {
             const open = extras[0].hidden;
             extras.forEach(tr => { tr.hidden = !open; });
+            toggle.setAttribute('aria-expanded', String(open));
+            moreLabel.textContent = (open ? 'Hide ' : 'Show ') + hidden + ' more run' + (hidden === 1 ? '' : 's') + ' of this question';
           });
           cell.append(toggle);
           rows.push(first, ...extras);
@@ -876,6 +918,7 @@
       listBody.replaceChildren(h('table', { class: 'tower-table' },
         h('thead', null, h('tr', null, ...['when', 'id', 'input', 'steps', 'quality', 'status', ''].map(t => h('th', null, t)))),
         h('tbody', null, rows)));
+      return shown.length;
     }
 
     async function refresh() {
@@ -1002,10 +1045,11 @@
         metric('Power', s.power_w == null ? '-' : Number(s.power_w).toFixed(0) + ' W', 'driver reading'),
         metric('Temperature', s.temp_c == null ? '-' : Number(s.temp_c).toFixed(0) + ' C', fmt.time(now.at)));
 
-      const rangeSeg = h('div', { class: 'tower-seg' },
+      const rangeSeg = h('div', { class: 'tower-seg', role: 'group', 'aria-label': 'Chart time range' },
         ...[['1h', '1 h'], ['6h', '6 h'], ['24h', '24 h']].map(([k, label]) =>
           h('button', {
             class: gpuRange === k ? 'on' : '',
+            'aria-pressed': String(gpuRange === k),
             onclick: () => { if (gpuRange === k) return; gpuRange = k; clearTimeout(pollTimer); pageGPU(signal, '', true); },
           }, label)));
 
@@ -1718,7 +1762,12 @@
 
   // ---------- router ----------
   const pages = { overview: pageOverview, traces: pageTraces, evals: pageEvals, benchmarks: pageBenchmarks, workflows: pageWorkflows, cockpit: pageCockpit, gpu: pageGPU, metrics: pageMetrics, models: pageModels };
+  let routeName = null; // the page on screen; null until the first route runs
   function route() {
+    // The skip link focuses #content and leaves a bare "#content" hash. That is
+    // not a page: ignoring it keeps the current page, and its poll, alive. The
+    // first call always renders, so a reload on that hash still works.
+    if (routeName !== null && location.hash && !location.hash.startsWith('#/')) return;
     content.classList.remove('is-cockpit');
     const mainEl = document.querySelector('.tower-main');
     if (mainEl) mainEl.classList.remove('is-cockpit');
@@ -1728,8 +1777,22 @@
     pageCtl = new AbortController();
     const parts = location.hash.replace(/^#\/?/, '').split('/');
     const name = pages[parts[0]] ? parts[0] : 'overview';
-    document.querySelectorAll('.tower-nav-btn[data-page]').forEach(b => b.dataset.active = String(b.dataset.page === name));
-    const pt = document.getElementById('page-title'); if (pt) pt.textContent = pageTitles[name] || 'Tower';
+    const title = pageTitles[name] || 'Tower';
+    document.title = title === 'Tower' ? 'Tower' : title + ' · Tower';
+    document.querySelectorAll('.tower-nav-btn[data-page]').forEach(b => {
+      const on = b.dataset.page === name;
+      b.dataset.active = String(on);
+      // aria-current is the announced "you are here"; data-active only paints it.
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+    const pt = document.getElementById('page-title'); if (pt) pt.textContent = title;
+    // Focus only on a real page change: a deep link or a re-route to the same
+    // page must not steal the caret from the field being typed in.
+    if (name !== routeName) {
+      const first = routeName === null;
+      routeName = name;
+      if (!first && pt) pt.focus();
+    }
     if (name !== 'overview') api('/v1/overview', null, pageCtl.signal).then(updateStrip).catch(() => { /* strip is best-effort */ });
     pages[name](pageCtl.signal, parts.slice(1).join('/'));
   }

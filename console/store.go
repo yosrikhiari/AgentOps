@@ -193,6 +193,24 @@ type SQLStore struct {
 	// GPU is Track U's sample reader. gpu.Rows is a distinct named type from
 	// evals.Rows, so it needs its own queryer; main.go supplies gpuAdapter.
 	GPU gpu.Queryer
+	// Begin, when non-nil, provides transactional multi-statement writes. It is
+	// optional: a store built without a connection (tests) leaves it nil and
+	// AppendMessage runs its statements sequentially, as it did before.
+	Begin Beginner
+}
+
+// Tx is the small transaction surface AppendMessage needs. It deliberately
+// mirrors Execer so a transaction can stand in for a plain execer without
+// changing the call sites.
+type Tx interface {
+	Exec(ctx context.Context, sql string, args ...any) (int64, error)
+	Commit(ctx context.Context) error
+	Rollback(ctx context.Context) error
+}
+
+// Beginner opens a transaction. Implemented by pgAdapter (main.go) over pgx.
+type Beginner interface {
+	Begin(ctx context.Context) (Tx, error)
 }
 
 // ErrConvNotFound answers 404: no thread with that id.
@@ -621,7 +639,11 @@ func (s SQLStore) ConversationMessages(ctx context.Context, id string, limit int
 }
 
 // AppendMessage stores one turn and refreshes the thread clock. The first user
-// message names an untitled thread (first 60 chars).
+// message names an untitled thread (first 60 chars). The UPDATE that bumps
+// updated_at and the INSERT of the message must land together: otherwise a
+// failure between them leaves a thread whose clock moved but whose message is
+// missing, and the cockpit shows a reply with no row. They run in one
+// transaction when a Beginner is wired (main.go), and sequentially otherwise.
 func (s SQLStore) AppendMessage(ctx context.Context, convID string, m Message) error {
 	if s.Exec == nil {
 		return errors.New("conversation store not configured")
@@ -632,29 +654,44 @@ func (s SQLStore) AppendMessage(ctx context.Context, convID string, m Message) e
 	if m.CompletionTokens < 0 {
 		m.CompletionTokens = 0
 	}
-	tag, err := s.Exec.Exec(ctx,
-		`UPDATE conversations SET updated_at = now() WHERE id = $1`, convID)
-	if err != nil {
-		return err
-	}
-	if tag == 0 {
-		return ErrConvNotFound
-	}
-	if _, err := s.Exec.Exec(ctx,
-		`INSERT INTO messages (conv_id, role, content, model, trace_id, prompt_tokens, completion_tokens)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		convID, m.Role, m.Content, m.Model, m.TraceID, m.PromptTokens, m.CompletionTokens); err != nil {
-		return err
-	}
-	if m.Role == "user" {
-		title := m.Content
-		if r := []rune(title); len(r) > 60 {
-			title = string(r[:60]) + "…"
+	run := func(exec evals.Execer) error {
+		tag, err := exec.Exec(ctx,
+			`UPDATE conversations SET updated_at = now() WHERE id = $1`, convID)
+		if err != nil {
+			return err
 		}
-		_, _ = s.Exec.Exec(ctx,
-			`UPDATE conversations SET title = $2 WHERE id = $1 AND (title IS NULL OR title = '')`, convID, title)
+		if tag == 0 {
+			return ErrConvNotFound
+		}
+		if _, err := exec.Exec(ctx,
+			`INSERT INTO messages (conv_id, role, content, model, trace_id, prompt_tokens, completion_tokens)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			convID, m.Role, m.Content, m.Model, m.TraceID, m.PromptTokens, m.CompletionTokens); err != nil {
+			return err
+		}
+		if m.Role == "user" {
+			title := m.Content
+			if r := []rune(title); len(r) > 60 {
+				title = string(r[:60]) + "…"
+			}
+			_, _ = exec.Exec(ctx,
+				`UPDATE conversations SET title = $2 WHERE id = $1 AND (title IS NULL OR title = '')`, convID, title)
+		}
+		return nil
 	}
-	return nil
+	if s.Begin != nil {
+		tx, err := s.Begin.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		// Rollback is a no-op after Commit; keep it as the failure path.
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := run(tx); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	return run(s.Exec)
 }
 
 // DeleteConversation erases a thread; messages follow by ON DELETE CASCADE.

@@ -1568,6 +1568,36 @@ func withCrossOriginProtection(next http.Handler) http.Handler {
 	return http.NewCrossOriginProtection().Handler(next)
 }
 
+// purger is the one method the retention sweep needs, so the sweep is testable
+// without a database.
+type purger interface {
+	Exec(ctx context.Context, sql string, args ...any) (int64, error)
+}
+
+// tableRetention is one table's window. table and column are constants chosen by
+// the caller, never client input; the cutoff is a typed interval below.
+type tableRetention struct {
+	table, column string
+	keep          time.Duration
+}
+
+// purgeTelemetry deletes rows older than each window. See RULES.md §7 and
+// PRIVACY.md: before this sweep existed the policy was prose and three tables
+// grew forever.
+func purgeTelemetry(ctx context.Context, db purger, windows ...tableRetention) (map[string]int64, error) {
+	out := make(map[string]int64, len(windows))
+	for _, w := range windows {
+		rows, err := db.Exec(ctx,
+			`DELETE FROM `+w.table+` WHERE `+w.column+` < now() - make_interval(secs => $1)`,
+			int64(w.keep/time.Second))
+		if err != nil {
+			return out, fmt.Errorf("%s: %w", w.table, err)
+		}
+		out[w.table] = rows
+	}
+	return out, nil
+}
+
 func main() {
 	mcpMode := flag.Bool("mcp", false, "run as MCP stdio server instead of HTTP router")
 	migrate := flag.Bool("migrate", false, "apply SQL migrations and exit")
@@ -1782,6 +1812,42 @@ func main() {
 			log.Printf("conversation purge: dropped %d idle thread(s)", n)
 		}
 	}()
+	// Retention for the three tables that grow with traffic. Before this, the
+	// policy existed only in RULES.md/PRIVACY.md; the sweep runs at boot and then
+	// daily, because a long-lived container never reboots (audit 2026-11-18 A1).
+	purgeWindows := []tableRetention{
+		{"spans", "started_at", spanKeep()},
+		{"route_decisions", "created_at", decisionKeep()},
+		{"audit_log", "ts", auditKeep()},
+	}
+	sweep := func(when string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		n, err := purgeTelemetry(ctx, pgAdapter{pool}, purgeWindows...)
+		if err != nil {
+			log.Printf("telemetry retention (%s): %v", when, err)
+			return
+		}
+		for table, rows := range n {
+			if rows > 0 {
+				log.Printf("retention (%s): dropped %d row(s) from %s", when, rows, table)
+			}
+		}
+	}
+	sweep("boot")
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-probeCtx.Done():
+				return
+			case <-t.C:
+				sweep("daily")
+			}
+		}
+	}()
+
 	mcpSrv := mcp.NewServer(srv)
 	mcpSrv.SpanSink = spans.Sink() // MCP tool calls land in the same span store
 	mcpSrv.TraceLookup = func(id string) (any, error) {

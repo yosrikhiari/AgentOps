@@ -69,6 +69,27 @@ func gpuHistoryKeep() time.Duration {
 	return d
 }
 
+// keepDuration reads a retention window. A typo, an unparseable value or
+// anything under an hour falls back to the default: a bad env var must never be
+// able to empty a table on boot.
+func keepDuration(raw string, def time.Duration) time.Duration {
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < time.Hour {
+		return def
+	}
+	return d
+}
+
+// Telemetry retention. Spans are the debugging surface, route_decisions the
+// policy audit trail, audit_log the change trail. Each keeps its own window so
+// an operator can shorten one without touching the others.
+func spanKeep() time.Duration     { return keepDuration(os.Getenv("SPAN_KEEP"), 720*time.Hour) }
+func decisionKeep() time.Duration { return keepDuration(os.Getenv("DECISION_KEEP"), 2160*time.Hour) }
+func auditKeep() time.Duration    { return keepDuration(os.Getenv("AUDIT_KEEP"), 8760*time.Hour) }
+
 // defaultDSN assembles the local-dev Postgres DSN from the same POSTGRES_* variables
 // docker-compose.yml uses, so `docker compose up postgres` and `go run .` agree without
 // any configuration. POSTGRES_DSN, when set, wins outright (see main.go).

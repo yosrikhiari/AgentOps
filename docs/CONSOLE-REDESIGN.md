@@ -120,6 +120,27 @@ Verified in Chromium: 4 charts, 3 range buttons, 6 h switch refetches, no duplic
 tables, 4 KPI cards, 3 route-test chips, prompt/result survive a 5 s poll, zero
 console errors.
 
+## Accessibility (shipped, `audit/a11y`)
+
+- [x] Skip link as the first tab stop; `.tower-skip` sits off-screen until it is
+      focused and targets `<main id="content" tabindex="-1">`. The skip hash
+      (`#content`) is ignored by the router once a page has rendered, so
+      skipping does not rebuild the page or restart its poll.
+- [x] A route change rewrites `document.title` (`Traces · Tower`), moves focus to
+      `#page-title`, and leaves exactly one `aria-current="page"` on the rail.
+      First paint and a re-route to the same page do not steal the caret.
+- [x] One narrow live region (`#announcer`) replaces the `aria-live` on the
+      content column, which re-read the whole page on every five-second poll.
+      Filter chips announce their result count; the toast is `aria-atomic` and
+      flips to `assertive` for failures.
+- [x] Toggles state themselves: `aria-pressed` on the trace chips, the workflow
+      status filter and both range switches; `aria-expanded` plus a spoken name
+      on the `×N` group chip, whose visible text is a count, not a control name.
+- [x] Field and icon fixes: the workflow question input has an `aria-label`, and
+      all nine rail SVGs are `aria-hidden` behind the text that names them.
+- [x] Documented with its demos in `docs/tower-design-system.html#a11y`, and
+      proved by 32 headless-browser assertions with zero console errors.
+
 ## Deferred or blocked on a decision
 
 - [?] Overview range switch (30 req / 1 h / 24 h) — needs `since` on `/v1/requests`.
@@ -128,8 +149,6 @@ console errors.
       (data-model change).
 - [?] Provider chip after reload — the conversations API stores `model` but not
       `backend`.
-- [ ] Accessibility bundle from the audit (skip link, focus/title on route,
-      `aria-live` scope, Level-A fixes) — independent of this redesign.
 
 ## Verification used for waves 0–1
 

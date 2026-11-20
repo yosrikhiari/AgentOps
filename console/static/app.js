@@ -577,6 +577,7 @@
         h('div', { class: 'tower-trace-item-sub' }, it.label),
         h('div', { class: 'tower-trace-item-meta' },
           it.latency != null ? h('span', { class: 'tower-mono' }, fmt.ms(it.latency)) : null,
+          it.answeredBy ? chip('answered by router') : null,
           it.error ? pill('critical', 'error') : null,
           it.sensitive ? chip('sensitive') : null,
           it.fallback ? chip('fallback') : null,
@@ -586,7 +587,7 @@
     async function loadList() {
       try {
         const [reqs, wfs] = await Promise.all([api('/v1/requests?limit=50', null, signal), api('/v1/workflows?limit=20', null, signal)]);
-        const a = (reqs.requests || []).map(r => ({ id: r.trace_id, kind: 'chat', at: r.at, label: (r.model || '–') + ' · ' + (r.reason || ''), latency: r.latency_s, error: !!r.error, sensitive: r.sensitive, fallback: !!(r.fallback && r.fallback.length), role: r.agent_role }));
+        const a = (reqs.requests || []).map(r => ({ id: r.trace_id, kind: 'chat', at: r.at, label: (r.model || '–') + ' · ' + (r.reason || ''), latency: r.latency_s, error: !!r.error, sensitive: r.sensitive, fallback: !!(r.fallback && r.fallback.length), role: r.agent_role, answeredBy: r.answered_by }));
         const b = (wfs.workflows || []).map(w => ({ id: w.id, kind: 'workflow', at: w.created_at, label: w.input, status: w.status, error: false }));
         items = a.concat(b).sort((x, y) => new Date(y.at) - new Date(x.at));
         renderList();
@@ -1062,9 +1063,17 @@
     mcp: ['mcp.tool'],
   };
   function liveKind(names) {
-    if (names.includes('model.generate')) return 'chat';
+    // A gateway question has no model.generate — the router answered it — but it is
+    // still a chat turn, with its own middle stage.
+    if (names.includes('model.generate') || names.includes('router.answer')) return 'chat';
     if (names.includes('researcher') || names.includes('drafter') || names.includes('reviewer')) return 'workflow';
     return 'mcp';
+  }
+  // The stage list for one trace: a chat answered by the router reports router.answer
+  // where a model call would be, so the ticket never waits on a stage that will not come.
+  function liveStagesFor(order) {
+    if (order.includes('router.answer')) return ['route.decide', 'router.answer', 'router.respond'];
+    return liveStages[liveKind(order)] || [];
   }
   // Shared live rail: subscribes to /v1/events, groups spans into tickets.
   // getPin() returns the trace_id to highlight as yours (cockpit) or null.
@@ -1075,7 +1084,7 @@
     let lastTrace = null;
     function ticketEl(id, t) {
       const kind = liveKind(t.order);
-      const stages = liveStages[kind] || [];
+      const stages = liveStagesFor(t.order);
       const next = stages.find(s => !t.info[s]);
       const steps = stages.map(s => {
         const st = t.info[s];
@@ -1135,7 +1144,7 @@
         if (a.error) st.err = true;
         if (typeof a.model === 'string' && a.model) t.model = a.model;
         t.at = new Date().toISOString();
-        const stages = liveStages[liveKind(t.order)] || [];
+        const stages = liveStagesFor(t.order);
         if (stages.length && stages.every(s => t.info[s])) t.pop = true;
         lastTrace = d.trace_id;
         render();
@@ -1155,6 +1164,16 @@
   const coHistBudget = 4000;
   function coEstTokens(s) { return Math.ceil(String(s).length / 4); }
   function coHistTokens(ms) { return ms.reduce((n, m) => n + coEstTokens(m.content), 0); }
+  // The picker's four choices. They are tiers, not model names: the server resolves
+  // "quality" to whichever model serves that tier, so a model change is one server edit.
+  const coModels = [
+    ['auto', 'Auto', 'Let the router choose from the prompt'],
+    ['fast', 'fast', 'Short, simple prompts'],
+    ['quality', 'quality', 'Long, complex or reasoning prompts'],
+    ['cloud', 'cloud', 'Cloud fallback only — never used for sensitive prompts'],
+  ];
+  let coModel = 'auto';   // tier for the next send
+  let coRoster = null;    // model id -> /v1/models row, for a reloaded thread's popover
   let coHist = [];        // [{role, content, model, backend, reason, trace_id, tokens, at}]
   let coDropped = 0;      // messages trimmed for the token budget
   let coPromise = false;  // a send is in flight
@@ -1192,7 +1211,22 @@
     const dot = h('span', { class: 'tower-live-dot' });
     const label = h('span', null, '');
 
-    const composer = h('div', { class: 'tower-chat-composer' }, ta,
+    const picker = h('div', { class: 'tower-model-pick', role: 'group', 'aria-label': 'Model' });
+    function renderPicker() {
+      picker.replaceChildren(
+        h('span', { class: 'tower-model-pick-label' }, 'model'),
+        ...coModels.map(([v, label, tip]) => {
+          const b = h('button', {
+            class: 'tower-chip tower-chip-btn' + (coModel === v ? ' on' : ''), type: 'button', title: tip,
+            'aria-pressed': String(coModel === v),
+          }, label);
+          b.addEventListener('click', () => { coModel = v; renderPicker(); syncComposer(); });
+          return b;
+        }));
+    }
+    renderPicker();
+
+    const composer = h('div', { class: 'tower-chat-composer' }, picker, ta,
       h('div', { class: 'tower-chat-actions' }, wfBtn,
         h('span', { class: 'tower-spacer' }), tokensHint, sendBtn));
     const head = h('div', { class: 'tower-chat-head' },
@@ -1251,10 +1285,12 @@
         h('div', { class: 'tower-span-bar' }, h('i', { style: 'width:' + Math.max(3, (secs / max) * 100) + '%' })),
         h('span', { class: 'tower-mono' }, dur(secs)));
     }
+    function spanLabel(r) {
+      return r ? '\u25cf ' + r.spans + (r.spans === 1 ? ' span \u00b7 ' : ' spans \u00b7 ') + dur(r.total) : '\u25cf spans \u00b7 \u2026';
+    }
     function spanChip(id) {
       const r = runFor(id);
-      return h('button', { class: 'tower-chip tower-chip-spans', type: 'button', 'data-spans': id },
-        r ? '\u25cf ' + r.spans + ' spans \u00b7 ' + dur(r.total) : '\u25cf spans \u00b7 \u2026');
+      return h('button', { class: 'tower-chip tower-chip-spans', type: 'button', 'data-spans': id }, spanLabel(r));
     }
     function focusRun(id) {
       const el = document.getElementById('run-' + id);
@@ -1273,7 +1309,7 @@
     function refreshFooters() {
       log.querySelectorAll('[data-spans]').forEach(el => {
         const r = runFor(el.dataset.spans);
-        if (r) el.textContent = '\u25cf ' + r.spans + ' spans \u00b7 ' + dur(r.total);
+        if (r) el.textContent = spanLabel(r);
       });
     }
 
@@ -1361,8 +1397,8 @@
     }
     function emptyState() {
       const prompts = [
-        'Summarise what this gateway does in three bullets',
-        'Which model would handle a long contract clause, and why?',
+        'Which models do you have?',
+        'Why are you using this model?',
         'Draft a release checklist for this week',
       ];
       return h('div', { class: 'tower-chat-empty' },
@@ -1374,17 +1410,109 @@
           return b;
         })));
     }
+    // A reloaded thread stores model and trace but not tier/candidates; the trace and
+    // the model list have them, so the popover reads them lazily instead of the store
+    // growing three columns it would have to keep in sync.
+    function roster() {
+      if (!coRoster) {
+        coRoster = api('/v1/models').then(d => {
+          const by = {};
+          (d.data || []).forEach(x => { by[x.id] = x; });
+          return by;
+        }).catch(() => ({}));
+      }
+      return coRoster;
+    }
+    function fillWhy(pop, m) {
+      const head = m.answered_by === 'router' ? 'Answered by the router — no model ran' : 'This turn';
+      const rows = (tier, reason, cands) => [
+        h('div', { class: 'tower-why-head' }, head),
+        h('div', { class: 'tower-kv' },
+          h('span', { class: 'k' }, 'tier'), h('span', { class: 'v' }, tier || '–'),
+          h('span', { class: 'k' }, 'reason'), h('span', { class: 'v' }, reason || '–')),
+        h('div', { class: 'tower-why-label' }, 'Candidates considered'),
+        h('div', { class: 'tower-pop-list' }, ...(cands.length ? cands.map(c =>
+          h('div', { class: 'tower-pop-item' },
+            h('span', null, c.model + (c.model === m.model ? ' · chosen' : '')),
+            h('span', { class: 'tower-mono' }, (c.tier || '–') + ' · ' + (c.local ? 'local' : 'cloud'))))
+          : [h('div', { class: 'tower-pop-item' }, h('span', null, 'not recorded on this trace'))])),
+      ];
+      if (m.tier || (m.candidates && m.candidates.length)) {
+        pop.replaceChildren(...rows(m.tier, m.reason, m.candidates || []));
+        return;
+      }
+      pop.replaceChildren(h('div', { class: 'tower-pop-item' }, h('span', null, 'reading the trace…')));
+      Promise.all([api('/v1/traces/' + encodeURIComponent(m.trace_id)), roster()]).then(([t, by]) => {
+        if (!pop.isConnected) return;
+        const d = (t.spans || []).find(s => s.name === 'route.decide');
+        const a = d ? parseAttrs(d.attrs) : {};
+        const cands = (Array.isArray(a.candidates) ? a.candidates : []).map(name => {
+          const model = String(name).split('/').slice(1).join('/') || String(name);
+          const info = by[model] || {};
+          return { model, tier: info.tier || '–', local: info.local !== false };
+        });
+        pop.replaceChildren(...rows(a.tier, a.reason, cands));
+      }).catch(() => {
+        if (pop.isConnected) pop.replaceChildren(h('div', { class: 'tower-pop-item' }, h('span', null, 'trace unavailable')));
+      });
+    }
+    // One popover per reply, opened by a chip-button; only one is open at a time and a
+    // click anywhere else closes it (the same contract as the threads popover).
+    function popover(label, build) {
+      const wrap = h('span', { class: 'tower-pop-anchor' });
+      const pop = h('div', { class: 'tower-pop', role: 'group', 'aria-label': label });
+      const btn = h('button', { class: 'tower-chip tower-chip-btn', type: 'button', 'aria-expanded': 'false' }, label + ' ▾');
+      btn.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const open = !pop.classList.contains('open');
+        document.querySelectorAll('.tower-pop.open').forEach(p => p.classList.remove('open'));
+        pop.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', String(open));
+        if (open) build(pop);
+      });
+      wrap.append(btn, pop);
+      return wrap;
+    }
+    function retryAt(i, model) {
+      if (coPromise) return;
+      const assistant = coHist[i], prev = coHist[i - 1];
+      if (!assistant || !prev || prev.role !== 'user') { toast('No user turn to retry', true); return; }
+      // Truncate the client thread at the turn being retried and send the same user
+      // message again. A retry is a review action, so it is not written to the stored
+      // thread: comparing two answers must not rewrite what was recorded.
+      coHist = coHist.slice(0, i);
+      coPin = null; coWorkflow = null;
+      renderChat();
+      send(prev.content, model, { keepUser: true, persist: false, ephemeral: true });
+    }
     function msgEl(m, i) {
       if (m.role === 'user') {
         return h('div', { id: 'co-m' + i, class: 'tower-chat-msg user', title: m.at ? fmt.date(m.at) : '' }, m.content);
       }
+      // Footer chips: model, provider, route reason, tokens, "N spans · time". A chip
+      // is omitted only when the data is missing — a router answer has no provider or
+      // tokens because no model ran, and says so instead.
       const bits = [];
       if (m.model) bits.push(chip(m.model));
       if (m.backend) bits.push(chip(m.backend));
+      if (m.reason) bits.push(chip(m.reason));
+      if (m.answered_by === 'router') bits.push(chip('answered by router'));
       const t = Number(m.tokens) || ((Number(m.prompt_tokens) || 0) + (Number(m.completion_tokens) || 0));
       if (t) bits.push(h('span', { class: 'tower-chat-tok' }, t + ' tok'));
       if (m.trace_id) bits.push(spanChip(m.trace_id));
       if (m.trace_id) bits.push(h('a', { class: 'tower-link tower-mono', href: '#/traces/' + m.trace_id }, fmt.short(m.trace_id)));
+      if (m.ephemeral) bits.push(chip('not saved'));
+      if (m.trace_id) bits.push(popover('why this model?', pop => fillWhy(pop, m)));
+      if (i > 0 && coHist[i - 1] && coHist[i - 1].role === 'user') {
+        bits.push(popover('Retry with', pop => {
+          pop.replaceChildren(h('div', { class: 'tower-why-label' }, 'Retry this turn with'),
+            h('div', { class: 'tower-pop-list' }, ...coModels.map(([v, label, tip]) => {
+              const b = h('button', { class: 'tower-pop-action', type: 'button', title: tip }, label);
+              b.addEventListener('click', ev => { ev.stopPropagation(); pop.classList.remove('open'); retryAt(i, v); });
+              return b;
+            })));
+        }));
+      }
       return h('div', { id: 'co-m' + i, class: 'tower-chat-msg assistant' },
         h('div', { class: 'tower-chat-body' }, m.content),
         bits.length ? h('div', { class: 'tower-chat-meta' }, ...bits) : null);
@@ -1412,37 +1540,54 @@
       renderInspector();
     }
 
-    async function send() {
-      const text = ta.value.trim();
-      if (!text || coPromise) return;
-      ta.value = ''; autosize(); errSlot.replaceChildren();
-      const mine = { role: 'user', content: text, at: new Date().toISOString() };
-      coHist.push(mine);
+    async function send(text, model, opts) {
+      const o = opts || {};
+      const body = text != null ? String(text).trim() : ta.value.trim();
+      if (!body || coPromise) return;
+      if (!o.keepUser) { ta.value = ''; autosize(); }
+      errSlot.replaceChildren();
+      const mine = { role: 'user', content: body, at: new Date().toISOString() };
+      if (!o.keepUser) coHist.push(mine);
       const wire = coHist.map(m => ({ role: m.role, content: m.content }));
       coDropped = 0;
       while (wire.length > 1 && coHistTokens(wire) > coHistBudget) { wire.shift(); coDropped++; }
-      coLastInput = text; coPromise = true;
+      coLastInput = body; coPromise = true;
       syncComposer(); renderChat();
       const ctl = new AbortController();
       let convId = coConvId;
-      if (!convId) {
+      if (!convId && o.persist !== false) {
         try { convId = (await api('/v1/conversations', { method: 'POST', body: JSON.stringify({ model: '' }) }, ctl.signal)).id; }
         catch (e) { convId = null; }
       }
+      // The picker sends a tier name; the server resolves it to the model that serves
+      // that tier (reason "explicit-tier"), so the console needs no model registry.
+      const tier = model || coModel;
       try {
-        const r = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: wire }) }, ctl.signal);
+        const r = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: wire, model: tier }) }, ctl.signal);
         const pt = r.usage ? r.usage.prompt_tokens : 0;
         const ct = r.usage ? r.usage.completion_tokens : 0;
         coHist.push({
           role: 'assistant', content: r.text, model: r.model, backend: r.backend, reason: r.reason,
+          tier: r.tier, candidates: r.candidates, answered_by: r.answered_by,
           trace_id: r.trace_id, tokens: (r.usage ? r.usage.total_tokens : 0),
           prompt_tokens: pt, completion_tokens: ct, at: new Date().toISOString(),
+          ephemeral: !!o.ephemeral,
         });
         coPin = r.trace_id;
-        if (convId) {
+        // Spans are written asynchronously by one goroutine, so the trace can still be
+        // in its queue when the reply lands — a router answer returns in under a
+        // millisecond, which is exactly when the footer used to say "1 span". Re-read
+        // once, after the writer has had time to persist all three.
+        if (r.trace_id) {
+          setTimeout(() => {
+            coTraceCache.delete(r.trace_id);
+            if (log.isConnected) renderInspector();
+          }, 1200);
+        }
+        if (convId && o.persist !== false) {
           coConvId = convId;
-          if (!coConvTitle) coConvTitle = text.slice(0, 48);
-          recordTurn(convId, { role: 'user', content: text, trace_id: r.trace_id }).then(() =>
+          if (!coConvTitle) coConvTitle = body.slice(0, 48);
+          recordTurn(convId, { role: 'user', content: body, trace_id: r.trace_id }).then(() =>
             recordTurn(convId, {
               role: 'assistant', content: r.text, model: r.model, trace_id: r.trace_id,
               prompt_tokens: pt, completion_tokens: ct,
@@ -1450,9 +1595,9 @@
         }
       } catch (e) {
         if (e.name !== 'AbortError') {
-          if (coHist[coHist.length - 1] === mine) coHist.pop();
-          ta.value = text; autosize();
-          errSlot.replaceChildren(errorBox('Send failed: ' + e.message, send));
+          if (!o.keepUser && coHist[coHist.length - 1] === mine) coHist.pop();
+          if (!o.keepUser) { ta.value = body; autosize(); }
+          errSlot.replaceChildren(errorBox('Send failed: ' + e.message, () => send(body, tier, o)));
         }
       } finally {
         coPromise = false;
@@ -1533,7 +1678,7 @@
     ta.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     });
-    sendBtn.addEventListener('click', send);
+    sendBtn.addEventListener('click', () => send());
     wfBtn.addEventListener('click', runWorkflow);
     newBtn.addEventListener('click', newThread);
     popNew.addEventListener('click', newThread);
@@ -1543,6 +1688,23 @@
       if (!threadWrap.contains(e.target)) pop.classList.remove('open');
     };
     document.addEventListener('click', closePop);
+    // Popovers inside the transcript (why this model?, retry with) follow the same
+    // contract: one open at a time, closed by a click elsewhere or Escape.
+    const closeMenus = e => {
+      if (!log.isConnected) { document.removeEventListener('click', closeMenus); return; }
+      document.querySelectorAll('.tower-pop.open').forEach(p => {
+        if (p.parentElement && p.parentElement.contains(e.target)) return;
+        p.classList.remove('open');
+        const b = p.parentElement && p.parentElement.querySelector('[aria-expanded]');
+        if (b) b.setAttribute('aria-expanded', 'false');
+      });
+    };
+    document.addEventListener('click', closeMenus);
+    const escMenus = e => {
+      if (!log.isConnected) { document.removeEventListener('keydown', escMenus); return; }
+      if (e.key === 'Escape') document.querySelectorAll('.tower-pop.open').forEach(p => p.classList.remove('open'));
+    };
+    document.addEventListener('keydown', escMenus);
     pop.addEventListener('keydown', e => { if (e.key === 'Escape') pop.classList.remove('open'); });
 
     const feed = () => { railCleanup = mountRail(listBody,

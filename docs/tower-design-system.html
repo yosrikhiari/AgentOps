@@ -402,12 +402,29 @@
           <div class="tower-chat">
             <div class="tower-chat-log" style="max-height:none">
               <div class="tower-chat-msg user"><div class="tower-chat-role"><span>you</span><span>11:56:31</span></div><div class="tower-chat-body">Clause 7.2 says the supplier may suspend delivery without notice. Is that enforceable?</div><div class="tower-chat-meta"><a class="tower-link tower-mono" href="#">742966fc</a></div></div>
-              <div class="tower-chat-msg assistant latest"><div class="tower-chat-role"><span>assistant</span><span>11:57:06</span></div><div class="tower-chat-body">It is likely enforceable only if the contract ties suspension to a defined breach or event. An unconditional right can be read down as an abuse of right, and a notice requirement is usually implied for good faith.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:3b-instruct</span><span class="tower-chip">ollama</span><span class="tower-chip">long_prompt</span><span>134 tok</span><a class="tower-link tower-mono" href="#">3c795f68</a></div></div>
+              <div class="tower-chat-msg assistant latest"><div class="tower-chat-role"><span>assistant</span><span>11:57:06</span></div><div class="tower-chat-body">It is likely enforceable only if the contract ties suspension to a defined breach or event. An unconditional right can be read down as an abuse of right, and a notice requirement is usually implied for good faith.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:3b-instruct</span><span class="tower-chip">ollama</span><span class="tower-chip">reasoning-prompt</span><span>134 tok</span><a class="tower-link tower-mono" href="#">3c795f68</a><span class="tower-pop-anchor"><button class="tower-chip tower-chip-btn">why this model? ▾</button></span><span class="tower-pop-anchor"><button class="tower-chip tower-chip-btn">Retry with ▾</button></span></div></div>
+              <div class="tower-chat-msg assistant"><div class="tower-chat-role"><span>assistant</span><span>11:58:02</span></div><div class="tower-chat-body">Last model turn: qwen2.5:3b-instruct on the fast tier via ollama, because short-simple-prompt, answered in 0.52 s. This turn was routed to the quality tier because gateway-question; no model was called — the router answered it.</div><div class="tower-chat-meta"><span class="tower-chip">qwen2.5:7b-instruct-q4_K_M</span><span class="tower-chip">ollama</span><span class="tower-chip">gateway-question</span><span class="tower-chip">answered by router</span><a class="tower-link tower-mono" href="#">8f2a1c3d</a></div></div>
               <div class="tower-chat-msg assistant pending"><div class="tower-chat-role"><span class="tower-live-dot"></span><span>thinking</span></div><div class="tower-chat-body">Waiting for the model — the first answer loads it into VRAM.</div></div>
             </div>
             <div class="tower-chat-composer">
+              <div class="tower-model-pick"><span class="tower-model-pick-label">model</span><button class="tower-chip tower-chip-btn on">Auto</button><button class="tower-chip tower-chip-btn">fast</button><button class="tower-chip tower-chip-btn">quality</button><button class="tower-chip tower-chip-btn">cloud</button></div>
               <textarea class="tower-chat-input" rows="2" placeholder="Ask a question, or paste the clause you are working on…"></textarea>
               <div class="tower-chat-actions"><span class="tower-chat-hint">4 msgs · ~124 tokens</span><div class="tower-form-row"><button class="tower-btn secondary">Run as workflow</button><button class="tower-btn primary">Send</button></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="ds-frame" style="padding-top:210px"><div class="ds-frame-label">The same popover component answers both questions: tier, reason, and every candidate considered (chosen marked) for one reply; a list of tiers for a retry. One open at a time, closed by an outside click or Escape. Used in msgEl(), fillWhy() and popover()</div>
+          <div class="tower-pop-anchor">
+            <button class="tower-chip tower-chip-btn" aria-expanded="true">why this model? ▾</button>
+            <div class="tower-pop open">
+              <div class="tower-why-head">This turn</div>
+              <div class="tower-kv"><span class="k">tier</span><span class="v">quality</span><span class="k">reason</span><span class="v">reasoning-prompt</span></div>
+              <div class="tower-why-label">Candidates considered</div>
+              <div class="tower-pop-list">
+                <div class="tower-pop-item"><span>qwen2.5:7b-instruct-q4_K_M · chosen</span><span class="tower-mono">quality · local</span></div>
+                <div class="tower-pop-item"><span>qwen2.5:3b-instruct</span><span class="tower-mono">fast · local</span></div>
+                <div class="tower-pop-item"><span>openai/gpt-oss-20b</span><span class="tower-mono">cloud · cloud</span></div>
+              </div>
             </div>
           </div>
         </div>
@@ -419,6 +436,9 @@
 <tr><td>.tower-workbench</td><td>grid minmax(0,1fr) 340px; one column under 900 px, inspector hidden</td><td>pageCockpit() — the page shell</td></tr>
 <tr><td>.tower-insp / .tower-stat-grid / .tower-span-row / .tower-run-card</td><td>inspector flush right, full height, own scroll: 2-column stat tiles, span bars scaled to the largest span, run cards jump to their message</td><td>pageCockpit() — renderInspector(), built from GET /v1/traces/{id}</td></tr>
 <tr><td>.tower-thread-pop</td><td>absolute popover under the Threads button; closes on select, outside click or Escape</td><td>pageCockpit() — loadConvs()</td></tr>
+<tr><td>.tower-chat-meta (footer)</td><td>chips, in order: model · provider · route reason · tokens · "● N spans · time" · trace id. A chip is omitted only when the data is missing — a router answer has no provider or tokens and carries "answered by router" instead. Actions ("why this model?", "Retry with") are chip-buttons, not coloured chips</td><td>pageCockpit() — msgEl(); values come from the response (model, backend, reason, tier, candidates, answered_by) or from GET /v1/traces/{id} for a reloaded thread</td></tr>
+<tr><td>.tower-pop / .tower-pop-anchor</td><td>one popover component: absolute panel above its chip-button, one open at a time, closed by an outside click or Escape. Content: .tower-kv for tier/reason, .tower-pop-list of .tower-pop-item for candidates, .tower-pop-action for the retry tiers</td><td>pageCockpit() — popover(), fillWhy(), retryAt(); candidates come from the response's <span class="ds-inline">candidates[]</span> or the trace's route.decide attrs joined to GET /v1/models</td></tr>
+<tr><td>.tower-model-pick</td><td>the four composer choices (Auto / fast / quality / cloud) as chip-buttons, the active one amber; sends <span class="ds-inline">model:"fast"</span> etc., which the server resolves to that tier's model with reason explicit-tier</td><td>pageCockpit() — renderPicker()</td></tr>
         </table>
       </section>
 

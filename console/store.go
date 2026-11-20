@@ -30,6 +30,8 @@ type Request struct {
 	Tokens    int       `json:"tokens"`
 	Fallback  []string  `json:"fallback,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	// AnsweredBy is "router" when no model ran: a question about the gateway itself.
+	AnsweredBy string `json:"answered_by,omitempty"`
 	// v1.1 client reference (ADR-0009): which agent of a multi-agent client made the call.
 	AgentRole string `json:"agent_role,omitempty"`
 	ClientRef string `json:"client_ref,omitempty"`
@@ -248,7 +250,7 @@ func (s SQLStore) RecentRequests(ctx context.Context, limit int) ([]Request, err
 	rows, err := s.spans(ctx,
 		`SELECT trace_id, span_id, parent_id, name, started_at, attrs::text FROM spans
 		 WHERE trace_id IN (SELECT trace_id FROM spans WHERE name = 'route.decide' ORDER BY started_at DESC LIMIT $1)
-		   AND name IN ('route.decide', 'model.generate')
+		   AND name IN ('route.decide', 'model.generate', 'router.answer')
 		 ORDER BY started_at DESC`, limit)
 	if err != nil {
 		return nil, err
@@ -279,6 +281,14 @@ func (s SQLStore) RecentRequests(ctx context.Context, limit int) ([]Request, err
 			req.Tokens = int(num(r.attrs, "prompt_tokens") + num(r.attrs, "completion_tokens"))
 			req.Fallback = strs(r.attrs, "fallback_from")
 			req.Error = str(r.attrs, "error")
+		case "router.answer":
+			// A gateway question: the router answered from labels, so there is no
+			// latency and no token count. The row still names the model the turn was
+			// routed to, and says who answered.
+			req.Model = str(r.attrs, "model")
+			req.Tier = str(r.attrs, "tier")
+			req.Reason = str(r.attrs, "reason")
+			req.AnsweredBy = str(r.attrs, "answered_by")
 		}
 	}
 	out := make([]Request, 0, len(order))

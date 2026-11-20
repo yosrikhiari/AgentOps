@@ -129,9 +129,9 @@ func TestRouterGoldenMetaQuestions(t *testing.T) {
 // The roster and this turn's route travel in the system prompt, so a model answers
 // "why this model?" from facts instead of inventing a policy.
 func TestSystemPromptNamesRosterAndRoute(t *testing.T) {
-	be := localFake("ok", 4)
-	srv := NewServer("fast-m", "quality-m", be)
-	srv.AddModel(ModelRef{Tier: "cloud", Model: "cloud-m", Backend: &fakeBackend{name: "groq"}})
+	be := &fakeBackend{name: "groq", local: false, text: "ok", tokens: 4}
+	srv := NewServer("fast-m", "quality-m", localFake("local", 4))
+	srv.AddModel(ModelRef{Tier: "cloud", Model: "cloud-m", Backend: be})
 	if _, err := srv.Chat("hi", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestSystemPromptNamesRosterAndRoute(t *testing.T) {
 		"fast-m · fast · local",
 		"quality-m · quality · local",
 		"cloud-m · cloud · cloud",
-		"This turn was routed to fast-m because short-simple-prompt.",
+		"This turn was routed to cloud-m because short-simple-prompt.",
 		"Do not offer generic help.",
 	} {
 		if !strings.Contains(got, want) {

@@ -135,7 +135,11 @@ func TestDecisionSinkRecordsExplicitAndSensitive(t *testing.T) {
 // cloud fallback answers. The decision must say so - a replay that credited the planned
 // model would learn the wrong lesson from every fallback.
 func TestDecisionRecordsTheModelThatAnsweredNotThePlan(t *testing.T) {
-	srv, _, cloud := twoBackends(errors.New("ollama down"))
+	local := &fakeBackend{name: "ollama", local: true, text: "local", tokens: 1}
+	cloud := &fakeBackend{name: "groq", local: false, text: "cloud", tokens: 1, err: errors.New("down")}
+	srv := NewServer("fast-m", "quality-m", local)
+	srv.AddModel(ModelRef{Tier: "cloud", Model: "llama-8b", Backend: cloud})
+	srv.Exhaustion = NewExhaustionTracker(srv.Metrics)
 	var got []Decision
 	srv.DecisionSink = func(d Decision) { got = append(got, d) }
 	rec := post(srv, `{"prompt":"hi"}`, nil)
@@ -149,11 +153,11 @@ func TestDecisionRecordsTheModelThatAnsweredNotThePlan(t *testing.T) {
 	if !d.Fallback || d.Failed {
 		t.Fatalf("fallback=%v failed=%v", d.Fallback, d.Failed)
 	}
-	if d.Planned != "ollama/fast-m" {
-		t.Fatalf("planned = %q", d.Planned)
+	if d.Planned != "groq/llama-8b" {
+		t.Fatalf("planned = %q, want the cloud rung that was tried first", d.Planned)
 	}
-	if d.Chosen != cloud.Name()+"/llama-8b" {
-		t.Fatalf("chosen = %q, want the cloud model that answered", d.Chosen)
+	if d.Chosen != "ollama/fast-m" {
+		t.Fatalf("chosen = %q, want the local model that answered", d.Chosen)
 	}
 }
 

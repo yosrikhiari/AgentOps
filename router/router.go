@@ -214,7 +214,11 @@ func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Ro
 				}
 			}
 			if chosen == nil {
-				return route, fmt.Errorf("no model serves tier %q", strings.ToLower(strings.TrimSpace(requested)))
+				// No registered model serves this tier. That is a client asking for
+				// something this deployment does not have — 400 unknown_model, not a
+				// 502 "backend unavailable". A tier whose model exists but is not
+				// pulled is caught earlier, as 503 model_not_pulled.
+				return route, ErrUnknownModel{Model: requested}
 			}
 			reason = ExplicitTierReason
 		}

@@ -80,11 +80,12 @@ Then:
 ```bash
 curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}]}'
 # OpenAI shape: {"id":"chatcmpl-…","object":"chat.completion","model":"qwen2.5:3b-instruct","choices":[…],"usage":{…},
-#                "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}   ← Tower extensions
+#                "reason":"short-simple-prompt","backend":"ollama","tier":"fast","candidates":[…],"trace_id":"598d…"}   ← Tower extensions
 curl -s -N localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"hi"}],"stream":true}'   # SSE
 curl -s localhost:8080/v1/messages -H 'x-api-key: ak_…' -d '{"model":"auto","max_tokens":128,"messages":[{"role":"user","content":"hi"}]}'   # Anthropic shape
 curl -s localhost:8080/v1/models           # served models with tier, backend, health
 curl -s localhost:8080/v1/traces/598d…     # 3 spans: route.decide → model.generate → router.respond
+curl -s localhost:8080/v1/chat/completions -d '{"messages":[{"role":"user","content":"why are you using this model"}]}'   # answered by the router: answered_by:"router"
 curl -s localhost:8080/metrics             # router_*, router_backend_up, router_key_*, eval_faithfulness, gpu_*
 ```
 
@@ -179,7 +180,7 @@ Windows without bash: run the same five commands by hand (`gofmt -l .`, `go vet 
 - **Postgres-native durability, not DBOS/Temporal** — `(workflow_id, seq)` idempotency keys + `pending→running→done` rows; resume = re-run the same id and skip `done`. (ADR-0003)
 - **Scheduler is a flag, not a service** — `--schedule-evals 24h` loops the same `scoreOnce` that `--score` and the console call. (ADR-0006)
 - **Per-question eval rows** — `eval_pair_scores` lets the drift report name the worst cases without re-running judges. (ADR-0005)
-- **Heuristic router first** — `len > 200` or a complexity keyword → quality tier. One `if` you can explain beats a classifier you can't demo.
+- **Heuristic router first** — a reasoning word (`why`, `explain`, `compare`, `reason`) or `len > 200` → quality tier; a question about the gateway is answered by the router itself, from the last trace and the roster, with no model call. One `if` you can explain beats a classifier you can't demo.
 - **Fail-closed on sensitive data** — the routing plan is built once; a sensitive request has no cloud candidate, ever. (ADR-0007)
 - **Judge bias guards** — justification before verdict, negative verdicts parsed first, temperature 0, judge model + prompt version logged, `judge_changed` flag in the drift report.
 - **Golden answers are standalone propositions** — the judge never sees the question, so one-word, list-fragment and "Because…" answers score 0 regardless of truth; `--freeze-golden` rejects them. Learned from v1 (0.969) → v2 (1.000).

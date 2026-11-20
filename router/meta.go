@@ -58,18 +58,52 @@ func (s *Server) LastTurn() *LastRoute {
 	return &cp
 }
 
-// gatewayQuestionTerms are phrases that can only be about this gateway's models or
-// routing. Deliberately phrases, not the bare word "model": "which model should I use
-// for a classifier" is a question about models, but "the gateway is down, how do I
-// debug it" must still reach a model.
-var gatewayQuestionTerms = []string{
-	"which model", "what model", "which models", "what models",
+// gatewayQuestionStrong phrases can only be about this gateway's models or routing.
+var gatewayQuestionStrong = []string{
 	"why this model", "why that model", "why are you using", "why did you use",
 	"why are you answering", "why is this model", "why is that model",
 	"how does routing", "how do you route", "how is routing", "how are you routed",
 	"your routing", "routing rule", "routing rules", "routing decision",
 	"why not another", "why not a different model", "why not the other",
-	"what other models", "other models do you",
+	"other models do you", "models do you have", "answered by the router",
+}
+
+// gatewayQuestionWeak are questions about models in general ("which model should I
+// use for a classifier?"). They are only about *this* gateway when the prompt also
+// addresses it — otherwise answering from the roster would hijack a real question.
+var gatewayQuestionWeak = []string{
+	"which model", "what model", "which models", "what models", "what other models",
+}
+
+func isDirectGatewayQuestion(prompt string) bool {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+	for _, t := range gatewayQuestionStrong {
+		if strings.Contains(lower, t) {
+			return true
+		}
+	}
+	for _, t := range gatewayQuestionWeak {
+		if strings.Contains(lower, t) && addressesTheGateway(lower) {
+			return true
+		}
+	}
+	return false
+}
+
+// addressesTheGateway is the second-person or product reference that turns "which
+// model" into a question about this deployment.
+func addressesTheGateway(lower string) bool {
+	for _, w := range []string{"you", "your", "yours"} {
+		if containsWord(lower, w) {
+			return true
+		}
+	}
+	for _, t := range []string{"gateway", "tower", "router", "routing"} {
+		if strings.Contains(lower, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsGatewayQuestion reports whether this turn asks the gateway about itself. The
@@ -85,16 +119,6 @@ func IsGatewayQuestion(prompt string, msgs []Message) bool {
 	}
 	prev := previousUserPrompt(prompt, msgs)
 	return prev != "" && isDirectGatewayQuestion(prev)
-}
-
-func isDirectGatewayQuestion(prompt string) bool {
-	lower := strings.ToLower(strings.TrimSpace(prompt))
-	for _, t := range gatewayQuestionTerms {
-		if strings.Contains(lower, t) {
-			return true
-		}
-	}
-	return false
 }
 
 // isGatewayFollowUp recognises the shapes a follow-up takes. It is only consulted

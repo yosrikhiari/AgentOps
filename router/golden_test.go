@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -30,6 +31,8 @@ func TestReasoningPromptsGoToQualityEvenWhenShort(t *testing.T) {
 		{"what is the reason for the outage", "quality", ReasoningReason},
 		{"hi", "fast", FastReason},
 		{"thanks!", "fast", FastReason},
+		// A model question that is not about this deployment must reach a model.
+		{"which model should I use for a classifier", "fast", FastReason},
 	}
 	for _, c := range cases {
 		tier, reason := Classify(c.prompt)
@@ -206,6 +209,14 @@ func TestTierAliasRouting(t *testing.T) {
 	}
 	if out.Model != "quality" || out.Reason != ExplicitReason {
 		t.Fatalf("exact model name must win over the tier alias: model=%q reason=%q", out.Model, out.Reason)
+	}
+
+	// A tier this deployment does not serve is the client's mistake, not a dead
+	// backend: 400 unknown_model, matched by the one error shape.
+	srv3 := NewServer("fast-m", "quality-m", localFake("z", 1))
+	rec := post(srv3, `{"model":"cloud","messages":[{"role":"user","content":"hi"}]}`, nil)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown_model") {
+		t.Fatalf("unconfigured tier: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

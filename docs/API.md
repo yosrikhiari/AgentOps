@@ -35,7 +35,7 @@ Per-key counters: `router_key_requests_total{key}` and `router_key_rejected_tota
 
 ## `POST /v1/chat/completions`
 
-OpenAI-compatible. `model` is optional — `"auto"` (default) lets the router pick a tier from the prompt; a served model name (or `backend/model`) is used as-is.
+OpenAI-compatible. `model` is optional — `"auto"` (default) lets the router pick a tier from the prompt; a served model name (or `backend/model`) is used as-is. A **tier name** — `"fast"`, `"quality"` or `"cloud"` — picks the first registered model serving that tier (`reason: "explicit-tier"`), which is what the console's model picker sends; a model that is really named `fast` still wins over the alias.
 
 ```bash
 curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{
@@ -51,15 +51,22 @@ curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Cont
   "model": "qwen2.5:3b-instruct",
   "choices": [{"index":0,"message":{"role":"assistant","content":"Blue"},"finish_reason":"stop"}],
   "usage": {"prompt_tokens":24,"completion_tokens":2,"total_tokens":26},
-  "text": "Blue", "reason": "short-simple-prompt", "backend": "ollama", "trace_id": "aa67895ea5dd4b8e"
+  "text": "Blue", "reason": "short-simple-prompt", "backend": "ollama", "trace_id": "aa67895ea5dd4b8e",
+  "tier": "fast",
+  "candidates": [{"model":"qwen2.5:3b-instruct","tier":"fast","local":true},
+                 {"model":"qwen2.5:7b-instruct-q4_K_M","tier":"quality","local":true}]
 }
 ```
 
-`text`, `reason`, `backend`, `trace_id` and (when a fallback happened) `fallback` are Tower extensions; OpenAI clients ignore them. The MVP body `{"prompt":"…","max_tokens":N}` is still accepted.
+`text`, `reason`, `backend`, `trace_id`, `tier`, `candidates` and (when a fallback happened) `fallback` are Tower extensions; OpenAI clients ignore them. The MVP body `{"prompt":"…","max_tokens":N}` is still accepted. `candidates` is the whole eligible chain in the order it would be tried, so a UI can show what was considered without re-deriving the decision.
 
-**Streaming** — `"stream": true` returns `text/event-stream` in the OpenAI chunk shape; the last chunk has `finish_reason:"stop"` plus `usage`, `reason`, `backend`, `trace_id`, then `data: [DONE]`. A failure after the first delta is sent as a `data: {"error":…}` event.
+**Streaming** — `"stream": true` returns `text/event-stream` in the OpenAI chunk shape; the last chunk has `finish_reason:"stop"` plus `usage`, `reason`, `backend`, `trace_id`, `tier`, `candidates`, `answered_by`, then `data: [DONE]`. A failure after the first delta is sent as a `data: {"error":…}` event.
 
-**Routing** — `reason` is one of `short-simple-prompt` (≤200 chars, no complexity keyword → fast tier), `long-or-complex-prompt` (→ quality tier), `explicit-model`. If the chosen backend fails, the router tries the other local tier, then — for non-sensitive requests only — the cloud model; the response's `fallback` field and the `model.generate` span record what happened. Backends the health prober last saw down are skipped as fallbacks.
+**Routing** — `reason` is one of `short-simple-prompt` (≤200 chars, no reasoning word, no complexity keyword → fast tier), `long-or-complex-prompt` (→ quality tier), `reasoning-prompt` (contains `why`, `explain`, `compare`, `reason`, `analyse`, `justify`, … → quality tier even when short), `gateway-question` (a question about this gateway's models or routing → quality tier, answered by the router with no model call), `explicit-model` and `explicit-tier`. If the chosen backend fails, the router tries the other local tier, then — for non-sensitive requests only — the cloud model; the response's `fallback` field and the `model.generate` span record what happened. Backends the health prober last saw down are skipped as fallbacks.
+
+**Questions about the gateway** — a prompt that asks which model is used, why, or how routing works is answered by the router itself, from the last model turn (model, tier, reason, latency) and the registered roster with tiers. The response carries `"answered_by": "router"` and no model is called; the trace is `route.decide → router.answer → router.respond`. A short follow-up ("why not another one") counts when the previous user turn was a gateway question — the thread is the only context a stateless gateway has.
+
+**System prompt (server-built, every request)** — before a model is called the gateway prepends one system message: it names the registered models with tier and locality, states the routing rule, and names the model and reason this turn was routed to, with an instruction to answer from those facts. It is rebuilt per request and never stored, so a client-held thread (ADR-0010) does not accumulate copies. A client's own system message is kept after it. Sensitivity is decided on what the client sent, before the injection.
 
 **Sensitive data (fail-closed)** — mark a request with header `X-Tower-Sensitive: true` or body `"sensitive": true`; a small keyword list (`password`, `iban`, `passport`, `confidentiel`, …; override with `SENSITIVE_KEYWORDS=a,b,c`) also flags it. A sensitive request never reaches a non-local model: every non-local candidate is removed from the chain — the classified tier included — and naming a non-local model explicitly returns `403 sensitive_cloud_blocked`. **Locality is per model, not per backend:** Ollama's hosted models (`name:cloud`) are served through the local API but count as non-local (`GET /v1/models` shows `local:false`). If no local model remains, the request is refused with the same 403 rather than sent anywhere.
 
@@ -95,7 +102,8 @@ curl localhost:8080/v1/messages \
 {"id":"msg_598d…","type":"message","role":"assistant","model":"qwen2.5:3b-instruct",
  "content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","stop_sequence":null,
  "usage":{"input_tokens":12,"output_tokens":3},
- "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…"}
+ "reason":"short-simple-prompt","backend":"ollama","trace_id":"598d…",
+ "tier":"fast","candidates":[{"model":"qwen2.5:3b-instruct","tier":"fast","local":true}]}
 ```
 
 - **Credentials:** `x-api-key: <key>` (what Claude Code and the Anthropic SDK send) or

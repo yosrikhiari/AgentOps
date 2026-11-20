@@ -128,6 +128,9 @@ Known gaps, stated: `/metrics` is unauthenticated (routing metadata and per-key 
 | Resource options | `num_ctx`/`num_gpu`/`num_predict`/`num_thread`/`repeat_last_n` above their ceiling, or `keep_alive` negative/over 1h → 400 `option_out_of_range` | `TestParamsRejectResourceOptionsOutOfRange`, `TestChatRejectsUnboundedOption` |
 | One eval at a time | 409 `eval_running` | `TestEvalRunSingleFlight` |
 | Golden hygiene | Freeze rejects empty fields, unknown docs, duplicate questions, zero-claim and subordinate-clause answers | `TestValidateGolden` |
+| Questions about the gateway | `which model` / `why this model` / `how does routing work` (and a short follow-up to one) is answered by the router from the last model turn and the roster, with `answered_by:"router"` and no model call; the trace is `route.decide → router.answer → router.respond` | `TestRouterGoldenMetaQuestions`, `TestGatewayQuestionTraceShape`, `TestGatewayFollowUpNeedsTheThread` |
+| System prompt | Built server-side on every request: roster with tier and locality, the routing rule, and this turn's model and reason. Rebuilt, never stored, never spanned; sensitivity is decided on the client's messages before injection | `TestSystemPromptNamesRosterAndRoute`, `TestSystemPromptDoesNotChangeSensitivity` |
+| Trace shape | Every chat trace has three spans; the failure path emits `router.respond` carrying the error, and `router.answer` replaces `model.generate` when no model ran | `TestFailurePathEmitsRespond`, `TestChatEmitsThreeSpans` |
 | Judge determinism | Temperature 0 on every local judge call; judge model + prompt version stored per run; `judge_changed` flag in drift | `TestOllamaJudgeSendsTemperatureZero`, `TestRecordAndDriftReport` |
 | Atomic eval runs | Header + pair rows in one transaction; a failed run writes nothing | `scoreOnce` (review) — observed live 2026-09-15 |
 | Stale corpus | Ingest prunes chunks the cleaner no longer emits | `TestIngestPrunesStaleChunks` |

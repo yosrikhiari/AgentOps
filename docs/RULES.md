@@ -96,7 +96,7 @@ Precondition for any retry: the operation is idempotent. Span inserts are `ON CO
 - **Vertical first.** One process serves one GPU; Ollama serializes model calls anyway. Concurrency inside the process is goroutine-per-request (stdlib), bounded by the single writer for spans.
 - **What scales today:** requests on `/health`, `/metrics`, `/v1/models`, the console (all pool-backed, stateless); readers of spans/evals.
 - **What does not, by design (documented, not hidden):** the API-key rate limiter is per-process; the eval single-flight is per-process; two resumers of one workflow id would both run the pending step. A second replica requires: a shared limiter (Postgres or Redis counter), a `FOR UPDATE SKIP LOCKED` lease on steps, and a shared eval lock. That is Track D/E work and is listed in `README.md` → *Known limits*.
-- **Data growth:** spans are the only unbounded table; policy is 30-day retention (sweep not yet automated — backlog). Indexes exist on `spans(trace_id)`, `spans(started_at)`, `eval_runs(golden_version, created_at)`.
+- **Data growth:** `spans` (30 d), `route_decisions` (90 d) and `audit_log` (365 d) are swept at boot and daily (`SPAN_KEEP` / `DECISION_KEEP` / `AUDIT_KEEP`, each clamped to at least 1 h); `gpu_samples` keeps `GPU_HISTORY_KEEP` (168 h) and idle conversations 90 days. Indexes exist on `spans(started_at)`, `spans(trace_id)` and `spans(name, started_at)`.
 
 ## 9. Security requirements
 

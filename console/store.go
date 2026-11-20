@@ -247,9 +247,17 @@ func strs(m map[string]any, k string) []string {
 // RecentRequests returns the newest router chats first. Pre-Track-B spans (no latency or
 // backend attrs) still render with what they have.
 func (s SQLStore) RecentRequests(ctx context.Context, limit int) ([]Request, error) {
+	// The page shows recent requests, so both scans are bounded to 24 hours: the
+	// span name alone matches every request ever made, and without a floor the
+	// planner scans and detoasts JSONB far past the point any row can appear
+	// (audit 2026-11-18 A2). migrations/0016 adds (name, started_at) for it.
 	rows, err := s.spans(ctx,
 		`SELECT trace_id, span_id, parent_id, name, started_at, attrs::text FROM spans
-		 WHERE trace_id IN (SELECT trace_id FROM spans WHERE name = 'route.decide' ORDER BY started_at DESC LIMIT $1)
+		 WHERE started_at > now() - interval '24 hours'
+		   AND trace_id IN (
+		     SELECT trace_id FROM spans
+		      WHERE name = 'route.decide' AND started_at > now() - interval '24 hours'
+		      ORDER BY started_at DESC LIMIT $1)
 		   AND name IN ('route.decide', 'model.generate', 'router.answer')
 		 ORDER BY started_at DESC`, limit)
 	if err != nil {

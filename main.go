@@ -16,6 +16,8 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -196,18 +198,76 @@ func (g gpuAdapter) Query(ctx context.Context, sql string, args ...any) (gpu.Row
 }
 
 func runMigrate(dsn string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conn.Close(ctx)
+	// Advisory lock: two concurrent `--migrate` processes (or a migrate racing a
+	// boot schema check) must not both run Migrate. pg_advisory_lock blocks until
+	// the lock is free; the session-level lock is released on close/defer.
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(0x746f776572)`); err != nil {
+		log.Fatalf("migrate: advisory lock: %v", err)
+	}
+	defer func() { _, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(0x746f776572)`) }()
 	n, err := evals.Migrate(ctx, pgAdapter{conn}, pgAdapter{conn}, "migrations")
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("migrations: applied %d new file(s)", n)
+}
+
+// checkSchema verifies at boot that every migration shipped with this binary has
+// been applied. A missing migration means the operator has not run --migrate (or
+// ran an older binary); serving on a half-migrated schema is worse than refusing
+// to start. Returns nil when the schema is current or when the migrations
+// directory cannot be found (nothing to compare against).
+func checkSchema(pool *pgxpool.Pool) error {
+	files, err := filepath.Glob(filepath.Join("migrations", "*.sql"))
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		log.Printf("schema check: no migrations directory found; skipping")
+		return nil
+	}
+	expected := map[string]bool{}
+	for _, f := range files {
+		expected[filepath.Base(f)] = true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, err := pool.Query(ctx, `SELECT filename FROM schema_migrations`)
+	if err != nil {
+		// Table missing or DB unreachable: treat as "not migrated".
+		return fmt.Errorf("schema_migrations unreadable (%v); run: tower --migrate", err)
+	}
+	defer rows.Close()
+	applied := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		applied[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var missing []string
+	for name := range expected {
+		if !applied[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("schema out of date: missing migrations %v; run: tower --migrate", missing)
+	}
+	log.Printf("schema check: %d migration(s) applied", len(applied))
+	return nil
 }
 
 func evalThreshold() float64 {
@@ -1808,6 +1868,9 @@ func main() {
 		log.Fatalf("postgres dsn: %v", err)
 	}
 	defer pool.Close()
+	if err := checkSchema(pool); err != nil {
+		log.Fatal(err)
+	}
 	srv, backends := buildBackends(cfg)
 	spans := newSpanWriter(pool)
 	srv.SpanSink = spans.Sink()

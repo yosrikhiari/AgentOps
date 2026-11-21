@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 )
 
 const (
@@ -253,7 +252,7 @@ func plan(requested string, msgs []Message, sensitive bool, refs []ModelRef, pol
 	// timeout) and falls back to the heuristic on any error.
 	tier, reason := "", ""
 	if policy == "learned" && classifier != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), classifierTimeout())
 		defer cancel()
 		t, r, err := classifier(ctx, prompt)
 		if err == nil && (t == "fast" || t == "quality") {

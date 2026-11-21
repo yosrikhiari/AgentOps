@@ -1299,6 +1299,20 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 	for _, m := range extraModels(cfg.FastModel, cfg.QualityModel) {
 		srv.AddModel(router.ModelRef{Tier: "local", Model: m, Backend: local})
 	}
+	// ROUTER_POLICY: "heuristic" (default) uses ClassifyThread; "learned" asks a
+	// small local model to classify the tier, falling back to the heuristic on
+	// error/timeout. Only meaningful when Ollama is reachable.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("ROUTER_POLICY")), "learned") {
+		cm := strings.TrimSpace(os.Getenv("ROUTER_CLASSIFIER_MODEL"))
+		if cm == "" {
+			cm = cfg.FastModel
+		}
+		srv.RouterPolicy = "learned"
+		srv.Classifier = router.OllamaClassifier(local, cm)
+		log.Printf("router policy: learned (classifier model %s)", cm)
+	} else {
+		srv.RouterPolicy = "heuristic"
+	}
 	if kws := os.Getenv("SENSITIVE_KEYWORDS"); kws != "" {
 		srv.SensitiveKeywords = strings.Split(strings.ToLower(kws), ",")
 	}

@@ -1,8 +1,10 @@
 package router
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -191,6 +193,17 @@ func (e ErrModelNotPulled) Error() string {
 // Tier=="fast" and "quality" are the auto tiers; every non-local ref is a fallback for
 // non-sensitive requests.
 func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Route, error) {
+	return plan(requested, msgs, sensitive, refs, "heuristic", nil)
+}
+
+// PlanWithPolicy is Plan with an explicit routing policy. policy is "heuristic"
+// (ClassifyThread) or "learned" (use classifier, falling back to the heuristic
+// on error/timeout). classifier may be nil.
+func PlanWithPolicy(requested string, msgs []Message, sensitive bool, refs []ModelRef, policy string, classifier func(ctx context.Context, prompt string) (string, string, error)) (Route, error) {
+	return plan(requested, msgs, sensitive, refs, policy, classifier)
+}
+
+func plan(requested string, msgs []Message, sensitive bool, refs []ModelRef, policy string, classifier func(ctx context.Context, prompt string) (string, string, error)) (Route, error) {
 	prompt := lastUserContent(msgs)
 	var route Route
 	route.Sensitive = sensitive
@@ -233,7 +246,27 @@ func Plan(requested string, msgs []Message, sensitive bool, refs []ModelRef) (Ro
 		route.Candidates = []ModelRef{*chosen}
 		return route, nil
 	}
-	route.Tier, route.Reason = ClassifyThread(prompt, msgs)
+	if requested != "" && requested != "auto" {
+		// ... (unchanged explicit handling)
+	}
+	// Classify the tier. "learned" delegates to the classifier (with a short
+	// timeout) and falls back to the heuristic on any error.
+	tier, reason := "", ""
+	if policy == "learned" && classifier != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		t, r, err := classifier(ctx, prompt)
+		if err == nil && (t == "fast" || t == "quality") {
+			tier, reason = t, r
+			if reason == "" {
+				reason = "learned-classifier"
+			}
+		}
+	}
+	if tier == "" {
+		tier, reason = ClassifyThread(prompt, msgs)
+	}
+	route.Tier, route.Reason = tier, reason
 	// Candidate order. For non-sensitive requests the operator's cloud ladder
 	// takes precedence (best available cloud first, then next best, then local) —
 	// the ladder is the primary decision, not a fallback. Sensitive requests drop

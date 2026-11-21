@@ -141,7 +141,14 @@ type Server struct {
 	Prober *HealthProber
 	// Exhaustion, when set, benches backends that return quota/rate-limit (or persistent
 	// transient) errors and lets the router skip them until the cooldown elapses.
-	Exhaustion        *ExhaustionTracker
+	Exhaustion *ExhaustionTracker
+	// RouterPolicy selects how the tier is chosen: "heuristic" (default, ClassifyThread)
+	// or "learned" (use Classifier, falling back to the heuristic on error/timeout).
+	RouterPolicy string
+	// Classifier, when set and RouterPolicy=="learned", picks the tier for a prompt.
+	// It must return "fast" or "quality" (and a reason label). On error the router
+	// falls back to the heuristic classifier.
+	Classifier        func(ctx context.Context, prompt string) (tier, reason string, err error)
 	SensitiveKeywords []string
 	RequestTimeout    time.Duration
 	mux               *http.ServeMux
@@ -625,7 +632,7 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 			}
 		}
 	}
-	route, err := Plan(req.Model, msgs, sensitive, present)
+	route, err := PlanWithPolicy(req.Model, msgs, sensitive, present, s.RouterPolicy, s.Classifier)
 	if err != nil {
 		if req.Model == "" || req.Model == "auto" || IsTierName(req.Model) {
 			if m := droppedTierModel(msgs, req.Model, dropped); m != "" {

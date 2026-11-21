@@ -1310,6 +1310,17 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 		srv.RouterPolicy = "learned"
 		srv.Classifier = router.OllamaClassifier(local, cm)
 		log.Printf("router policy: learned (classifier model %s)", cm)
+		// Pre-warm the classifier model so the first real request doesn't pay
+		// the cold-load penalty (several seconds on a 4 GB card).
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if _, _, err := srv.Classifier(ctx, "warmup"); err != nil {
+				log.Printf("classifier warmup: %v (first request may be slow)", err)
+			} else {
+				log.Printf("classifier warmup: ok")
+			}
+		}()
 	} else {
 		srv.RouterPolicy = "heuristic"
 	}

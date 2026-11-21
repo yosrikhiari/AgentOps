@@ -3,7 +3,9 @@ package router
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 )
 
 // OllamaClassifier returns a classifier function suitable for Server.Classifier.
@@ -37,4 +39,16 @@ func OllamaClassifier(client *OllamaClient, model string) func(ctx context.Conte
 			return "", "", fmt.Errorf("unparseable classifier reply %q", text)
 		}
 	}
+}
+
+// classifierTimeout is the per-request budget for the LLM classifier. Default
+// 10s; override with ROUTER_CLASSIFIER_TIMEOUT. Cold model loads on a 4 GB card
+// can take several seconds, so the 2s default was unusable in practice.
+func classifierTimeout() time.Duration {
+	if v := os.Getenv("ROUTER_CLASSIFIER_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= time.Second {
+			return d
+		}
+	}
+	return 10 * time.Second
 }

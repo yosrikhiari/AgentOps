@@ -288,6 +288,14 @@ func TestStreamSSE(t *testing.T) {
 	if final["usage"].(map[string]any)["total_tokens"].(float64) != 7 {
 		t.Fatalf("usage missing in final chunk: %v", final)
 	}
+	// The last chunk is the only place a streaming client learns the tier, the
+	// eligible chain and who answered.
+	if final["tier"] != "fast" || final["answered_by"] != "" {
+		t.Fatalf("tier/answered_by missing from the final chunk: %v", final)
+	}
+	if cands, ok := final["candidates"].([]any); !ok || len(cands) != 2 {
+		t.Fatalf("candidates missing from the final chunk: %v", final["candidates"])
+	}
 	// counted once, with the streamed usage
 	if snap := srv.Metrics.Snapshot()["fast-m"]; snap.Requests != 1 || snap.Tokens != 7 {
 		t.Fatalf("metrics after stream: %+v", snap)

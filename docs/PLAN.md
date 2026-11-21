@@ -131,6 +131,12 @@ worth touching yet) so that doesn't get lost again.
 > time`, with a "why this model?" popover (tier, reason, every candidate), a four-tier
 > composer picker and "Retry with ▾" (`b90b120`).
 >
+> **Follow-up closed (2026-11-20):** `corpus/01-router.md` now names every reason the
+> router emits and `evals/golden/v4` (67 pairs) is drafted, reviewed and frozen against
+> it; `TestPolicyCorpusNamesRoutingReasons` fails the build if the corpus ever stops
+> naming one. The Tower "why this model?" popover flips below when there is no room above
+> (first reply of a long thread).
+>
 > **The 2-span defect, and what it really was.** The trace named in the report had three
 > spans. Three separate defects were behind the symptom: (1) the Cockpit read
 > `/v1/traces/{id}` the instant a reply landed, while spans were still in the async

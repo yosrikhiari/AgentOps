@@ -59,7 +59,14 @@ func TestMessagesReturnsAnthropicShape(t *testing.T) {
 			Text string `json:"text"`
 		} `json:"content"`
 		StopReason string `json:"stop_reason"`
-		Usage      struct {
+		Tier       string `json:"tier"`
+		AnsweredBy string `json:"answered_by"`
+		Candidates []struct {
+			Model string `json:"model"`
+			Tier  string `json:"tier"`
+			Local bool   `json:"local"`
+		} `json:"candidates"`
+		Usage struct {
 			Input  int `json:"input_tokens"`
 			Output int `json:"output_tokens"`
 		} `json:"usage"`
@@ -78,6 +85,13 @@ func TestMessagesReturnsAnthropicShape(t *testing.T) {
 	}
 	if out.Usage.Input != 5 || out.Usage.Output != 5 {
 		t.Fatalf("usage = %+v", out.Usage)
+	}
+	// The same explainability as the OpenAI shape: tier and the eligible chain.
+	if out.Tier != "fast" || len(out.Candidates) != 2 || out.Candidates[0].Model != "fast-m" || !out.Candidates[0].Local {
+		t.Fatalf("tier/candidates = %q %+v", out.Tier, out.Candidates)
+	}
+	if out.AnsweredBy != "" {
+		t.Fatalf("answered_by should be empty when a model answered, got %q", out.AnsweredBy)
 	}
 	if len(be.lastMsgs) != 3 || !strings.HasPrefix(be.lastMsgs[0].Content, "You are the assistant behind Tower") {
 		t.Fatalf("gateway system prompt not prepended: %+v", be.lastMsgs)

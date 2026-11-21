@@ -2,9 +2,9 @@
 
 The v1.0 gateway adds four things on top of routing. Streaming: a request with stream set
 to true is answered as server-sent events in the OpenAI chunk shape, the final chunk
-carries the usage, reason, backend and trace id, and the stream ends with a DONE marker.
-A failure after the first delta is sent as an error event because the status code has
-already been written.
+carries the usage, reason, backend, tier and trace id, and the stream ends with a DONE
+marker. A failure after the first delta is sent as an error event because the status code
+has already been written.
 
 Backends: every model runs on a backend that implements Generate, Stream and Health. The
 local backend is Ollama; an OpenAI-compatible cloud backend such as Groq is registered

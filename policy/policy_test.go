@@ -599,3 +599,30 @@ func TestPolicyAgentFilesPointHere(t *testing.T) {
 		t.Errorf("CLAUDE.md has its own sections — it must stay a pointer (@AGENTS.md), not a second rule file")
 	}
 }
+
+// RULE the frozen corpus describes the router that ships: every reason string the
+// router can emit is named in corpus/01-router.md, so the eval corpus cannot drift
+// back to a retired rule such as the old length-only classifier (docs/RULES.md §10).
+func TestPolicyCorpusNamesRoutingReasons(t *testing.T) {
+	corpus := read(t, "corpus/01-router.md")
+	reasons := []string{
+		router.FastReason,
+		router.QualityReason,
+		router.ReasoningReason,
+		router.GatewayReason,
+		router.ExplicitReason,
+		router.ExplicitTierReason,
+	}
+	var missing []string
+	for _, r := range reasons {
+		if !strings.Contains(corpus, r) {
+			missing = append(missing, r)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("corpus/01-router.md does not name the routing reasons the router emits: %v", missing)
+	}
+	if !strings.Contains(corpus, "answered_by") {
+		t.Fatal("corpus/01-router.md does not describe the router answering gateway questions")
+	}
+}

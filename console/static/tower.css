@@ -514,6 +514,8 @@
     border-radius:var(--tower-radius-md); box-shadow:0 12px 30px var(--tower-ground);
   }
   .tower-pop.open{ display:block; }
+  /* Flipped below when there is no room above (the first reply of a long thread). */
+  .tower-pop.below{ bottom:auto; top:calc(100% + 8px); }
   .tower-why-head{ font-family:var(--tower-font-mono); font-size:10px; letter-spacing:.09em;
     text-transform:uppercase; color:var(--tower-ink-faint); margin-bottom:6px; }
   .tower-why-label{ font-family:var(--tower-font-mono); font-size:10px; letter-spacing:.09em;

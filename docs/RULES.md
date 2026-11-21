@@ -134,6 +134,7 @@ Known gaps, stated: `/metrics` is unauthenticated (routing metadata and per-key 
 | Judge determinism | Temperature 0 on every local judge call; judge model + prompt version stored per run; `judge_changed` flag in drift | `TestOllamaJudgeSendsTemperatureZero`, `TestRecordAndDriftReport` |
 | Atomic eval runs | Header + pair rows in one transaction; a failed run writes nothing | `scoreOnce` (review) — observed live 2026-09-15 |
 | Stale corpus | Ingest prunes chunks the cleaner no longer emits | `TestIngestPrunesStaleChunks` |
+| Corpus matches shipped router | every reason the router emits is named in `corpus/01-router.md` | `TestPolicyCorpusNamesRoutingReasons` |
 | Graceful drain | SIGTERM: stop accepting, finish in-flight chats, flush spans | observed live (`docker stop` mid-chat) |
 
 ## 11. Testing and experiments

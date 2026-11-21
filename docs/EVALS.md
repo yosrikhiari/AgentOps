@@ -72,7 +72,7 @@ next step for validity — not another judge.
 | Field | Value |
 |---|---|
 | Golden set | `evals/golden/v3.jsonl`, 72 pairs |
-| Corpus | 17 docs / 36 chunks (`evals/corpus/clean`), ingested with `nomic-embed-text` |
+| Corpus | 17 docs / 37 chunks (`evals/corpus/clean`), ingested with `nomic-embed-text` |
 | Judge | `phi4-mini:3.8b`, prompt `faithfulness-v2`, temperature 0 |
 | Judged | 70 / 72 |
 | Retrieval misses | 2 |

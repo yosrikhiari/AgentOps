@@ -1510,9 +1510,21 @@
         ev.stopPropagation();
         const open = !pop.classList.contains('open');
         document.querySelectorAll('.tower-pop.open').forEach(p => p.classList.remove('open'));
+        pop.classList.remove('below');
         pop.classList.toggle('open', open);
         btn.setAttribute('aria-expanded', String(open));
-        if (open) build(pop);
+        if (open) {
+          build(pop);
+          // The transcript scrolls, so a popover above the first reply would be
+          // clipped by the scroller's top edge. Flip it below when there is no room.
+          requestAnimationFrame(() => {
+            if (!pop.isConnected) return;
+            const box = pop.getBoundingClientRect();
+            const scroller = pop.closest('.tower-chat-scroll');
+            const top = scroller ? scroller.getBoundingClientRect().top : 0;
+            if (box.top < top + 4) pop.classList.add('below');
+          });
+        }
       });
       wrap.append(btn, pop);
       return wrap;

@@ -1,0 +1,67 @@
+{"question": "What does the AgentOps router forward chat requests to?", "answer": "language models", "doc_ids": ["01-router"]}
+{"question": "What is the new format for the JSON body in the POST /v1/chat/completions request?", "answer": "a messages array and optional model, max_tokens and stream fields", "doc_ids": ["01-router"]}
+{"question": "What classifier does routing use?", "answer": "Routing uses a heuristic classifier, not round-robin.", "doc_ids": ["01-router"]}
+{"question": "What happens when a prompt about the gateway goes to the quality tier?", "answer": "A prompt that asks about the gateway itself, such as which model is used, why it was chosen, or how routing works, goes to the quality tier with the reason gateway-question and is answered by the router from the last model-answered turn and the registered model roster, without calling a model.", "doc_ids": ["01-router"]}
+{"question": "What HTTP status code is returned for an unknown model name?", "answer": "400 unknown_model", "doc_ids": ["01-router"]}
+{"question": "How often does the router plan a chain of candidates?", "answer": "once per request", "doc_ids": ["01-router"]}
+{"question": "What error shape does the router use?", "answer": "an error object with a code, a message, and the request's trace_id", "doc_ids": ["01-router"]}
+{"question": "Which models are used in Phase 1 from the same family?", "answer": "Qwen2.5 3B-Instruct as the fast tier and Qwen2.5 7B-Instruct quantized to 4-bit Q4 as the quality tier.", "doc_ids": ["02-models"]}
+{"question": "What is the context window size for both models?", "answer": "2 to 4 thousand tokens.", "doc_ids": ["02-models"]}
+{"question": "What port does Ollama use to serve local models through a simple HTTP API?", "answer": "Ollama serves local models through a simple HTTP API on port 11434.", "doc_ids": ["03-ollama"]}
+{"question": "What is the health probe endpoint for the gateway?", "answer": "GET /api/tags", "doc_ids": ["03-ollama"]}
+{"question": "How does Ollama handle requests?", "answer": "Ollama handles requests one at a time instead of batching them.", "doc_ids": ["03-ollama"]}
+{"question": "What happens if the request deadline passes in the gateway?", "answer": "When the request deadline passes, the gateway returns 504 with the code timeout.", "doc_ids": ["03-ollama"]}
+{"question": "What endpoint does the gateway expose for metrics?", "answer": "The gateway exposes its metrics at GET /metrics in Prometheus exposition format.", "doc_ids": ["04-metrics"]}
+{"question": "How many metric families are there?", "answer": "The gateway exposes eight metric families.", "doc_ids": ["04-metrics"]}
+{"question": "What does the router_requests_total metric count?", "answer": "successful chats per model.", "doc_ids": ["04-metrics"]}
+{"question": "What metric is used to count chats that failed before a model answered?", "answer": "router_errors_total", "doc_ids": ["04-metrics"]}
+{"question": "How many panels does the Grafana dashboard in dashboard/grafana/router.json draw?", "answer": "The Grafana dashboard in dashboard/grafana/router.json draws five panels.", "doc_ids": ["04-metrics"]}
+{"question": "What was the recorded p99 latency in the k6 script run?", "answer": "70 milliseconds", "doc_ids": ["04-metrics"]}
+{"question": "What does the list_models function provide for each model?", "answer": "Every served model with its tier, its backend and the result of the last health probe, plus a per-backend status list.", "doc_ids": ["05-mcp"]}
+{"question": "What information does the get_drift_report function provide?", "answer": "The last two golden eval runs with their delta, alert flag, and worst cases.", "doc_ids": ["05-mcp"]}
+{"question": "What flag is used to run the Go binary as an MCP server over stdio?", "answer": "The --mcp flag runs the Go binary as an MCP server over stdio.", "doc_ids": ["05-mcp"]}
+{"question": "How are messages handled if they are malformed in the MCP server mode?", "answer": "JSON-RPC error -32700", "doc_ids": ["05-mcp"]}
+{"question": "How many question-answer pairs does version 2 of the golden set hold?", "answer": "Version 2 of the golden set holds 48 pairs.", "doc_ids": ["06-golden"]}
+{"question": "What is the faithfulness score of version 2 of the golden set?", "answer": "Version 2 of the golden set scored a faithfulness of 1.000.", "doc_ids": ["06-golden"]}
+{"question": "What must every golden answer be?", "answer": "Every golden answer must be a full declarative sentence with its own main clause.", "doc_ids": ["06-golden"]}
+{"question": "What programming language is the faithfulness scorer written in?", "answer": "The faithfulness scorer is hand-written Go code in the evals package.", "doc_ids": ["07-faithfulness"]}
+{"question": "How many LLM-judge calls are made per claim?", "answer": "The scorer checks each claim against the top five retrieved chunks with one LLM-judge call per claim.", "doc_ids": ["07-faithfulness"]}
+{"question": "Why are LLM-judge calls retried with exponential backoff and jitter?", "answer": "Judge calls are retried with exponential backoff and jitter because parallel LLM-judge calls hitting timeouts and flaky errors is a known real-world pitfall.", "doc_ids": ["07-faithfulness"]}
+{"question": "What HTTP status code does Groq return when a limit is hit?", "answer": "Groq returns HTTP 429 when a limit is hit.", "doc_ids": ["08-judges"]}
+{"question": "What does a hard zero-dollar cost cap mean for the project?", "answer": "The project never pays for judging.", "doc_ids": ["08-judges"]}
+{"question": "What is the current local model used for judging?", "answer": "On the current box the local judge fallback is qwen3:8b.", "doc_ids": ["08-judges"]}
+{"question": "How many requests per day can the frequent checker handle?", "answer": "The frequent checker can handle 14,400 requests per day.", "doc_ids": ["08-judges"]}
+{"question": "What happens when a workflow is resumed?", "answer": "Resuming a workflow means re-running the same workflow id: steps already marked done are skipped and their stored output is reused, the pending step runs again with its attempt counter incremented, and the workflow's original input wins over whatever input the resuming process was launched with.", "doc_ids": ["09-tracker"]}
+{"question": "Why doesn't killing a process mid-step repeat a completed step's side effect?", "answer": "Killing the process with kill -9 mid-step therefore never repeats a completed step's side effect.", "doc_ids": ["09-tracker"]}
+{"question": "What does the task tracker do?", "answer": "The task tracker keeps multi-step agent tasks alive through crashes.", "doc_ids": ["09-tracker"]}
+{"question": "What are the steps involved in the toy agent workflow?", "answer": "The toy agent has three steps: Researcher retrieves the top three corpus chunks from pgvector, Drafter writes a three-sentence brief with the fast model, and Reviewer approves a non-empty draft.", "doc_ids": ["09-tracker"]}
+{"question": "What is the format of the trace id generated per request?", "answer": "a 16-character hex string", "doc_ids": ["10-traces"]}
+{"question": "What database is used to store spans?", "answer": "Spans are stored in Postgres.", "doc_ids": ["10-traces"]}
+{"question": "What HTTP response code is returned when an unknown trace id is queried?", "answer": "HTTP 404 with the error code trace_not_found", "doc_ids": ["10-traces"]}
+{"question": "How many spans does a router chat emit?", "answer": "three chained spans", "doc_ids": ["10-traces"]}
+{"question": "What does the model.generate span record?", "answer": "the model, the backend, the latency in seconds, the prompt and completion token counts, and any backends that failed before it", "doc_ids": ["10-traces"]}
+{"question": "What bounds a run in the system described?", "answer": "the EVAL_TIMEOUT setting, ninety minutes by default", "doc_ids": ["11-drift"]}
+{"question": "What happens if a run fails?", "answer": "it writes nothing", "doc_ids": ["11-drift"]}
+{"question": "What triggers a drift alert in the eval suite?", "answer": "A drift alert fires when faithfulness drops below the configured threshold.", "doc_ids": ["11-drift"]}
+{"question": "What does the MCP tool get_drift_report return when a drift alert is triggered?", "answer": "The MCP tool get_drift_report returns the old score, the new score, the delta, whether the judge model changed, and the worst failing cases.", "doc_ids": ["11-drift"]}
+{"question": "Why was pgvector picked over OpenSearch and Qdrant?", "answer": "The corpus is tiny — fifteen documents and a few dozen chunks — where a two-node search cluster would be pure overhead.", "doc_ids": ["12-pgvector"]}
+{"question": "What hybrid weights were proven earlier and stay portable?", "answer": "The hybrid weights proven earlier BM25 0.6, vector 0.4, RRF k=60 stay portable if the store ever changes.", "doc_ids": ["12-pgvector"]}
+{"question": "What model fills the embedding column with vectors?", "answer": "The nomic-embed-text model fills the embedding column with vectors.", "doc_ids": ["12-pgvector"]}
+{"question": "What does the chunks table store?", "answer": "The chunks table stores the text, its source document id, a content hash, and an embedding column.", "doc_ids": ["12-pgvector"]}
+{"question": "Which model serves as judge and drafter on the current development box?", "answer": "qwen3:8b serves as judge and drafter until the Qwen2.5 pair is pulled.", "doc_ids": ["13-vram"]}
+{"question": "How much VRAM does the RTX 4060 have?", "answer": "The RTX 4060 has 8GB of VRAM.", "doc_ids": ["13-vram"]}
+{"question": "What causes cold-load stalls when running the qwen3-embedding:8b model next to a chat model?", "answer": "Running the qwen3-embedding:8b model next to a chat model causes cold-load stalls of 15 to 25 seconds.", "doc_ids": ["13-vram"]}
+{"question": "How many packages does the agentops module have?", "answer": "The agentops module has six packages.", "doc_ids": ["14-monorepo"]}
+{"question": "What is the size of the distroless image produced by the multi-stage Dockerfile?", "answer": "The multi-stage Dockerfile produces a 21 megabyte distroless image.", "doc_ids": ["14-monorepo"]}
+{"question": "What layering is followed by the code inside each package?", "answer": "Code inside each package follows handler, service, repository layering.", "doc_ids": ["14-monorepo"]}
+{"question": "How are errors represented in the system?", "answer": "All errors share one JSON shape with a code, a message, and the request's trace id.", "doc_ids": ["14-monorepo"]}
+{"question": "Is using the pgx Postgres driver allowed?", "answer": "Yes, using the pgx Postgres driver is allowed because small focused infrastructure primitives are fine to use.", "doc_ids": ["15-independence"]}
+{"question": "What is the rule for using libraries that do not do the thing the CV story is about?", "answer": "Use the well-built free thing.", "doc_ids": ["15-independence"]}
+{"question": "How is a virtual API key created?", "answer": "A virtual API key is created on the command line with --create-key, which prints the secret once and stores only its SHA-256 hash.", "doc_ids": ["16-gateway"]}
+{"question": "What happens if a client request exceeds the requests-per-minute limit?", "answer": "Exceeding the requests-per-minute limit returns 429 rate_limited with a Retry-After header or 403 budget_exceeded.", "doc_ids": ["16-gateway"]}
+{"question": "How does a streamed response end?", "answer": "A streamed response ends with a DONE marker.", "doc_ids": ["16-gateway"]}
+{"question": "How often does the health prober check the status of each backend?", "answer": "The health prober checks every backend every 15 seconds.", "doc_ids": ["16-gateway"]}
+{"question": "Which metrics appear in the overview page's row of metric cards?", "answer": "The metric cards show requests in the last hour, p50 and p99 latency, faithfulness with its delta and the judge cost.", "doc_ids": ["17-console"]}
+{"question": "How many endpoints does the console read?", "answer": "The console reads four endpoints.", "doc_ids": ["17-console"]}
+{"question": "What is the Tower console?", "answer": "The Tower console is the web interface served by the gateway at the root path.", "doc_ids": ["17-console"]}
+{"question": "How many static files are embedded in the Tower console binary?", "answer": "The Tower console is three static files embedded in the binary.", "doc_ids": ["17-console"]}

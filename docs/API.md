@@ -159,6 +159,8 @@ for its models directory).
 | `REQUIRE_API_KEY` | `false` | reject anonymous requests |
 | `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |
 | `SENSITIVE_KEYWORDS` | built-in list | comma-separated override |
+| `ROUTER_POLICY` | `heuristic` | `heuristic` (default) uses the built-in `ClassifyThread` (length/keywords). `learned` asks a small local model (`ROUTER_CLASSIFIER_MODEL`) to pick the tier, falling back to the heuristic on error/timeout. Phase 1 of the ML routing plan (see `docs/ML-ROUTING.md`) |
+| `ROUTER_CLASSIFIER_MODEL` | `FAST_MODEL` | Ollama model used when `ROUTER_POLICY=learned` (a small model such as `qwen2.5:3b-instruct` or `phi4-mini`) |
 | `ADDR` | `127.0.0.1:8080` | listen address. Loopback by default: the gateway is a local appliance, and a fresh install must not be reachable from the LAN. Set `ADDR=0.0.0.0:8080` to publish it |
 | `CONSOLE_REMOTE` | `false` | the console (pages, conversations, workflows, eval runs) answers loopback clients only. `true` allows any client — required when the console is reached through a container port mapping or a reverse proxy. The console is where prompts are readable and GPU work is started, so this is an explicit act |
 | `POSTGRES_DSN` | built from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` (defaults `tower` / `tower` / `localhost` / `5432` / `tower`, the same ones `docker-compose.yml` uses) | spans, traces, evals, workflows, api keys |

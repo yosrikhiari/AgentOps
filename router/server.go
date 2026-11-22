@@ -716,11 +716,10 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 		if err != nil {
 			lastErr = err
 			s.Metrics.ObserveError(cand.Model)
-			if ctx.Err() != nil {
-				break
-			}
 			fallback = append(fallback, cand.Backend.Name()+"/"+cand.Model)
 			// Bench the rung so subsequent requests skip it until the cooldown.
+			// This runs before the deadline check below: a backend that made us
+			// wait until REQUEST_TIMEOUT must not be retried on the next request.
 			if s.Exhaustion != nil {
 				if isExhaustion(err) {
 					d, kind := CooldownFor(err)
@@ -735,6 +734,9 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 					}
 					s.Exhaustion.Bench(cand.Backend.Name(), time.Now().Add(transient), "transient")
 				}
+			}
+			if ctx.Err() != nil {
+				break
 			}
 			// If we already streamed partial output, do not fall through: the client
 			// has seen it and a silent replacement would be worse than an error.

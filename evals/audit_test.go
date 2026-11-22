@@ -216,6 +216,28 @@ func TestAuditVerdictThresholds(t *testing.T) {
 	}
 }
 
+// TestAuditStableRate: a verdict that survives the position probe counts as stable;
+// one that crosses the supported boundary does not. Flip-disabled runs count every
+// verdict, because there is no evidence of instability to report.
+func TestAuditStableRate(t *testing.T) {
+	items := []AuditItem{
+		{ID: "multi", Claim: "c", Context: "MARK here\nother", Supported: true},
+		{ID: "single", Claim: "d", Context: "MARK only", Supported: true},
+	}
+	rep := RunAudit(context.Background(), items, []NamedJudge{{Name: "m", Judge: markJudge{}}}, true)
+	run := rep.Judges[0]
+	if run.Verdicts() != 2 || run.Stable != 1 {
+		t.Fatalf("stable = %d/%d, want 1/2", run.Stable, run.Verdicts())
+	}
+	if run.StableRate() != 0.5 {
+		t.Fatalf("stable rate = %.2f, want 0.50", run.StableRate())
+	}
+	plain := RunAudit(context.Background(), items, []NamedJudge{{Name: "m", Judge: markJudge{}}}, false)
+	if plain.Judges[0].Stable != plain.Judges[0].Verdicts() {
+		t.Fatalf("flip-disabled stable = %d, verdicts = %d", plain.Judges[0].Stable, plain.Judges[0].Verdicts())
+	}
+}
+
 // TestAuditItemRoundTrip keeps the seed file honest: every line must load back into
 // the struct, so a hand-edited label cannot silently disappear.
 func TestAuditItemRoundTrip(t *testing.T) {

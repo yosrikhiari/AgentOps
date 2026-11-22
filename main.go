@@ -568,7 +568,7 @@ func runJudgeAudit(ollamaURL, model, model2, backend2, path string) {
 	}
 	rep := evals.RunAudit(context.Background(), items, judges, true)
 	log.Printf("judge audit: %d labelled items, prompt=%s (positive class = unsupported)", rep.Items, evals.JudgePromptVersion)
-	log.Printf("  %-24s %3s %3s %3s %3s %5s %6s %10s %7s %7s", "judge", "tp", "fp", "fn", "tn", "prec", "recall", "false-alrm", "lflip", "dflip")
+	log.Printf("  %-24s %3s %3s %3s %3s %5s %6s %10s %7s %7s %7s", "judge", "tp", "fp", "fn", "tn", "prec", "recall", "false-alrm", "lflip", "dflip", "stable")
 	for _, j := range rep.Judges {
 		flips := "n/a"
 		if j.FlipComparable > 0 {
@@ -578,8 +578,8 @@ func runJudgeAudit(ollamaURL, model, model2, backend2, path string) {
 		if j.FlipComparable > 0 {
 			dflips = fmt.Sprintf("%d/%d", j.DecisionFlips, j.FlipComparable)
 		}
-		log.Printf("  %-24s %3d %3d %3d %3d %5.2f %6.2f %10.2f %7s %7s",
-			j.Judge, j.TP, j.FP, j.FN, j.TN, j.Precision(), j.Recall(), j.FalseAlarmRate(), flips, dflips)
+		log.Printf("  %-24s %3d %3d %3d %3d %5.2f %6.2f %10.2f %7s %7s %6.2f",
+			j.Judge, j.TP, j.FP, j.FN, j.TN, j.Precision(), j.Recall(), j.FalseAlarmRate(), flips, dflips, j.StableRate())
 		if j.Errors > 0 {
 			log.Printf("  %-24s %d call(s) returned no verdict (counted as errors, not agreement): %s", j.Judge, j.Errors, j.FirstError)
 		}
@@ -778,6 +778,22 @@ func (e *otlpExporter) flush(batch []tracker.ExportedSpan) {
 		return
 	}
 	e.sent.Add(uint64(len(batch)))
+}
+
+// Status reports the exporter's queue depth and counters for the /v1/otlp/status
+// endpoint. QueueLen is a snapshot of a buffered channel and is safe to read.
+func (e *otlpExporter) Status() map[string]any {
+	if e == nil {
+		return map[string]any{"enabled": false}
+	}
+	return map[string]any{
+		"enabled":  true,
+		"endpoint": e.endpoint,
+		"queued":   len(e.queue),
+		"capacity": cap(e.queue),
+		"sent":     e.sent.Load(),
+		"dropped":  e.dropped.Load(),
+	}
 }
 
 // Close stops accepting spans, flushes what is queued, and returns after timeout.
@@ -1903,8 +1919,10 @@ func main() {
 	srv.DecisionSink = decisions.Sink()
 	events := newEventHub()
 	spans.Hub = events
+	var otlpExp *otlpExporter
 	if endpoint := strings.TrimSpace(os.Getenv("OTLP_ENDPOINT")); endpoint != "" {
-		spans.Exporter = newOTLPExporter(endpoint)
+		otlpExp = newOTLPExporter(endpoint)
+		spans.Exporter = otlpExp
 		log.Printf("otlp export: spans also go to %s (dual-named gen_ai.*, prompts never exported)", endpoint)
 	}
 	srv.Keys = router.SQLKeyStore{Exec: pgAdapter{pool}, Query: routerAdapter{pgAdapter{pool}}}
@@ -2157,6 +2175,12 @@ func main() {
 		w.WriteHeader(status)
 		_, _ = w.Write(raw)
 	})
+	if otlpExp != nil {
+		mux.HandleFunc("GET /v1/otlp/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(otlpExp.Status())
+		})
+	}
 	mux.Handle("/", srv)
 	// ReadTimeout closes a slow-trickled body; WriteTimeout is the model budget
 	// plus a margin, so a streaming answer is not cut off mid-flight; IdleTimeout

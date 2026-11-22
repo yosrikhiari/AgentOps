@@ -130,6 +130,11 @@ type JudgeRun struct {
 	// FlipIDs names the items that moved, so a flip rate is actionable instead of a
 	// number nobody can chase.
 	FlipIDs []string
+	// Stable counts verdicts that survived the position probe without crossing the
+	// supported/unsupported boundary. Per "All Verdicts are Not Equal" a judge that
+	// is deterministically wrong still scores high here, so this is reported alongside
+	// recall - agreement alone cannot tell a reliable judge from a reliable liar.
+	Stable int
 	// FirstError is the first judge failure, verbatim. "26 calls returned no verdict" with
 	// no reason is the kind of opaque failure this project keeps removing.
 	FirstError string
@@ -147,6 +152,18 @@ func (r JudgeRun) DecisionFlipRate() float64 {
 		return 0
 	}
 	return float64(r.DecisionFlips) / float64(r.FlipComparable)
+}
+
+// StableRate is the share of verdicts that did not cross the supported/unsupported
+// boundary under the position probe. It is the "trustworthy-verdict rate" from
+// "All Verdicts are Not Equal": a judge that is deterministically wrong still
+// scores 1.0 here, which is why it is reported beside recall rather than instead
+// of it.
+func (r JudgeRun) StableRate() float64 {
+	if r.Verdicts() == 0 {
+		return 0
+	}
+	return float64(r.Stable) / float64(r.Verdicts())
 }
 
 // Agreement is Cohen's kappa between two judges on the items both judged.
@@ -185,6 +202,9 @@ func RunAudit(ctx context.Context, items []AuditItem, judges []NamedJudge, flip 
 			}
 			ok := label.Supported()
 			verdicts[ji][i] = &label
+			// A verdict is "stable" until the probe says otherwise; items that
+			// never reach the probe (flip disabled) are counted as stable, because
+			// there is no evidence of position sensitivity to report.
 			switch {
 			case it.Supported && ok:
 				run.TN++
@@ -196,24 +216,32 @@ func RunAudit(ctx context.Context, items []AuditItem, judges []NamedJudge, flip 
 				run.FN++
 			}
 			if !flip {
+				run.Stable++
 				continue
 			}
 			flipped := flipContext(it.Context)
 			if flipped == it.Context {
-				continue // one line: there is no order to reverse
+				run.Stable++ // one line: there is no order to reverse
+				continue
 			}
 			run.FlipComparable++
 			label2, _, err := nj.Judge.JudgeClaim(ctx, it.Claim, flipped)
 			if err != nil {
 				run.FlipErrors++
+				run.Stable++ // probe failed; no observed instability
 				continue
 			}
+			decisionFlip := false
 			if label2 != label {
 				run.Flips++
 				if label2.Supported() != label.Supported() {
 					run.DecisionFlips++
+					decisionFlip = true
 				}
 				run.FlipIDs = append(run.FlipIDs, fmt.Sprintf("%s: %s->%s", it.ID, label, label2))
+			}
+			if !decisionFlip {
+				run.Stable++
 			}
 		}
 		rep.Judges = append(rep.Judges, run)

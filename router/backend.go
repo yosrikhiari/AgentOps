@@ -78,50 +78,59 @@ func NewHealthProber(m *Metrics, backends ...Backend) *HealthProber {
 
 // ProbeOnce checks every backend now (used at startup and by tests).
 func (p *HealthProber) ProbeOnce(ctx context.Context) {
+	var wg sync.WaitGroup
 	for _, b := range p.backends {
-		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := b.Health(cctx)
-		cancel()
-		p.mu.Lock()
-		up, wasProbed := err == nil, p.probed[b.Name()]
-		changed := !wasProbed || p.up[b.Name()] != up
-		p.up[b.Name()] = up
-		p.probed[b.Name()] = true
-		if err != nil {
-			p.lastErr[b.Name()] = err.Error()
-		} else {
-			delete(p.lastErr, b.Name())
-		}
-		detail := p.lastErr[b.Name()]
-		p.mu.Unlock()
-		// Say it once: a backend that is down from boot is the case that hides a
-		// silent failover, and a transition is when an operator can still act.
-		if changed {
-			if up {
-				log.Printf("backend %s is reachable", b.Name())
-			} else if isLocal(b) {
-				log.Printf("backend %s is unreachable (%s) - local requests will fail over to a cloud backend until it returns", b.Name(), detail)
+		b := b
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := b.Health(cctx)
+			cancel()
+
+			p.mu.Lock()
+			up, wasProbed := err == nil, p.probed[b.Name()]
+			changed := !wasProbed || p.up[b.Name()] != up
+			p.up[b.Name()] = up
+			p.probed[b.Name()] = true
+			if err != nil {
+				p.lastErr[b.Name()] = err.Error()
 			} else {
-				log.Printf("backend %s is unreachable (%s)", b.Name(), detail)
+				delete(p.lastErr, b.Name())
 			}
-		}
-		if p.metrics != nil {
-			p.metrics.SetBackendUp(b.Name(), err == nil)
-		}
-		if pr, ok := b.(PresenceReporter); ok {
-			pctx, pcancel := context.WithTimeout(ctx, 5*time.Second)
-			set, perr := pr.PulledModels(pctx)
-			pcancel()
-			if perr == nil {
-				p.mu.Lock()
-				if p.pulled == nil {
-					p.pulled = map[string]map[string]bool{}
+			detail := p.lastErr[b.Name()]
+			p.mu.Unlock()
+
+			// Say it once: a backend that is down from boot is the case that hides a
+			// silent failover, and a transition is when an operator can still act.
+			if changed {
+				if up {
+					log.Printf("backend %s is reachable", b.Name())
+				} else if isLocal(b) {
+					log.Printf("backend %s is unreachable (%s) - local requests will fail over to a cloud backend until it returns", b.Name(), detail)
+				} else {
+					log.Printf("backend %s is unreachable (%s)", b.Name(), detail)
 				}
-				p.pulled[b.Name()] = set
-				p.mu.Unlock()
 			}
-		}
+			if p.metrics != nil {
+				p.metrics.SetBackendUp(b.Name(), err == nil)
+			}
+			if pr, ok := b.(PresenceReporter); ok {
+				pctx, pcancel := context.WithTimeout(ctx, 5*time.Second)
+				set, perr := pr.PulledModels(pctx)
+				pcancel()
+				if perr == nil {
+					p.mu.Lock()
+					if p.pulled == nil {
+						p.pulled = map[string]map[string]bool{}
+					}
+					p.pulled[b.Name()] = set
+					p.mu.Unlock()
+				}
+			}
+		}()
 	}
+	wg.Wait()
 	if p.AfterProbe != nil {
 		p.AfterProbe(ctx)
 	}

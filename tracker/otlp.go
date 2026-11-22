@@ -16,6 +16,7 @@ package tracker
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -230,11 +231,7 @@ const ScopeVersion = "otlp-genai-1"
 
 // sortStrings keeps payloads diffable without pulling sort into every caller's head.
 func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
+	sort.Strings(s)
 }
 
 // parentSpanID pads a parent id only when there is one: padding an empty string produces

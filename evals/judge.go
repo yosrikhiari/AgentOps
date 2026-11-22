@@ -119,23 +119,60 @@ CLAIM:
 %s`, contextText, claim)
 }
 
+// lastVerdictIndex finds the byte offset of the last "VERDICT:" marker in s,
+// matched case-insensitively on ASCII bytes. Working on bytes (not on a
+// case-folded copy) keeps the returned offset valid for slicing s even when s
+// contains non-ASCII or invalid UTF-8 that a case fold would re-encode.
+func lastVerdictIndex(s string) int {
+	const marker = "VERDICT:"
+	b := []byte(s)
+	mlen := len(marker)
+	if len(b) < mlen {
+		return -1
+	}
+	for i := len(b) - mlen; i >= 0; i-- {
+		ok := true
+		for j := 0; j < mlen; j++ {
+			c := b[i+j]
+			m := marker[j]
+			// case-fold ASCII only
+			if c >= 'a' && c <= 'z' {
+				c -= 32
+			}
+			if m >= 'a' && m <= 'z' {
+				m -= 32
+			}
+			if c != m {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return i
+		}
+	}
+	return -1
+}
+
 // parseVerdict reads the label after the last VERDICT: marker. Only the first token after
 // the marker counts: a label followed by an explanation ("BASELESS - the context neither
 // supports nor contradicts it") must not be read as the words inside the explanation.
 // A missing or unrecognised verdict is Baseless - fail closed, as before.
 func parseVerdict(raw string) (Label, string) {
-	upper := strings.ToUpper(raw)
-	idx := strings.LastIndex(upper, "VERDICT:")
+	idx := lastVerdictIndex(raw)
 	just := strings.TrimSpace(raw)
 	if idx < 0 {
 		return Baseless, just
 	}
 	just = strings.TrimSpace(raw[:idx])
-	rest := strings.TrimSpace(upper[idx+len("VERDICT:"):])
+	rest := strings.TrimSpace(raw[idx+len("VERDICT:"):])
+	// case-fold the verdict token for matching, without re-slicing
+	upperRest := strings.ToUpper(rest)
 	if i := strings.IndexAny(rest, "\r\n"); i >= 0 {
 		rest = rest[:i]
+		upperRest = strings.ToUpper(rest)
 	}
-	rest = strings.TrimLeft(strings.TrimSpace(rest), "*-: ")
+	rest = strings.TrimLeft(strings.TrimSpace(upperRest), "*-: ")
 	switch {
 	case strings.HasPrefix(rest, "ENTAILED"):
 		return Entailed, just

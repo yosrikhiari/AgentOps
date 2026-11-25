@@ -105,7 +105,35 @@ type Judge interface {
 }
 
 func faithfulnessPrompt(claim, contextText string) string {
+	return faithfulnessPromptFor("v2", claim, contextText)
+}
+
+// faithfulnessPromptV3 asks for the verdict first, then evidence. The v2 prompt does
+// the opposite (justification, then verdict) - chain-of-thought that helps weak judges
+// but costs tokens and can let the justification steer the verdict. v3 tests whether
+// committing to a label first changes precision/recall on the audit set.
+func faithfulnessPromptV3(claim, contextText string) string {
 	return fmt.Sprintf(`Decide how the CLAIM relates to the CONTEXT. Judge only the context, not what you know.
+On the first line write exactly one of:
+VERDICT: ENTAILED (the context states it or directly implies it)
+VERDICT: CONTRADICTED (the context states the opposite)
+VERDICT: BASELESS (the context neither supports nor contradicts it)
+Then write 1-2 sentences of evidence-based justification quoting the context.
+
+CONTEXT:
+%s
+
+CLAIM:
+%s`, contextText, claim)
+}
+
+// faithfulnessPromptFor selects the prompt variant. Unknown variants fall back to v2.
+func faithfulnessPromptFor(variant, claim, contextText string) string {
+	switch variant {
+	case "v3":
+		return faithfulnessPromptV3(claim, contextText)
+	default:
+		return fmt.Sprintf(`Decide how the CLAIM relates to the CONTEXT. Judge only the context, not what you know.
 First write 1-2 sentences of evidence-based justification quoting the context.
 Then on the last line write exactly one of:
 VERDICT: ENTAILED (the context states it or directly implies it)
@@ -117,6 +145,7 @@ CONTEXT:
 
 CLAIM:
 %s`, contextText, claim)
+	}
 }
 
 // lastVerdictIndex finds the byte offset of the last "VERDICT:" marker in s,
@@ -192,22 +221,36 @@ func parseVerdict(raw string) (Label, string) {
 }
 
 type OllamaJudge struct {
-	Model string
-	Gen   *OllamaGenerator
+	Model         string
+	Gen           *OllamaGenerator
+	PromptVariant string // "v2" (default) or "v3"; empty means v2
+}
+
+// promptVariant returns the effective variant, defaulting to v2.
+func (j *OllamaJudge) promptVariant() string {
+	if j.PromptVariant == "" {
+		return "v2"
+	}
+	return j.PromptVariant
 }
 
 // NewOllamaJudge pins temperature to 0 so the same claim gets the same verdict on rerun —
 // the Groq judge already does; a sampled verdict turned one golden pair into a coin flip.
 func NewOllamaJudge(baseURL, model string) *OllamaJudge {
+	return NewOllamaJudgeWithPrompt(baseURL, model, "v2")
+}
+
+// NewOllamaJudgeWithPrompt is like NewOllamaJudge but selects the prompt variant.
+func NewOllamaJudgeWithPrompt(baseURL, model, variant string) *OllamaJudge {
 	gen := NewOllamaGenerator(baseURL, model)
 	gen.Options = map[string]any{"temperature": 0}
-	return &OllamaJudge{Model: model, Gen: gen}
+	return &OllamaJudge{Model: model, Gen: gen, PromptVariant: variant}
 }
 
 func (j *OllamaJudge) JudgeClaim(ctx context.Context, claim, contextText string) (Label, string, error) {
 	var raw string
 	err := WithRetry(ctx, 3, time.Second, func() error {
-		r, err := j.Gen.Complete(faithfulnessPrompt(claim, contextText))
+		r, err := j.Gen.Complete(faithfulnessPromptFor(j.promptVariant(), claim, contextText))
 		if err != nil {
 			return err
 		}
@@ -222,13 +265,25 @@ func (j *OllamaJudge) JudgeClaim(ctx context.Context, claim, contextText string)
 }
 
 type GroqJudge struct {
-	Model  string
-	APIKey string
-	Client *http.Client
+	Model         string
+	APIKey        string
+	Client        *http.Client
+	PromptVariant string // "v2" (default) or "v3"; empty means v2
+}
+
+func (j *GroqJudge) promptVariant() string {
+	if j.PromptVariant == "" {
+		return "v2"
+	}
+	return j.PromptVariant
 }
 
 func NewGroqJudge(model, apiKey string) *GroqJudge {
-	return &GroqJudge{Model: model, APIKey: apiKey, Client: &http.Client{Timeout: 120 * time.Second}}
+	return NewGroqJudgeWithPrompt(model, apiKey, "v2")
+}
+
+func NewGroqJudgeWithPrompt(model, apiKey, variant string) *GroqJudge {
+	return &GroqJudge{Model: model, APIKey: apiKey, Client: &http.Client{Timeout: 120 * time.Second}, PromptVariant: variant}
 }
 
 func (j *GroqJudge) JudgeClaim(ctx context.Context, claim, contextText string) (Label, string, error) {
@@ -252,7 +307,7 @@ func (j *GroqJudge) complete(ctx context.Context, claim, contextText string) (st
 	body, err := json.Marshal(map[string]any{
 		"model": j.Model,
 		"messages": []any{
-			map[string]any{"role": "user", "content": faithfulnessPrompt(claim, contextText)},
+			map[string]any{"role": "user", "content": faithfulnessPromptFor(j.promptVariant(), claim, contextText)},
 		},
 		"temperature": 0,
 		"max_tokens":  512,

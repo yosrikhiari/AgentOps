@@ -147,7 +147,17 @@ All notable changes. Dates are 2026.
 - CI `policy` job: `staticcheck` (v0.8.1), `govulncheck`, policy tests. `govulncheck` found GO-2026-5970 in `golang.org/x/text` (indirect via pgx) — bumped to v0.39.0.
 - Documentation pass: README rewrite, CHANGELOG, `docs/adr/0001–0008`, PRIVACY rewrite, `docs/API.md` env reference, MCP README, lessons reconciled, corpus v3 (17 docs → 36 chunks) with golden v3 (72 pairs, frozen `26664d4d…`) scored **0.972** — the two misses are retrieval misses (recall 0), not unfaithful answers; v3 is now the default golden version.
 
-## v1.0.0 — 2026-09-15
+- **API-key usage is now recorded by a single worker instead of a goroutine per request.** `chargeKey` used to spawn a goroutine for every chat that carried a key (50 goroutines/s at the 50 RPS gate). It now enqueues onto a 1024-deep channel drained by one worker, dropping and counting on full — the same contract as the span sink (`router/server.go`, audit §5.3). `ChargeDropped()` exposes the count. No behaviour change for successful updates; a lost update still costs at most one request of budget precision.
+
+- **Judge prompt variant selectable (`--judge-prompt v2|v3`).** Added `faithfulnessPromptV3` (verdict first, then evidence) alongside the existing v2 (justification, then verdict), with `faithfulnessPromptFor` dispatching and `PromptVariant` fields on `OllamaJudge`/`GroqJudge` plus `New...WithPrompt` constructors. Ran `--judge-audit` against both on the 35-item labelled set: identical results (18/1/0/16, precision 0.95, recall 1.00, false-alarm 0.06, stable 1.00). Kept v2 as the default; `JudgePromptVersion` stays `faithfulness-v2`. The variant remains available for future experiments.
+
+- **Shared HTTP transport (audit §3.2).** All backends (Ollama + cloud) now reuse one tuned `http.Transport` (MaxIdleConns 100, MaxIdleConnsPerHost 20, IdleConnTimeout 90s, TLSHandshakeTimeout 10s) built in `buildBackends`, instead of a fresh transport per backend. Connection reuse under load instead of per-request DNS/TLS churn.
+
+- **Learned router / Phase 2 (audit §2.2).** `router/learned.go` adds a pure-Go logistic-regression scorer loading weights from a JSON file (`ROUTER_WEIGHTS` env). `--export-routing-data PATH` writes `route_decisions` rows as JSONL (labels + model names only, no prompts). `ml/train_router.py` turns the export into `models/router-weights.json`. When `ROUTER_WEIGHTS` is set, the gateway uses the sub-millisecond learned classifier (reason `learned-classifier`); falls back to the heuristic if the file is missing/unreadable. `ROUTER_WEIGHTS` documented in `docs/API.md`. Kill criterion stands: learned model must beat the heuristic on the held-out golden set or ship nothing.
+
+- **Trajectory eval storage (audit §2.1).** Migration 0018 adds `workflow_runs` + `workflow_step_scores` tables. `tracker.RecordWorkflowRun` persists a `Trajectory` (and optional per-step scores) as a stored run. `--workflow-repeats` now records each run (`recorded as workflow_run N`), verified end-to-end (2 runs → 2 rows). Grading (`--workflow-grade`) and the console chip already exist; runs are now durable for later grading/comparison.
+
+## v1.0.0 - 2026-09-15
 
 The MVP becomes a product: an installable gateway with a console.
 

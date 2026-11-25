@@ -531,23 +531,29 @@ const defaultGroqModel = "openai/gpt-oss-20b"
 // auditJudge builds the second judge. A cloud judge is how the audit measures agreement
 // without a bigger card, so the backend is explicit rather than inferred from the name:
 // a model called "llama-3.1-8b-instant" means nothing to Ollama.
-func auditJudge(name, backend, ollamaURL string) (evals.Judge, string, error) {
+func auditJudge(name, backend, ollamaURL, promptVariant string) (evals.Judge, string, error) {
+	if promptVariant == "" {
+		promptVariant = "v2"
+	}
 	switch strings.ToLower(strings.TrimSpace(backend)) {
 	case "", "ollama":
-		return evals.NewOllamaJudge(ollamaURL, name), name, nil
+		return evals.NewOllamaJudgeWithPrompt(ollamaURL, name, promptVariant), name, nil
 	case "groq":
 		key := strings.TrimSpace(os.Getenv("GROQ_API_KEY"))
 		if key == "" {
 			return nil, "", errors.New("--judge2-backend groq needs GROQ_API_KEY in the environment")
 		}
-		return evals.NewGroqJudge(name, key), "groq/" + name, nil
+		return evals.NewGroqJudgeWithPrompt(name, key, promptVariant), "groq/" + name, nil
 	}
 	return nil, "", fmt.Errorf("unknown judge backend %q (ollama|groq)", backend)
 }
 
-func runJudgeAudit(ollamaURL, model, model2, backend2, path string) {
+func runJudgeAudit(ollamaURL, model, model2, backend2, path, promptVariant string) {
 	if model == "" {
 		model = envOr("JUDGE_MODEL", "qwen3:8b")
+	}
+	if promptVariant == "" {
+		promptVariant = "v2"
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -558,9 +564,9 @@ func runJudgeAudit(ollamaURL, model, model2, backend2, path string) {
 	if err != nil {
 		log.Fatalf("judge audit: %v", err)
 	}
-	judges := []evals.NamedJudge{{Name: model, Judge: evals.NewOllamaJudge(ollamaURL, model)}}
+	judges := []evals.NamedJudge{{Name: model, Judge: evals.NewOllamaJudgeWithPrompt(ollamaURL, model, promptVariant)}}
 	if model2 != "" {
-		judge, name, err := auditJudge(model2, backend2, ollamaURL)
+		judge, name, err := auditJudge(model2, backend2, ollamaURL, promptVariant)
 		if err != nil {
 			log.Fatalf("judge audit: %v", err)
 		}
@@ -975,6 +981,11 @@ func runWorkflowRepeats(dsn, ollamaURL, model, input string, runs int) {
 		if t.Clean {
 			clean++
 		}
+		if runID, err := tracker.RecordWorkflowRun(ctx, db, t, nil); err != nil {
+			log.Printf("run %d/%d %s: failed to record trajectory: %v", i, runs, id, err)
+		} else {
+			log.Printf("run %d/%d %s recorded as workflow_run %d", i, runs, id, runID)
+		}
 		log.Printf("run %d/%d %s %s (%s)", i, runs, id, t.Summary(), time.Since(start).Round(time.Millisecond))
 	}
 	for k := 1; k <= runs; k++ {
@@ -1264,7 +1275,16 @@ func runCreateKey(dsn, name string, rpm int, budget int64) {
 // first. When it is unset, the legacy GROQ_API_KEY / CLOUD_* variables form a single
 // rung, so existing deployments keep working unchanged.
 func buildBackends(cfg Config) (*router.Server, []router.Backend) {
+	sharedTransport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
 	local := router.NewOllamaClient(cfg.OllamaURL)
+	if local.HTTPClient != nil {
+		local.HTTPClient.Transport = sharedTransport
+	}
 	srv := router.NewServer(cfg.FastModel, cfg.QualityModel, local)
 	backends := []router.Backend{local}
 	tracker := router.NewExhaustionTracker(srv.Metrics)
@@ -1284,6 +1304,9 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 			model = defaultGroqModel
 		}
 		cloud := router.NewOpenAIBackend(name, base, key)
+		if cloud.HTTPClient != nil {
+			cloud.HTTPClient.Transport = sharedTransport
+		}
 		srv.AddModel(router.ModelRef{Tier: "cloud", Model: model, Backend: cloud})
 		backends = append(backends, cloud)
 	}
@@ -1318,7 +1341,16 @@ func buildBackends(cfg Config) (*router.Server, []router.Backend) {
 	// ROUTER_POLICY: "heuristic" (default) uses ClassifyThread; "learned" asks a
 	// small local model to classify the tier, falling back to the heuristic on
 	// error/timeout. Only meaningful when Ollama is reachable.
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("ROUTER_POLICY")), "learned") {
+	if w := strings.TrimSpace(os.Getenv("ROUTER_WEIGHTS")); w != "" {
+		if clf := router.LearnedClassifier(w); clf != nil {
+			srv.RouterPolicy = "learned"
+			srv.Classifier = clf
+			log.Printf("router policy: learned (weights %s)", w)
+		} else {
+			log.Printf("router policy: learned weights %q unreadable; falling back to heuristic", w)
+			srv.RouterPolicy = "heuristic"
+		}
+	} else if strings.EqualFold(strings.TrimSpace(os.Getenv("ROUTER_POLICY")), "learned") {
 		cm := strings.TrimSpace(os.Getenv("ROUTER_CLASSIFIER_MODEL"))
 		if cm == "" {
 			cm = cfg.FastModel
@@ -1355,6 +1387,59 @@ func runScore(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) {
 	if err := scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// runExportRoutingData writes route_decisions rows as JSONL to path. Joined with
+// nothing on the prompt side (prompts are never stored, ADR-0010): the export
+// carries labels and model names only, so a trainer can derive counts but not
+// text. ml/train_router.py turns the JSONL into models/router-weights.json.
+func runExportRoutingData(dsn, path string) {
+	conn, err := pgx.Connect(context.Background(), dsn)
+	if err != nil {
+		log.Fatalf("export: %v", err)
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(context.Background(),
+		`SELECT trace_id, intent, intent_confidence, difficulty, policy, tier, reason,
+		        planned, chosen, fallback, failed, candidates, sensitive, created_at
+		 FROM route_decisions ORDER BY id`)
+	if err != nil {
+		log.Fatalf("export: %v", err)
+	}
+	defer rows.Close()
+	f, err := os.Create(path)
+	if err != nil {
+		log.Fatalf("export: %v", err)
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	n := 0
+	for rows.Next() {
+		var r struct {
+			TraceID    string    `json:"trace_id"`
+			Intent     string    `json:"intent"`
+			Confidence float64   `json:"intent_confidence"`
+			Difficulty float64   `json:"difficulty"`
+			Policy     string    `json:"policy"`
+			Tier       string    `json:"tier"`
+			Reason     string    `json:"reason"`
+			Planned    string    `json:"planned"`
+			Chosen     string    `json:"chosen"`
+			Fallback   bool      `json:"fallback"`
+			Failed     bool      `json:"failed"`
+			Candidates []string  `json:"candidates"`
+			Sensitive  bool      `json:"sensitive"`
+			CreatedAt  time.Time `json:"created_at"`
+		}
+		if err := rows.Scan(&r.TraceID, &r.Intent, &r.Confidence, &r.Difficulty, &r.Policy, &r.Tier, &r.Reason, &r.Planned, &r.Chosen, &r.Fallback, &r.Failed, &r.Candidates, &r.Sensitive, &r.CreatedAt); err != nil {
+			log.Fatalf("export: %v", err)
+		}
+		if err := enc.Encode(r); err != nil {
+			log.Fatalf("export: %v", err)
+		}
+		n++
+	}
+	log.Printf("exported %d route decisions to %s", n, path)
 }
 
 func runScheduler(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel, every string) {
@@ -1790,6 +1875,8 @@ func main() {
 	trajectoryID := flag.String("trajectory", "", "print trajectory metrics (steps, attempts, retries, clean) for WORKFLOW_ID and exit")
 	workflowRepeats := flag.Int("workflow-repeats", 0, "run the toy workflow N times on --tracker-input and print pass^k reliability, then exit")
 	workflowGrade := flag.String("workflow-grade", "", "grade WORKFLOW_ID's final answer on a 1-5 rubric, store it, and exit")
+	exportRouting := flag.String("export-routing-data", "", "write route_decisions as JSONL to PATH and exit")
+	judgePrompt := flag.String("judge-prompt", "v2", "prompt variant for --judge-audit: v2 (justification then verdict) or v3 (verdict first, then evidence)")
 	advise := flag.Bool("advise", false, "print the static model advisor report (Track K) and exit")
 	showVersion := flag.Bool("version", false, "print version, commit and build date, then exit")
 	versionJSON := flag.Bool("version-json", false, "print the build info as one line of JSON and exit")
@@ -1869,7 +1956,7 @@ func main() {
 		return
 	}
 	if *judgeAudit {
-		runJudgeAudit(cfg.OllamaURL, *judgeModelFlag, *judge2Model, *judge2Backend, *auditFile)
+		runJudgeAudit(cfg.OllamaURL, *judgeModelFlag, *judge2Model, *judge2Backend, *auditFile, *judgePrompt)
 		return
 	}
 	if *scheduleEvals != "" {
@@ -1898,6 +1985,10 @@ func main() {
 	}
 	if *workflowGrade != "" {
 		runWorkflowGrade(dsn, cfg.OllamaURL, *workflowGrade)
+		return
+	}
+	if *exportRouting != "" {
+		runExportRoutingData(dsn, *exportRouting)
 		return
 	}
 	if *advise {

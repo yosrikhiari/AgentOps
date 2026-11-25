@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -166,6 +167,15 @@ type Server struct {
 	// no store of its own (ADR-0010).
 	lastMu    sync.RWMutex
 	lastRoute *LastRoute
+
+	// chargeCh is a single worker that records API-key usage off the request
+	// path, so a chat never waits on the database and never spawns a goroutine
+	// per request (audit §5.3). Started lazily on the first chargeKey call;
+	// a full queue drops the update and counts it. A lost update costs at most
+	// one request of budget precision, which is the existing contract.
+	chargeCh      chan chargeJob
+	chargeOnce    sync.Once
+	chargeDropped atomic.Uint64
 }
 
 // NewServer builds a gateway with one local backend serving the fast and quality tiers.
@@ -568,21 +578,50 @@ func (s *Server) writeChatError(w http.ResponseWriter, err error, traceID string
 	writeError(w, status, code, msg, traceID)
 }
 
-// chargeKey records usage off the request path; a lost update costs at most one request
-// of budget precision.
+// chargeJob is one queued usage update for the charge worker.
+type chargeJob struct {
+	key    *APIKey
+	tokens int64
+}
+
+// chargeKey records usage off the request path; a lost update costs at most one
+// request of budget precision. A single worker drains the queue so a chat never
+// waits on the database and never spawns a goroutine per request (audit §5.3).
 func (s *Server) chargeKey(key *APIKey, u Usage) {
-	if key == nil {
+	if key == nil || s.Keys == nil {
 		return
 	}
 	s.Metrics.ObserveKey(key.Name, false)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.Keys.AddUsage(ctx, key.ID, int64(u.TotalTokens)); err != nil {
-			log.Printf("api key %q: usage not recorded: %v", key.Name, err)
-		}
-	}()
+	s.chargeOnce.Do(func() {
+		s.chargeCh = make(chan chargeJob, 1024)
+		go s.chargeLoop()
+	})
+	select {
+	case s.chargeCh <- chargeJob{key: key, tokens: int64(u.TotalTokens)}:
+	default:
+		s.chargeDropped.Add(1)
+		log.Printf("api key %q: usage queue full, dropped (total dropped=%d)", key.Name, s.chargeDropped.Load())
+	}
 }
+
+// chargeLoop is the single worker behind chargeKey. It exits when the channel is
+// closed; until then it processes one update at a time.
+func (s *Server) chargeLoop() {
+	for job := range s.chargeCh {
+		if s.Keys == nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.Keys.AddUsage(ctx, job.key.ID, job.tokens); err != nil {
+			log.Printf("api key %q: usage not recorded: %v", job.key.Name, err)
+		}
+		cancel()
+	}
+}
+
+// ChargeDropped reports how many usage updates were dropped because the queue
+// was full. Exposed for tests and operators.
+func (s *Server) ChargeDropped() uint64 { return s.chargeDropped.Load() }
 
 func (s *Server) emitSpan(traceID, spanID, parentID, name, attrs string) {
 	if s.SpanSink == nil {

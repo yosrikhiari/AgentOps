@@ -102,6 +102,7 @@ Every mode is a flag on the same binary (`go run . --help`):
 | `--run-tracker [--tracker-input "q"]` / `--resume-tracker <id>` | run / resume the 3-step toy agent; kill it mid-step and resume |
 | `--trace <id>` | print redacted spans for a chat or workflow |
 | `--trajectory <id>` | print one workflow's trajectory: steps, done, attempts, retries, and whether it was clean (completed, every step first-try) |
+| `--workflow-verify <id>` | run the verifier (if any) attached to a workflow, store the pass/fail result, and exit |
 | `--workflow-repeats N` (`--tracker-input "…"`) | run the toy workflow N times and print `pass^k` for k=1..N (the chance all k trials succeed). Reliability of the orchestration, not answer quality — the toy workflow has no ground truth for its content |
 | `--workflow-grade <id>` | grade one workflow's final answer on a 1-5 rubric with `JUDGE_MODEL`, store it, and show it as a chip on `#/workflows`. Quality, not groundedness: the workflow does not keep the chunks it retrieved |
 | `--export-routing-data PATH` | write every `route_decisions` row as JSONL to PATH (labels and model names only, no prompts) for training the learned router (`ml/train_router.py`); exits after writing |

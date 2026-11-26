@@ -114,6 +114,26 @@ Do not run two versions of the binary against the same database at the
 same time: the migration tracker is not locked, and a concurrent
 `--migrate` from two processes can race on `schema_migrations`.
 
+## Hosting behind a reverse proxy (Kong / Cloudflare / nginx)
+
+When the gateway is hosted outside the premises, put it behind a reverse proxy and
+keep these rules so streaming and long generations survive:
+
+- **Do not buffer SSE.** The streaming endpoint sends `X-Accel-Buffering: no`; make sure the
+  proxy honours it (nginx: `proxy_buffering off;` for the `/v1/chat/completions` location,
+  or set `proxy_set_header X-Accel-Buffering no;`). Cloudflare passes it through by default.
+- **Raise idle/read timeouts.** Cold loads and evictions can take 30–120 s; a 30 s proxy
+  idle timeout will kill a generation mid-flight. Set `proxy_read_timeout` (nginx) or the
+  equivalent to at least 300 s, matching `REQUEST_TIMEOUT`.
+- **The server emits a 30 s SSE heartbeat** (`: ping`) during gaps, which resets most idle
+  timers; do not strip comment lines in the proxy.
+- **Enforce auth at the edge.** Set `REQUIRE_API_KEY=true` and issue virtual keys
+  (`API_KEYS`), or terminate auth in Kong/Cloudflare and forward `X-API-Key`. The gateway
+  already hashes keys and applies per-key RPM/token budgets.
+- **Rate limit at the edge** in addition to the in-process limiter (which is per-process and
+  resets on restart).
+- **TLS termination** at the proxy; the gateway listens on plain HTTP by default (`ADDR`).
+
 ## Troubleshooting
 
 **"backend ollama is reachable" but no models answer.** Check

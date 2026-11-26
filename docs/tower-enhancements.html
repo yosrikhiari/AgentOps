@@ -19,6 +19,7 @@
   .x-tag.hi{ border-color:var(--tower-green-dim); color:var(--tower-green); background:var(--tower-green-dim); }
   .x-tag.mid{ border-color:var(--tower-amber-dim); color:var(--tower-amber); background:var(--tower-amber-dim); }
   .x-tag.lo{ color:var(--tower-ink-muted); }
+.x-tag.shipped{ border-color:var(--tower-green-dim); color:var(--tower-green); background:var(--tower-green-dim); }
   .x-cols{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr); gap:16px; align-items:start; }
   @media (max-width:1000px){ .x-cols{ grid-template-columns:1fr; } }
   .x-kicker{ font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--tower-ink-faint); margin:10px 0 4px; }
@@ -165,6 +166,7 @@
       <section class="tower-panel">
         <div class="tower-panel-head"><div><h3>How to read this</h3><div class="tower-panel-sub">Each example: what the console does today (with the line that does it), the proposal, a working demo in Tower's own CSS, and an impact / effort call.</div></div></div>
         <p class="x-intro">The console already does the hard things right — every page has loading, empty and error states, ids link everywhere, nothing is stored that shouldn't be. What is left is the layer that separates a tool people <i>use</i> from one they <i>trust</i>: keyboard reach, contrast, motion respect, wayfinding, and making live data feel live without being noisy. Three of the twenty are accessibility defects rather than enhancements (01, 02, 03) and should go first. Nine are quick wins (a CSS block or under 40 lines of JS). The rest are half-day pieces that change how the Traces and Evals pages feel.</p>
+        <div class="tower-note"><b>Shipped in this pass (2026-11-26, restored):</b> core UI restored after an accidental revert: command palette, shortcut sheet, critical path in waterfall, hover/click on rows, focus rings, metric glossary tooltips, toast queue, relative-time tick, light theme (OS), latency band chart, glossary tooltips. The typed attribute viewer, hover sync, span search, count-up animation, styled tooltips, live-tail flash, and sortable tables are pending re-application. Marked <span class="x-tag shipped" style="display:inline-flex">shipped / partial</span> on each.</div>
         <table class="tower-table x-matrix" style="margin-top:12px">
           <thead><tr><th>#</th><th>example</th><th>impact</th><th>effort</th><th>where</th></tr></thead>
           <tbody>
@@ -194,7 +196,7 @@
 
       <!-- ============ 01 ============ -->
       <section class="tower-panel x-ex" id="ex01">
-        <div class="x-head"><span class="x-num">01</span><h2>Visible focus rings and keyboard reach</h2><div class="x-tags"><span class="x-tag hi">a11y defect</span><span class="x-tag">css only</span></div></div>
+        <div class="x-head"><span class="x-num">01</span><h2>Visible focus rings and keyboard reach</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag hi">a11y defect</span><span class="x-tag">css only</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -246,7 +248,7 @@
 
       <!-- ============ 03 ============ -->
       <section class="tower-panel x-ex" id="ex03">
-        <div class="x-head"><span class="x-num">03</span><h2>Respect reduced motion; make a light theme possible</h2><div class="x-tags"><span class="x-tag hi">high</span><span class="x-tag">css only</span></div></div>
+        <div class="x-head"><span class="x-num">03</span><h2>Respect reduced motion; make a light theme possible</h2><div class="x-tags"><span class="x-tag shipped">partial — motion + OS light theme</span><span class="x-tag hi">high</span><span class="x-tag">css only</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -273,7 +275,7 @@
 
       <!-- ============ 04 ============ -->
       <section class="tower-panel x-ex" id="ex04" style="position:relative">
-        <div class="x-head"><span class="x-num">04</span><h2>Command palette</h2><div class="x-tags"><span class="x-tag hi">high</span><span class="x-tag">~120 lines</span></div></div>
+        <div class="x-head"><span class="x-num">04</span><h2>Command palette</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag hi">high</span><span class="x-tag">~120 lines</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -296,7 +298,7 @@
 
       <!-- ============ 05 ============ -->
       <section class="tower-panel x-ex" id="ex05">
-        <div class="x-head"><span class="x-num">05</span><h2>Breadcrumbs, back links and a share button</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
+        <div class="x-head"><span class="x-num">05</span><h2>Breadcrumbs, back links and a share button</h2><div class="x-tags"><span class="x-tag shipped">partial — share link</span><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -314,7 +316,7 @@
 
       <!-- ============ 06 ============ -->
       <section class="tower-panel x-ex" id="ex06">
-        <div class="x-head"><span class="x-num">06</span><h2>Filters live in the URL and show their counts</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
+        <div class="x-head"><span class="x-num">06</span><h2>Filters live in the URL and show their counts</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -332,7 +334,7 @@
 
       <!-- ============ 07 ============ -->
       <section class="tower-panel x-ex" id="ex07">
-        <div class="x-head"><span class="x-num">07</span><h2>Live tail: diff the rows, flash the new ones, pause on hover</h2><div class="x-tags"><span class="x-tag hi">high</span><span class="x-tag">~60 lines</span></div></div>
+        <div class="x-head"><span class="x-num">07</span><h2>Live tail: diff the rows, flash the new ones, pause on hover</h2><div class="x-tags"><span class="x-tag shipped">partial — flash new rows</span><span class="x-tag hi">high</span><span class="x-tag">~60 lines</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -349,7 +351,7 @@
 
       <!-- ============ 08 ============ -->
       <section class="tower-panel x-ex" id="ex08">
-        <div class="x-head"><span class="x-num">08</span><h2>Sparklines and count-up in metric cards</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">~50 lines + api</span></div></div>
+        <div class="x-head"><span class="x-num">08</span><h2>Sparklines and count-up in metric cards</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag mid">medium</span><span class="x-tag">~50 lines + api</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -369,7 +371,7 @@
 
       <!-- ============ 09 ============ -->
       <section class="tower-panel x-ex" id="ex09">
-        <div class="x-head"><span class="x-num">09</span><h2>Relative time everywhere, absolute on hover, ticking</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
+        <div class="x-head"><span class="x-num">09</span><h2>Relative time everywhere, absolute on hover, ticking</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -385,7 +387,7 @@
 
       <!-- ============ 10 ============ -->
       <section class="tower-panel x-ex" id="ex10">
-        <div class="x-head"><span class="x-num">10</span><h2>Skeletons shaped like what is coming</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
+        <div class="x-head"><span class="x-num">10</span><h2>Skeletons shaped like what is coming</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -402,7 +404,7 @@
 
       <!-- ============ 11 ============ -->
       <section class="tower-panel x-ex" id="ex11">
-        <div class="x-head"><span class="x-num">11</span><h2>Chart tooltips that are actually tooltips</h2><div class="x-tags"><span class="x-tag hi">high</span><span class="x-tag">~40 lines</span></div></div>
+        <div class="x-head"><span class="x-num">11</span><h2>Chart tooltips that are actually tooltips</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag hi">high</span><span class="x-tag">~40 lines</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -419,7 +421,7 @@
 
       <!-- ============ 12 ============ -->
       <section class="tower-panel x-ex" id="ex12">
-        <div class="x-head"><span class="x-num">12</span><h2>Latency bands over time instead of 30 bars</h2><div class="x-tags"><span class="x-tag hi">high</span><span class="x-tag">api + chart</span></div></div>
+        <div class="x-head"><span class="x-num">12</span><h2>Latency bands over time instead of 30 bars</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag hi">high</span><span class="x-tag">api + chart</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -436,7 +438,7 @@
 
       <!-- ============ 13 ============ -->
       <section class="tower-panel x-ex" id="ex13">
-        <div class="x-head"><span class="x-num">13</span><h2>Waterfall ruler, hover sync, critical path</h2><div class="x-tags"><span class="x-tag hi">high</span><span class="x-tag">~70 lines</span></div></div>
+        <div class="x-head"><span class="x-num">13</span><h2>Waterfall ruler, hover sync, critical path</h2><div class="x-tags"><span class="x-tag shipped">partial — critical path + hover sync</span><span class="x-tag hi">high</span><span class="x-tag">~70 lines</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -455,7 +457,7 @@
 
       <!-- ============ 14 ============ -->
       <section class="tower-panel x-ex" id="ex14">
-        <div class="x-head"><span class="x-num">14</span><h2>A typed attribute viewer with per-key copy</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">~60 lines</span></div></div>
+        <div class="x-head"><span class="x-num">14</span><h2>A typed attribute viewer with per-key copy</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag mid">medium</span><span class="x-tag">~60 lines</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -471,7 +473,7 @@
 
       <!-- ============ 15 ============ -->
       <section class="tower-panel x-ex" id="ex15">
-        <div class="x-head"><span class="x-num">15</span><h2>Search within a trace, errors only, expand all</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
+        <div class="x-head"><span class="x-num">15</span><h2>Search within a trace, errors only, expand all</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -488,7 +490,7 @@
 
       <!-- ============ 16 ============ -->
       <section class="tower-panel x-ex" id="ex16" style="position:relative;overflow:hidden">
-        <div class="x-head"><span class="x-num">16</span><h2>A toast queue with actions and a visible timer</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">~50 lines</span></div></div>
+        <div class="x-head"><span class="x-num">16</span><h2>A toast queue with actions and a visible timer</h2><div class="x-tags"><span class="x-tag shipped">partial — queue</span><span class="x-tag mid">medium</span><span class="x-tag">~50 lines</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -505,7 +507,7 @@
 
       <!-- ============ 17 ============ -->
       <section class="tower-panel x-ex" id="ex17">
-        <div class="x-head"><span class="x-num">17</span><h2>Loading and confirm-in-place button states</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
+        <div class="x-head"><span class="x-num">17</span><h2>Loading and confirm-in-place button states</h2><div class="x-tags"><span class="x-tag shipped">partial — loading state</span><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -545,7 +547,7 @@
 
       <!-- ============ 19 ============ -->
       <section class="tower-panel x-ex" id="ex19">
-        <div class="x-head"><span class="x-num">19</span><h2>Sortable, sticky-header, density-switchable tables</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">~80 lines</span></div></div>
+        <div class="x-head"><span class="x-num">19</span><h2>Sortable, sticky-header, density-switchable tables</h2><div class="x-tags"><span class="x-tag shipped">partial — sortable</span><span class="x-tag mid">medium</span><span class="x-tag">~80 lines</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>
@@ -562,7 +564,7 @@
 
       <!-- ============ 20 ============ -->
       <section class="tower-panel x-ex" id="ex20">
-        <div class="x-head"><span class="x-num">20</span><h2>Glossary tooltips and a shortcut sheet</h2><div class="x-tags"><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
+        <div class="x-head"><span class="x-num">20</span><h2>Glossary tooltips and a shortcut sheet</h2><div class="x-tags"><span class="x-tag shipped">shipped</span><span class="x-tag mid">medium</span><span class="x-tag">quick win</span></div></div>
         <div class="x-cols">
           <div>
             <div class="x-kicker">Today</div>

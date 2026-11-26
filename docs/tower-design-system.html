@@ -38,6 +38,10 @@
   .ds-shellmini.collapsed .tower-nav-btn span, .ds-shellmini.collapsed .tower-brand div, .ds-shellmini.collapsed .tower-nav-label, .ds-shellmini.collapsed .tower-side-foot{ display:none; }
   .ds-shellmini.collapsed .tower-nav-btn{ justify-content:center; }
   .ds-toast-demo{ position:static; display:inline-flex; }
+  .ds-cmdk{ position:static; inset:auto; padding:0; display:block; }
+  .ds-cmdk .tower-cmdk-backdrop{ display:none; }
+  .ds-shipped{ display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:3px; background:var(--tower-green-dim); color:var(--tower-green); font:600 10px/1.4 var(--tower-font-body); text-transform:uppercase; letter-spacing:.06em; }
+  .ds-shipped::before{ content:''; width:5px; height:5px; border-radius:50%; background:var(--tower-green); }
 </style>
 </head>
 <body>
@@ -52,6 +56,7 @@
     <a class="tower-nav-btn" href="#principles" data-active="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg><span>Principles</span></a>
     <a class="tower-nav-btn" href="#tokens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/><path d="M13 3h8v8M3 13v8h8"/></svg><span>Tokens</span></a>
     <a class="tower-nav-btn" href="#shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M3 9h6"/></svg><span>Shell</span></a>
+    <a class="tower-nav-btn" href="#palette"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><span>Command palette</span></a>
     <a class="tower-nav-btn" href="#a11y"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c1.4-3.6 3.9-5 7-5s5.6 1.4 7 5"/></svg><span>Accessibility</span></a>
     <div class="tower-nav-label">Components</div>
     <a class="tower-nav-btn" href="#primitives"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="8" width="18" height="8" rx="4"/></svg><span>Primitives</span></a>
@@ -74,7 +79,7 @@
     <header class="tower-statusstrip">
       <h1>Tower design system</h1>
       <div class="tower-pulse-item">tokens <span class="tower-mono">20</span></div>
-      <div class="tower-pulse-item">components <span class="tower-mono">26</span></div>
+      <div class="tower-pulse-item">components <span class="tower-mono">30</span></div>
       <div class="tower-pulse-item">pages <span class="tower-mono">4</span></div>
       <div class="tower-pulse-item"><span class="tower-pulse-dot"></span><span>source: console/static/tower.css</span></div>
     </header>
@@ -170,6 +175,45 @@
         </table>
       </section>
 
+<!-- ===================== COMMAND PALETTE ===================== -->
+      <section class="ds-section" id="palette">
+        <h2>Command palette</h2>
+        <p class="ds-lead">One keyboard-first surface for every destination, the current trace's actions and the recent traces. Ctrl/Cmd+K opens it from any page; ↑↓ move, Enter runs, Esc closes and restores focus to the trigger. Shipped in <span class="ds-inline">mountPalette()</span> (app.js), with <span class="ds-inline">open()/close()/toggle()</span> and <span class="ds-inline">paletteCommands()</span>.</p>
+        <div class="ds-frame"><div class="ds-frame-label">Trigger in the status strip (opens the overlay)</div>
+          <div class="ds-row">
+            <button class="tower-cmdk-trigger" type="button" aria-label="Open the command palette" aria-keyshortcuts="Control+K Meta+K">
+              <span aria-hidden="true">⌘</span> Jump to. <span class="tower-kbd" aria-hidden="true">Ctrl K</span>
+            </button>
+          </div></div>
+        <div class="ds-frame" style="margin-top:14px"><div class="ds-frame-label">Overlay (shown inline here; fixed on screen in the console)</div>
+          <div class="tower-cmdk ds-cmdk">
+            <div class="tower-cmdk-panel" role="dialog" aria-modal="true" aria-label="Command palette">
+              <div class="tower-cmdk-search"><span class="tower-cmdk-icon" aria-hidden="true">⌘</span><input class="tower-cmdk-input" type="text" value="trac" readonly placeholder="Jump to a page, a trace, or an action…"></div>
+              <div class="tower-cmdk-list" role="listbox" aria-label="Commands">
+                <div class="tower-cmdk-group">Go to</div>
+                <div class="tower-cmdk-item" role="option" aria-selected="true"><div class="tower-cmdk-item-main"><div class="tower-cmdk-item-title">Traces</div><div class="tower-cmdk-item-sub">#traces</div></div><span class="tower-cmdk-item-kind tower-kbd">↵</span></div>
+                <div class="tower-cmdk-item" role="option"><div class="tower-cmdk-item-main"><div class="tower-cmdk-item-title">Overview</div><div class="tower-cmdk-item-sub">#overview</div></div><span class="tower-cmdk-item-kind tower-kbd">↵</span></div>
+                <div class="tower-cmdk-group">Actions</div>
+                <div class="tower-cmdk-item" role="option"><div class="tower-cmdk-item-main"><div class="tower-cmdk-item-title">Copy trace id</div><div class="tower-cmdk-item-sub">8f2a1c3d</div></div><span class="tower-cmdk-item-kind tower-kbd">↵</span></div>
+                <div class="tower-cmdk-group">Recent traces</div>
+                <div class="tower-cmdk-item" role="option"><div class="tower-cmdk-item-main"><div class="tower-cmdk-item-title">8f2a1c3d · qwen2.5:7b-instruct-q4_K_M · long_prompt</div><div class="tower-cmdk-item-sub">3 min ago · chat</div></div><span class="tower-cmdk-item-kind tower-kbd">↵</span></div>
+              </div>
+              <div class="tower-cmdk-foot"><span><span class="tower-kbd">↑</span><span class="tower-kbd">↓</span> move</span><span><span class="tower-kbd">↵</span> open</span><span><span class="tower-kbd">esc</span> close</span><span class="tower-cmdk-count">4 commands</span></div>
+            </div>
+          </div></div>
+        <table class="ds-spec">
+          <tr><th>class</th><th>role</th><th>used in</th></tr>
+          <tr><td>.tower-cmdk</td><td>fixed overlay, centered panel, backdrop blur; <span class="tower-mono">[hidden]</span> removes it</td><td>mountPalette()</td></tr>
+          <tr><td>.tower-cmdk-panel</td><td>surface + border + shadow container for search, list, foot</td><td>mountPalette()</td></tr>
+          <tr><td>.tower-cmdk-search / -icon / -input</td><td>search row: mono icon, borderless input, placeholder</td><td>mountPalette()</td></tr>
+          <tr><td>.tower-cmdk-group</td><td>10 px uppercase section label (Go to / Actions / Recent traces)</td><td>render()</td></tr>
+          <tr><td>.tower-cmdk-item(.aria-selected)</td><td>row with title + sub + kind; selected = amber-dim</td><td>render() · paint()</td></tr>
+          <tr><td>.tower-cmdk-foot / -count</td><td>hint row (keys + count, pushed right)</td><td>mountPalette()</td></tr>
+          <tr><td>.tower-cmdk-trigger</td><td>status-strip button that opens the palette; hides its kbd under 700 px</td><td>index.html · #cmdk-trigger</td></tr>
+          <tr><td>.tower-kbd</td><td>18 px mono key cap for shortcut hints</td><td>palette · trigger · toast</td></tr>
+        </table>
+      </section>
+
       <!-- ===================== ACCESSIBILITY ===================== -->
       <section class="ds-section" id="a11y">
         <h2>Accessibility</h2>
@@ -252,7 +296,7 @@ const pt = document.getElementById('page-title'); pt.focus();</div>
             <div class="ds-row">
               <span class="tower-chip">local</span><span class="tower-chip">cloud</span><span class="tower-chip">quality</span><span class="tower-chip">fast</span><span class="tower-chip">sensitive</span><span class="tower-chip">fallback</span><span class="tower-chip">critic</span><span class="tower-chip">keyword:iban</span><span class="tower-chip">qwen3:8b</span>
               <span style="width:16px"></span>
-              <span class="tower-filters" style="margin:0"><button class="tower-chip tower-chip-btn on">All</button><button class="tower-chip tower-chip-btn">Chats</button><button class="tower-chip tower-chip-btn">Workflows</button><button class="tower-chip tower-chip-btn">Errors</button></span>
+              <span class="tower-filters" style="margin:0"><button class="tower-chip tower-chip-btn on">All<span class="tower-chip-count">19</span></button><button class="tower-chip tower-chip-btn">Errors<span class="tower-chip-count">5</span></button><button class="tower-chip tower-chip-btn">Sensitive<span class="tower-chip-count">1</span></button></span>
             </div></div>
           <div class="ds-frame"><div class="ds-frame-label">Inputs &amp; form row — mono input, amber focus ring, button beside it</div>
             <div class="tower-form-row"><input class="tower-input" placeholder="trace id or workflow id"><button class="tower-btn primary">Inspect</button><span class="tower-panel-sub">Enter also submits</span></div>
@@ -269,6 +313,7 @@ const pt = document.getElementById('page-title'); pt.focus();</div>
           <tr><td>.tower-pill.*</td><td>backend up/down, run scores, workflow status, span failed</td><td>state only. A pill always has a dot. Use <span class="tower-mono">pill(state, label)</span></td></tr>
           <tr><td>.tower-chip</td><td>tier, backend, reason, sensitive, fallback, agent role (v1.1 <span class="tower-mono">agent_role</span>, in <span class="tower-mono">renderList</span> / <span class="tower-mono">traceView</span> / the requests table), judge model</td><td>a fact, never a state. Use <span class="tower-mono">chip(text)</span></td></tr>
           <tr><td>.tower-chip-btn(.on)</td><td>Traces filters</td><td>a chip that toggles; <span class="tower-mono">.on</span> = amber-dim</td></tr>
+          <tr><td>.tower-chip-count</td><td>Traces filter chips</td><td>count after the label, faint; amber when the chip is <span class="tower-mono">.on</span>. Counts come from <span class="tower-mono">pageTraces()</span> filtering the full list client-side</td></tr>
           <tr><td>.tower-input</td><td>trace id · workflow question</td><td>mono, ground background, min-width 280, amber border on focus</td></tr>
         </table>
       </section>
@@ -352,8 +397,11 @@ const pt = document.getElementById('page-title'); pt.focus();</div>
       <section class="ds-section" id="charts">
         <h2>Charts</h2>
         <p class="ds-lead">Two hand-rolled SVGs, both built with <span class="ds-inline">createElementNS</span>, tooltips via <span class="ds-inline">&lt;title&gt;</span>, colours via tokens. No chart library.</p>
-        <div class="tower-grid-2">
-          <section class="tower-panel"><div class="tower-panel-head"><div><h3>Routing traffic — last 30 requests</h3><div class="tower-panel-sub">Bar height = latency; click a bar to open its trace</div></div>
+        <div class="tower-metric-row">
+            <div class="tower-metric"><div class="tower-metric-label">Requests / last hour</div><div class="tower-metric-value">184</div><svg class="tower-spark" viewBox="0 0 120 28" preserveAspectRatio="none"><polyline fill="none" stroke="var(--tower-amber)" stroke-width="1.5" points="0,24 12,20 24,22 36,14 48,16 60,8 72,12 84,6 96,10 108,4 120,8"/></svg></div>
+            <div class="tower-metric"><div class="tower-metric-label">p50 latency</div><div class="tower-metric-value">312 <span style="font-size:13px;color:var(--tower-ink-muted)">ms</span></div><svg class="tower-spark" viewBox="0 0 120 28" preserveAspectRatio="none"><polyline fill="none" stroke="var(--tower-amber)" stroke-width="1.5" points="0,12 12,14 24,10 36,16 48,13 60,18 72,15 84,20 96,17 108,22 120,19"/></svg></div>
+          </div>
+          <div class="tower-grid-2">
             <div class="tower-chart-legend"><span class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-amber)"></span> quality / cloud</span><span class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-ink-faint)"></span> fast</span><span class="tower-legend-item"><span class="tower-legend-swatch" style="background:var(--tower-red)"></span> error</span></div></div>
             <div id="dsTraffic"></div></section>
           <section class="tower-panel"><div class="tower-panel-head"><div><h3>Score history</h3><div class="tower-panel-sub">Amber line, green/red dots at the 0.7 threshold, dashed amber-dim rule</div></div></div>
@@ -363,6 +411,7 @@ const pt = document.getElementById('page-title'); pt.focus();</div>
           <tr><th>chart</th><th>encoding</th><th>function</th></tr>
           <tr><td>traffic bars</td><td>x = order (oldest left), height = latency / max, colour = tier (amber quality/cloud, faint fast), red 12 px stub = error. Hover dims to .8, click → #/traces/id</td><td>trafficChart(reqs)</td></tr>
           <tr><td>score line</td><td>x = run order, y = 0–1 with gridlines at 0, .5, .7, 1; dot green ≥ threshold else red; title = run · when · judge · score</td><td>scoreChart(runs)</td></tr>
+          <tr><td>.tower-spark</td><td>26 px inline SVG, 1.5 px amber polyline, no axes; one point per bucket from <span class="tower-mono">/v1/metrics/series</span></td><td>metric() · pageOverview()</td></tr>
         </table>
       </section>
 
@@ -413,11 +462,11 @@ const pt = document.getElementById('page-title'); pt.focus();</div>
       <!-- ===================== TRACES ===================== -->
       <section class="ds-section" id="traces">
         <h2>Trace inspector</h2>
-        <p class="ds-lead">The hero page. A 380 px list of recent chats and workflows on the left with filter chips; on the right the selected trace as a head, a waterfall timeline and an indented span tree with expandable attributes. Latest trace opens automatically.</p>
+        <p class="ds-lead">The hero page. A 380 px list of recent chats and workflows on the left with filter chips; on the right the selected trace as a head, a waterfall timeline and an indented span tree with expandable attributes. Latest trace opens automatically. Waterfall rows are now controls: clicking (or Enter/Space) opens and flashes the matching span, hover syncs the two lists, and the longest chain from the root is outlined as the critical path. The span tree has a search box, an errors-only toggle and expand/collapse; attributes are typed (string green, number amber, boolean red, null faint), arrays render as chips, long strings truncate, and each row has a hover-revealed copy button.</p>
         <div class="tower-grid-traces">
           <section class="tower-panel">
             <div class="tower-panel-head"><div><h3>Recent traces</h3><div class="tower-panel-sub">Router chats and workflows, newest first</div></div></div>
-            <div class="tower-filters"><button class="tower-chip tower-chip-btn on">All</button><button class="tower-chip tower-chip-btn">Chats</button><button class="tower-chip tower-chip-btn">Workflows</button><button class="tower-chip tower-chip-btn">Errors</button><button class="tower-chip tower-chip-btn">Sensitive</button><button class="tower-chip tower-chip-btn">Fallbacks</button></div>
+            <div class="tower-filters"><button class="tower-chip tower-chip-btn on">All<span class="tower-chip-count">19</span></button><button class="tower-chip tower-chip-btn">Chats<span class="tower-chip-count">14</span></button><button class="tower-chip tower-chip-btn">Workflows<span class="tower-chip-count">5</span></button><button class="tower-chip tower-chip-btn">Errors<span class="tower-chip-count">1</span></button><button class="tower-chip tower-chip-btn">Sensitive<span class="tower-chip-count">1</span></button><button class="tower-chip tower-chip-btn">Fallbacks<span class="tower-chip-count">1</span></button></div>
             <div class="tower-trace-list" style="max-height:none">
               <div class="tower-trace-item selected"><div class="tower-trace-item-top"><span><span class="tower-chip">chat</span> <span class="tower-mono">8f2a1c3d</span></span><span class="tower-mono tower-muted">3 min ago</span></div><div class="tower-trace-item-sub">qwen2.5:7b-instruct-q4_K_M · long_prompt</div><div class="tower-trace-item-meta"><span class="tower-mono">890 ms</span></div></div>
               <div class="tower-trace-item"><div class="tower-trace-item-top"><span><span class="tower-chip">workflow</span> <span class="tower-mono">wf_71ab</span></span><span class="tower-mono tower-muted">8 min ago</span></div><div class="tower-trace-item-sub">what does tower do?</div><div class="tower-trace-item-meta"><span class="tower-pill degraded">running</span></div></div>
@@ -431,9 +480,9 @@ const pt = document.getElementById('page-title'); pt.focus();</div>
             </div>
             <h4 class="tower-sub-h">Timeline</h4>
             <div class="tower-waterfall">
-              <div class="tower-wf-row"><div class="tower-wf-name">router.request</div><div class="tower-wf-track"><div class="tower-wf-bar" style="left:0;width:100%;background:var(--tower-ink-faint)"></div></div><div class="tower-wf-dur tower-mono">1.02 s</div></div>
+              <div class="tower-wf-row selected"><div class="tower-wf-name">router.request</div><div class="tower-wf-track"><div class="tower-wf-bar" style="left:0;width:100%;background:var(--tower-ink-faint)"></div></div><div class="tower-wf-dur tower-mono">1.02 s</div></div>
               <div class="tower-wf-row"><div class="tower-wf-name" style="padding-left:14px">route.decide</div><div class="tower-wf-track"><div class="tower-wf-bar" style="left:0;width:3%;background:var(--tower-ink-faint)"></div></div><div class="tower-wf-dur tower-mono">–</div></div>
-              <div class="tower-wf-row"><div class="tower-wf-name" style="padding-left:14px">model.generate</div><div class="tower-wf-track"><div class="tower-wf-bar" style="left:12%;width:87%;background:var(--tower-amber)"></div></div><div class="tower-wf-dur tower-mono">890 ms</div></div>
+              <div class="tower-wf-row"><div class="tower-wf-name" style="padding-left:14px">model.generate</div><div class="tower-wf-track"><div class="tower-wf-bar critical" style="left:12%;width:87%;background:var(--tower-amber)" title="model.generate · 0.89 s · critical path"></div></div><div class="tower-wf-dur tower-mono">890 ms</div></div>
             </div>
             <h4 class="tower-sub-h">Spans</h4>
             <div class="tower-trace">
@@ -451,7 +500,12 @@ const pt = document.getElementById('page-title'); pt.focus();</div>
           <tr><td>.tower-trace-head / -title</td><td>full id (mono) + kind chip + optional GPU chip + ok/failed pill, sub line, ghost actions</td><td>the auto-opened trace gets a "Showing the latest trace" sub above; the GPU chip renders only when the trace body carries <span class="tower-mono">gpu_ok</span> — the sample nearest the first span's start, formatted with <span class="tower-mono">gpuGB</span> in <span class="tower-mono">traceView</span> (correlation, not per-request attribution)</td></tr>
           <tr><td>.tower-sub-h</td><td>11 px uppercase section header inside a panel</td><td>Timeline · Spans</td></tr>
           <tr><td>.tower-wf-row / -track / -bar</td><td>180px name (indented 14 px per depth) · track · 72px duration</td><td>amber = model.generate, faint = route*/router*, green = agent steps, red = error</td></tr>
+          <tr><td>.tower-wf-row(.selected)</td><td>clickable row (role=button, Enter/Space) that opens the matching span; selected = amber-dim</td><td>buildTimeline() · focusSpan() · pageTraces()</td></tr>
+          <tr><td>.tower-wf-bar.critical</td><td>outlined bar (inset ring, not recoloured) on the longest chain from the root</td><td>buildTimeline() marks the critical path; title explains "critical path"</td></tr>
           <tr><td>.tower-trace-step(.done/.active)</td><td>timeline dot + body; body click toggles .tower-trace-detail.open</td><td>indent = 11 + depth·14 px; .active (amber dot) marks a failed span</td></tr>
+          <tr><td>.tower-trace-step.wf-hover</td><td>hover sync: hovering a span step highlights the matching waterfall row and vice versa (shared <span class="tower-mono">data-span</span>)</td><td>traceView() · wf rows + span steps</td></tr>
+          <tr><td>.tower-kv .v-str / .v-num / .v-bool / .v-null</td><td>typed attribute values: string green, number amber, boolean red, null faint italic; arrays render as chips; long strings truncate with a "more" toggle; copy on hover</td><td>attrRow() · attrRows()</td></tr>
+          <tr><td>span toolbar</td><td>search input + errors-only checkbox + expand/collapse all (failed spans stay open on collapse)</td><td>traceView() · renderSteps()</td></tr>
         </table>
       </section>
 

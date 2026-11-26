@@ -9,8 +9,9 @@ import (
 
 // Message is one chat turn in the OpenAI shape.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role     string `json:"role"`
+	Content  string `json:"content"`
+	Thinking string `json:"thinking,omitempty"`
 }
 
 // Usage mirrors OpenAI's usage block.

@@ -185,7 +185,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if !in.Stream {
-		out, err := s.completeWithTrace(ctx, traceID, req, nil)
+		out, err := s.completeWithTrace(ctx, traceID, req, nil, nil)
 		if err != nil {
 			s.writeAnthropicChatError(w, err, traceID)
 			return
@@ -232,7 +232,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	out, err := s.completeWithTrace(ctx, traceID, req, emit)
+	out, err := s.completeWithTrace(ctx, traceID, req, emit, nil)
 	if err != nil {
 		if !started {
 			s.writeAnthropicChatError(w, err, traceID)

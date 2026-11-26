@@ -44,6 +44,14 @@ type ParamBackend interface {
 	StreamWith(ctx context.Context, model string, msgs []Message, p GenParams, emit func(delta string)) (Usage, error)
 }
 
+// ReasoningBackend is optionally implemented by backends that can stream a model's
+// chain-of-thought separately from its answer (Ollama with `think:true`). The
+// gateway uses it when present; otherwise reasoning is not streamed.
+type ReasoningBackend interface {
+	ParamBackend
+	StreamWithReasoning(ctx context.Context, model string, msgs []Message, p GenParams, emitContent func(delta string), emitReasoning func(delta string)) (Usage, error)
+}
+
 // paramsOf lifts the request's optional fields into GenParams. `stop` may be a string
 // or a list (both are valid in the OpenAI shape); `response_format` becomes Format.
 func paramsOf(req ChatRequest) GenParams {
@@ -78,6 +86,22 @@ func paramsOf(req ChatRequest) GenParams {
 			}
 		}
 	}
+	// Default the resource knobs a client may omit. Ollama's own default
+	// (OLLAMA_CONTEXT_LENGTH, frequently 262144) sizes a KV cache that makes a
+	// small model exceed available VRAM and evict its neighbours — the dominant
+	// latency on a small GPU. A modest context keeps the model resident; a
+	// 5m keep_alive matches Ollama's own default so a model is not reloaded
+	// between turns. Clients that need more can request up to the ceilings in
+	// Validate, and a client that explicitly sends 0 keeps "model default".
+	if p.Options == nil {
+		p.Options = map[string]any{}
+	}
+	if _, ok := p.Options["num_ctx"]; !ok {
+		p.Options["num_ctx"] = float64(defaultNumCtx)
+	}
+	if p.KeepAlive == "" {
+		p.KeepAlive = defaultKeepAlive
+	}
 	return p
 }
 
@@ -98,6 +122,16 @@ const (
 	maxNumThread   = 256
 	maxRepeatLastN = 4096
 	maxKeepAlive   = time.Hour
+
+	// defaultNumCtx / defaultKeepAlive are injected when a client omits the
+	// resource knobs. Ollama's server default (OLLAMA_CONTEXT_LENGTH, often
+	// 262144) sizes a KV cache that makes even a 3B model exceed available
+	// VRAM on a small card and evict its neighbours — the dominant latency on
+	// this box (see trace 1434a15868f29f41: 95s eviction wait before a 5.5s
+	// load). A small context keeps the model resident and avoids thrashing;
+	// clients that need more can request up to maxNumCtx.
+	defaultNumCtx    = 4096
+	defaultKeepAlive = "5m"
 )
 
 // ErrParamOutOfRange is a client mistake, not a backend failure: classifyChatError

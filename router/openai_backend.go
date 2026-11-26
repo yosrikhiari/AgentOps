@@ -113,8 +113,10 @@ func (b *OpenAIBackend) Stream(ctx context.Context, model string, msgs []Message
 	return b.StreamWith(ctx, model, msgs, GenParams{MaxTokens: maxTokens}, emit)
 }
 
-// StreamWith is Stream with the full parameter set (see GenerateWith).
-func (b *OpenAIBackend) StreamWith(ctx context.Context, model string, msgs []Message, p GenParams, emit func(string)) (Usage, error) {
+// StreamWithReasoning is StreamWith plus a separate channel for reasoning deltas
+// (OpenAI's `reasoning_content` field). Falls back to content-only when no
+// reasoning emit is supplied.
+func (b *OpenAIBackend) StreamWithReasoning(ctx context.Context, model string, msgs []Message, p GenParams, emitContent func(string), emitReasoning func(string)) (Usage, error) {
 	resp, err := b.post(ctx, model, msgs, p, true)
 	if err != nil {
 		return Usage{}, err
@@ -135,7 +137,8 @@ func (b *OpenAIBackend) StreamWith(ctx context.Context, model string, msgs []Mes
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Usage *oaiUsage `json:"usage"`
@@ -146,8 +149,13 @@ func (b *OpenAIBackend) StreamWith(ctx context.Context, model string, msgs []Mes
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			return u, err
 		}
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			emit(chunk.Choices[0].Delta.Content)
+		if len(chunk.Choices) > 0 {
+			if chunk.Choices[0].Delta.ReasoningContent != "" && emitReasoning != nil {
+				emitReasoning(chunk.Choices[0].Delta.ReasoningContent)
+			}
+			if chunk.Choices[0].Delta.Content != "" && emitContent != nil {
+				emitContent(chunk.Choices[0].Delta.Content)
+			}
 		}
 		if chunk.Usage != nil {
 			u = Usage(*chunk.Usage)
@@ -159,6 +167,11 @@ func (b *OpenAIBackend) StreamWith(ctx context.Context, model string, msgs []Mes
 		return u, err
 	}
 	return u, nil
+}
+
+// StreamWith is Stream with the full parameter set (see GenerateWith).
+func (b *OpenAIBackend) StreamWith(ctx context.Context, model string, msgs []Message, p GenParams, emit func(string)) (Usage, error) {
+	return b.StreamWithReasoning(ctx, model, msgs, p, emit, nil)
 }
 
 // parseRetryAfter parses a Retry-After header value (seconds or HTTP-date).

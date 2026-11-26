@@ -489,7 +489,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if !req.Stream {
-		out, err := s.completeWithTrace(ctx, traceID, req, nil)
+		out, err := s.completeWithTrace(ctx, traceID, req, nil, nil)
 		if err != nil {
 			s.writeChatError(w, err, traceID)
 			return
@@ -502,9 +502,41 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Streaming: SSE in the OpenAI chunk shape. Errors before the first delta are still
 	// proper HTTP errors; after that they become a terminal error event.
+	// X-Accel-Buffering: no tells reverse proxies (nginx/Cloudflare) not to buffer the
+	// response, which would otherwise defeat streaming on a hosted deployment.
+	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, canFlush := w.(http.Flusher)
+	var mu sync.Mutex
 	started := false
+	done := make(chan struct{})
+	// Heartbeat: keep the connection alive during long gaps (cold load, eviction) so
+	// proxies and clients don't time out before the first token. 30s cadence.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				mu.Lock()
+				if !started {
+					started = true
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.WriteHeader(http.StatusOK)
+				}
+				_, _ = fmt.Fprint(w, ": ping\n\n")
+				if canFlush {
+					flusher.Flush()
+				}
+				mu.Unlock()
+			}
+		}
+	}()
 	emit := func(model, delta string) {
+		mu.Lock()
+		defer mu.Unlock()
 		if !started {
 			started = true
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -519,30 +551,57 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	out, err := s.completeWithTrace(ctx, traceID, req, emit)
-	if err != nil {
+	emitReasoning := func(model, delta string) {
+		mu.Lock()
+		defer mu.Unlock()
 		if !started {
+			started = true
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+		}
+		writeSSE(w, map[string]any{
+			"id": "chatcmpl-" + traceID, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model,
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"reasoning": delta}, "finish_reason": nil}},
+		})
+		if canFlush {
+			flusher.Flush()
+		}
+	}
+	out, err := s.completeWithTrace(ctx, traceID, req, emit, emitReasoning)
+	close(done)
+	if err != nil {
+		mu.Lock()
+		if !started {
+			mu.Unlock()
 			s.writeChatError(w, err, traceID)
 			return
 		}
 		writeSSE(w, map[string]any{"error": ErrorDetail{Code: "stream_failed", Message: "model backend failed mid-stream", TraceID: traceID}})
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		if canFlush {
+			flusher.Flush()
+		}
+		mu.Unlock()
 		return
 	}
 	if !started {
 		emit(out.Model, "")
 	}
-	s.chargeKey(key, out.Usage)
+	mu.Lock()
 	writeSSE(w, map[string]any{
 		"id": "chatcmpl-" + traceID, "object": "chat.completion.chunk", "created": out.Created, "model": out.Model,
 		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
 		"usage":   out.Usage, "reason": out.Reason, "backend": out.Backend, "trace_id": out.TraceID,
 		"tier": out.Tier, "candidates": out.Candidates, "answered_by": out.AnsweredBy,
+			"cost_usd": costFor(out.Model, out.Usage),
 	})
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	if canFlush {
 		flusher.Flush()
 	}
+	mu.Unlock()
+	s.chargeKey(key, out.Usage)
 }
 
 func writeSSE(w http.ResponseWriter, v any) {
@@ -639,16 +698,16 @@ func spanAttrs(kv map[string]any) string {
 func (s *Server) Chat(prompt string, maxTokens int) (ChatResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.RequestTimeout)
 	defer cancel()
-	return s.completeWithTrace(ctx, newTraceID(), ChatRequest{Prompt: prompt, MaxTokens: maxTokens}, nil)
+	return s.completeWithTrace(ctx, newTraceID(), ChatRequest{Prompt: prompt, MaxTokens: maxTokens}, nil, nil)
 }
 
 // Complete routes and answers one request (no HTTP). emit, when set, receives streamed
 // deltas with the model that produced them.
 func (s *Server) Complete(ctx context.Context, req ChatRequest, emit func(model, delta string)) (ChatResponse, error) {
-	return s.completeWithTrace(ctx, newTraceID(), req, emit)
+	return s.completeWithTrace(ctx, newTraceID(), req, emit, nil)
 }
 
-func (s *Server) completeWithTrace(ctx context.Context, traceID string, req ChatRequest, emit func(model, delta string)) (ChatResponse, error) {
+func (s *Server) completeWithTrace(ctx context.Context, traceID string, req ChatRequest, emit func(model, delta string), emitReasoning func(model, delta string)) (ChatResponse, error) {
 	msgs := req.Messages
 	if len(msgs) == 0 {
 		msgs = []Message{{Role: "user", Content: req.Prompt}}
@@ -751,7 +810,7 @@ func (s *Server) completeWithTrace(ctx context.Context, traceID string, req Chat
 				emit(model, delta)
 			}
 		}
-		text, usage, err = generateOn(ctx, cand.Backend, cand.Model, turn, params, wrappedEmit)
+		text, usage, err = generateOn(ctx, cand.Backend, cand.Model, turn, params, wrappedEmit, emitReasoning)
 		if err != nil {
 			lastErr = err
 			s.Metrics.ObserveError(cand.Model)
@@ -887,7 +946,16 @@ func (s *Server) recordDecision(traceID string, sig Signal, route Route, sensiti
 
 // generateOn runs one candidate. A ParamBackend gets the full GenParams; a plain Backend
 // gets max_tokens only (v1.0 behaviour), and the span says so via params_forwarded.
-func generateOn(ctx context.Context, b Backend, model string, msgs []Message, p GenParams, emit func(model, delta string)) (string, Usage, error) {
+func generateOn(ctx context.Context, b Backend, model string, msgs []Message, p GenParams, emit func(model, delta string), emitReasoning func(model, delta string)) (string, Usage, error) {
+	if rb, ok := b.(ReasoningBackend); ok {
+		if emit != nil {
+			u, err := rb.StreamWithReasoning(ctx, model, msgs, p,
+				func(d string) { if emit != nil { emit(model, d) } },
+				func(d string) { if emitReasoning != nil { emitReasoning(model, d) } })
+			return "", u, err
+		}
+		return rb.GenerateWith(ctx, model, msgs, p)
+	}
 	if pb, ok := b.(ParamBackend); ok {
 		if emit != nil {
 			u, err := pb.StreamWith(ctx, model, msgs, p, func(d string) { emit(model, d) })
@@ -905,4 +973,21 @@ func generateOn(ctx context.Context, b Backend, model string, msgs []Message, p 
 func forwardsParams(b Backend) bool {
 	_, ok := b.(ParamBackend)
 	return ok
+}
+
+// costFor estimates the USD cost of a completed turn. Local models are free (0);
+// a global per-1k-token rate (COST_PER_1K_TOKENS, default 0) applies otherwise,
+// so the default behaviour adds no spurious cost. Operators running a paid cloud
+// backend can set the env var to their provider's blended rate.
+func costFor(model string, u Usage) float64 {
+	rate := 0.0
+	if v := os.Getenv("COST_PER_1K_TOKENS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			rate = f
+		}
+	}
+	if rate == 0 {
+		return 0
+	}
+	return float64(u.PromptTokens+u.CompletionTokens) / 1000.0 * rate
 }

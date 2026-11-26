@@ -103,6 +103,48 @@ func (c *OllamaClient) Stream(ctx context.Context, model string, msgs []Message,
 	return c.StreamWith(ctx, model, msgs, GenParams{MaxTokens: maxTokens}, emit)
 }
 
+// StreamWithReasoning is StreamWith plus a separate channel for chain-of-thought
+// deltas (Ollama's `thinking` field). Backends that cannot separate reasoning
+// fall back to StreamWith, which emits content only.
+func (c *OllamaClient) StreamWithReasoning(ctx context.Context, model string, msgs []Message, p GenParams, emitContent func(string), emitReasoning func(string)) (Usage, error) {
+	resp, err := c.post(ctx, model, msgs, p, true)
+	if err != nil {
+		return Usage{}, err
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	var u Usage
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var chunk ollamaChatResponse
+		if err := json.Unmarshal(line, &chunk); err != nil {
+			return u, err
+		}
+		if chunk.Error != "" {
+			return u, fmt.Errorf("ollama: %s", chunk.Error)
+		}
+		if chunk.Message.Thinking != "" && emitReasoning != nil {
+			emitReasoning(chunk.Message.Thinking)
+		}
+		if chunk.Message.Content != "" && emitContent != nil {
+			emitContent(chunk.Message.Content)
+		}
+		if chunk.Done {
+			u = Usage{PromptTokens: chunk.PromptEvalCount, CompletionTokens: chunk.EvalCount}
+			u.TotalTokens = u.PromptTokens + u.CompletionTokens
+			return u, nil
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return u, err
+	}
+	return u, fmt.Errorf("ollama stream ended without done")
+}
+
 // StreamWith is Stream with the full parameter set (see GenerateWith).
 func (c *OllamaClient) StreamWith(ctx context.Context, model string, msgs []Message, p GenParams, emit func(string)) (Usage, error) {
 	resp, err := c.post(ctx, model, msgs, p, true)

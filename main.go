@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -636,9 +638,26 @@ func queryTrace(db pgDB, traceID string) (any, error) {
 		return nil, tracker.ErrTraceNotFound
 	}
 	gpuStore := gpu.SQLStore{Query: gpuAdapter{pgAdapter{db}}}
-	return traceJSON(ctx, traceID, spans, func(ctx context.Context, at time.Time) (gpu.Sample, bool, error) {
+	out := traceJSON(ctx, traceID, spans, func(ctx context.Context, at time.Time) (gpu.Sample, bool, error) {
 		return gpuStore.Nearest(ctx, at, 15*time.Second)
-	}), nil
+	})
+	// Surface outcome verification if this trace is a workflow.
+	var verified sql.NullBool
+	var verifierOut string
+	var verifiedAt sql.NullTime
+	if err := db.QueryRow(ctx, `SELECT verified, verifier_output, verified_at FROM workflows WHERE id = $1`, traceID).Scan(&verified, &verifierOut, &verifiedAt); err == nil {
+		if verified.Valid {
+			v := verified.Bool
+			out["verified"] = &v
+		}
+		if verifierOut != "" {
+			out["verifier_output"] = verifierOut
+		}
+		if verifiedAt.Valid {
+			out["verified_at"] = verifiedAt.Time.Format(time.RFC3339)
+		}
+	}
+	return out, nil
 }
 
 // traceJSON is the /v1/traces/{id} body. The GPU sample is the one nearest the
@@ -1041,7 +1060,62 @@ func runWorkflowGrade(dsn, ollamaURL, workflowID string) {
 	log.Printf("grade %s: %d/5 by %s (%s) - %s", workflowID, score.Value, model, evals.RubricPromptVersion, firstLine(score.Reason))
 }
 
-// firstLine keeps a judge's one-sentence reason on one line in a log.
+// execCommand runs a shell command and returns its combined output.
+func execCommand(ctx context.Context, cmd string) (string, error) {
+	return runShell(ctx, cmd)
+}
+func runVerifier(ctx context.Context, verifier string) (string, error) {
+	return runShell(ctx, verifier)
+}
+func runShell(ctx context.Context, cmd string) (string, error) {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return "", fmt.Errorf("empty command")
+	}
+	if len(cmd) > 4096 {
+		return "", fmt.Errorf("command too long (%d > 4096)", len(cmd))
+	}
+	if strings.ContainsRune(cmd, 0) {
+		return "", fmt.Errorf("command contains null byte")
+	}
+	var c *exec.Cmd
+	if _, err := exec.LookPath("sh"); err == nil {
+		c = exec.CommandContext(ctx, "sh", "-c", cmd)
+	} else {
+		c = exec.CommandContext(ctx, "cmd", "/C", cmd)
+	}
+	out, err := c.CombinedOutput()
+	return string(out), err
+}
+func runWorkflowVerify(dsn, workflowID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var verifier string
+	if err := conn.QueryRow(ctx, `SELECT verifier FROM workflows WHERE id = $1`, workflowID).Scan(&verifier); err != nil {
+		log.Fatalf("workflow %s: %v", workflowID, err)
+	}
+	if verifier == "" {
+		log.Printf("workflow %s has no verifier attached", workflowID)
+		return
+	}
+	out, verr := runVerifier(ctx, verifier)
+	verified := verr == nil
+	if _, err := conn.Exec(ctx, `UPDATE workflows SET verified=$1, verifier_output=$2, verified_at=now() WHERE id=$3`, verified, out, workflowID); err != nil {
+		log.Fatalf("store verifier result: %v", err)
+	}
+	if verified {
+		log.Printf("verify %s: PASS - %s", workflowID, strings.TrimSpace(out))
+	} else {
+		log.Printf("verify %s: FAIL - %v (%s)", workflowID, verr, strings.TrimSpace(out))
+		os.Exit(1)
+	}
+}
+
 func firstLine(s string) string {
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
 		s = s[:i]
@@ -1109,42 +1183,91 @@ func toyWorkflow(db pgDB, ollamaURL, fastModel string) (tracker.Store, tracker.S
 	embedder := evals.NewEmbedder(ollamaURL, embedModel)
 	client := router.NewOllamaClient(ollamaURL)
 	researcher := func(ctx context.Context, q string) (string, error) {
+		// Tool execution: if the input is an exec: command, run it and return
+		// its output. This makes the workflow capable of mutating the environment,
+		// so a verifier can check the actual outcome (not a self-report).
+		if strings.HasPrefix(q, "exec:") {
+			cmd := strings.TrimSpace(q[len("exec:"):])
+			out, err := execCommand(ctx, cmd)
+			if err != nil {
+				return "", fmt.Errorf("exec %s: %w (%s)", cmd, err, strings.TrimSpace(out))
+			}
+			return strings.TrimSpace(out), nil
+		}
 		vec, err := embedder.Embed(q)
 		if err != nil {
 			return "", err
 		}
+		// Hybrid retrieval: fetch top 20 by vector similarity, then re-rank
+		// combining cosine similarity with BM25 keyword scoring.
 		rows, err := db.Query(ctx,
-			`SELECT doc_id, hash, text, source FROM chunks ORDER BY embedding <=> $1::vector LIMIT 3`,
+			`SELECT doc_id, hash, text, source,
+			        1 - (embedding <=> $1::vector) AS vec_sim
+			 FROM chunks ORDER BY embedding <=> $1::vector LIMIT 20`,
 			evals.VectorLiteral(vec))
 		if err != nil {
 			return "", err
 		}
 		defer rows.Close()
-		var parts []string
+		type candidate struct {
+			doc, hash, text, source string
+			score                  float64
+		}
+		var cands []candidate
+		qTerms := strings.Fields(strings.ToLower(q))
 		for rows.Next() {
-			var doc, hash, text, source string
-			if err := rows.Scan(&doc, &hash, &text, &source); err != nil {
+			var c candidate
+			var vecSim float64
+			if err := rows.Scan(&c.doc, &c.hash, &c.text, &c.source, &vecSim); err != nil {
 				return "", err
 			}
-			parts = append(parts, text)
+			// BM25-lite: term frequency normalized by chunk length
+			lower := strings.ToLower(c.text)
+			tf := 0.0
+			for _, term := range qTerms {
+				tf += float64(strings.Count(lower, term))
+			}
+			bm25 := 0.0
+			if len(lower) > 0 {
+				bm25 = tf / (1.0 + float64(len(lower))/200.0)
+			}
+			c.score = 0.7*vecSim + 0.3*bm25
+			cands = append(cands, c)
 		}
 		if err := rows.Err(); err != nil {
 			return "", err
 		}
-		if len(parts) == 0 {
+		if len(cands) == 0 {
 			return "no corpus context; answer from input: " + q, nil
 		}
-		// Track R: the researcher context is machine-assembled, so it is
-		// budget-trimmed like the judge context (relevance order from the
-		// similarity query — head survives). The trim is logged, and the
-		// step's output snippet already shows the trimmed text.
+		// Sort by combined score descending (insertion sort for small N)
+		for i := 1; i < len(cands); i++ {
+			for j := i; j > 0 && cands[j].score > cands[j-1].score; j-- {
+				cands[j], cands[j-1] = cands[j-1], cands[j]
+			}
+		}
+		if len(cands) > 3 {
+			cands = cands[:3]
+		}
+		var parts []string
+		for _, c := range cands {
+			parts = append(parts, c.text)
+		}
+		// Track R: budget trim
 		kept, n := evals.TrimToBudget(parts, evals.DefaultBudgetTokens)
 		if n > 0 {
 			log.Printf("researcher: budget trimmed %d chunk(s)", n)
 		}
+		if len(kept) == 0 {
+			return "no corpus context; answer from input: " + q, nil
+		}
 		return strings.Join(kept, "\n---\n"), nil
 	}
 	drafter := func(ctx context.Context, contextText string) (string, error) {
+		// For exec: tasks, skip drafting — just pass through the command output.
+		if strings.HasPrefix(contextText, "exec:") {
+			return contextText, nil
+		}
 		text, _, err := client.Generate(ctx, fastModel, []router.Message{{Role: "user", Content: "Draft a 3-sentence brief from this context:\n" + contextText}}, 0)
 		return text, err
 	}
@@ -1152,6 +1275,10 @@ func toyWorkflow(db pgDB, ollamaURL, fastModel string) (tracker.Store, tracker.S
 		trimmed := strings.TrimSpace(draft)
 		if trimmed == "" {
 			return "", errEmptyDraft
+		}
+		// For exec: tasks, the output is the command result; approve if non-empty.
+		if strings.HasPrefix(strings.TrimSpace(draft), "exec:") {
+			return "approved: command executed", nil
 		}
 		if len(trimmed) > 800 {
 			trimmed = trimmed[:800]
@@ -1586,7 +1713,7 @@ func scoreOnce(dsn, ollamaURL, goldenPath, goldenVersion, scoreModel string) err
 			return text, usage.CompletionTokens, nil
 		}
 	}
-	run, err := evals.StartOrResumeRun(ctx, pgAdapter{conn}, goldenVersion, judgeName, scoreModel, evals.JudgePromptVersion, runStart)
+	run, err := evals.StartOrResumeRun(ctx, pgAdapter{conn}, goldenVersion, judgeName, scoreModel, evals.JudgePromptVersion, runStart, len(pairs))
 	if err != nil {
 		return fmt.Errorf("start run: %w", err)
 	}
@@ -1875,6 +2002,7 @@ func main() {
 	trajectoryID := flag.String("trajectory", "", "print trajectory metrics (steps, attempts, retries, clean) for WORKFLOW_ID and exit")
 	workflowRepeats := flag.Int("workflow-repeats", 0, "run the toy workflow N times on --tracker-input and print pass^k reliability, then exit")
 	workflowGrade := flag.String("workflow-grade", "", "grade WORKFLOW_ID's final answer on a 1-5 rubric, store it, and exit")
+workflowVerify := flag.String("workflow-verify", "", "run the verifier (if any) for WORKFLOW_ID, store the result, and exit")
 	exportRouting := flag.String("export-routing-data", "", "write route_decisions as JSONL to PATH and exit")
 	judgePrompt := flag.String("judge-prompt", "v2", "prompt variant for --judge-audit: v2 (justification then verdict) or v3 (verdict first, then evidence)")
 	advise := flag.Bool("advise", false, "print the static model advisor report (Track K) and exit")
@@ -1985,6 +2113,10 @@ func main() {
 	}
 	if *workflowGrade != "" {
 		runWorkflowGrade(dsn, cfg.OllamaURL, *workflowGrade)
+		return
+	}
+	if *workflowVerify != "" {
+		runWorkflowVerify(dsn, *workflowVerify)
 		return
 	}
 	if *exportRouting != "" {
@@ -2131,7 +2263,7 @@ func main() {
 			log.Printf("audit: %v", err)
 		}
 	}
-	runWorkflow := func(id, input string) {
+	runWorkflow := func(id, input, verifier string) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
@@ -2143,6 +2275,24 @@ func main() {
 			}
 			auditNote(audit.WorkflowCompleted(id))
 			log.Printf("workflow %s done", id)
+			// Outcome-based verification (docs/WORKFLOW-EVAL-RESEARCH.md): if a
+			// verifier is attached, run it and record the result. The workflow's
+			// 'done' status reflects completion of its steps; 'verified' reflects
+			// whether the environment actually changed as requested.
+			if verifier != "" {
+				out, verr := runVerifier(ctx, verifier)
+				verified := verr == nil
+				if _, err := pool.Exec(ctx, `UPDATE workflows SET verifier=$1, verified=$2, verifier_output=$3, verified_at=now() WHERE id=$4`, verifier, verified, out, id); err != nil {
+					log.Printf("workflow %s: store verifier result: %v", id, err)
+				}
+				if verified {
+					log.Printf("workflow %s verified: %s", id, strings.TrimSpace(out))
+				} else {
+					_, _ = pool.Exec(ctx, `UPDATE workflows SET status='failed' WHERE id=$1`, id)
+					auditNote(audit.WorkflowFailed(id, "verification_failed"))
+					log.Printf("workflow %s NOT verified: %v (%s)", id, verr, strings.TrimSpace(out))
+				}
+			}
 		}()
 	}
 	ui := console.New(console.Deps{
@@ -2157,10 +2307,10 @@ func main() {
 		RunEval: func(ctx context.Context, golden string) error {
 			return scoreOnce(dsn, cfg.OllamaURL, "evals/golden/"+golden+".jsonl", golden, "")
 		},
-		StartWorkflow: func(ctx context.Context, input string) (string, error) {
+		StartWorkflow: func(ctx context.Context, input, verifier string) (string, error) {
 			id := tracker.NewWorkflowID()
 			auditNote(audit.WorkflowCreated(id, "toy"))
-			runWorkflow(id, input)
+			runWorkflow(id, input, verifier)
 			return id, nil
 		},
 		ResumeWork: func(ctx context.Context, id string) error {
@@ -2175,7 +2325,7 @@ func main() {
 				return fmt.Errorf("workflow %s is already done", id)
 			}
 			auditNote(audit.WorkflowResumed(id))
-			runWorkflow(id, "")
+			runWorkflow(id, "", "")
 			return nil
 		},
 	})

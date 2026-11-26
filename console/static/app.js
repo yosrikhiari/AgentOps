@@ -15,6 +15,7 @@
     const el = document.createElement(tag);
     if (attrs) for (const [k, v] of Object.entries(attrs)) {
       if (k === 'class') el.className = v;
+      else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
       else if (k === 'onclick') el.addEventListener('click', v);
       // Style goes through CSSOM, never a style="" attribute: the console ships a
       // strict CSP (no 'unsafe-inline'), and the browser blocks attribute styles.
@@ -31,14 +32,22 @@
     return el;
   }
 
+  const toastQueue = [];
+  let toastBusy = false;
   function toast(msg, isErr) {
+    toastQueue.push({ msg, isErr });
+    if (!toastBusy) drainToast();
+  }
+  function drainToast() {
+    if (!toastQueue.length) { toastBusy = false; return; }
+    toastBusy = true;
+    const { msg, isErr } = toastQueue.shift();
     toastEl.textContent = msg;
     toastEl.className = 'tower-toast' + (isErr ? ' err' : '');
-    // A failure interrupts; a confirmation waits its turn.
     toastEl.setAttribute('aria-live', isErr ? 'assertive' : 'polite');
     toastEl.hidden = false;
     clearTimeout(toast.t);
-    toast.t = setTimeout(() => { toastEl.hidden = true; }, 4000);
+    toast.t = setTimeout(() => { toastEl.hidden = true; setTimeout(drainToast, 120); }, 4000);
   }
 
   // Spoken without moving the caret. Route changes do not use this: they move
@@ -64,6 +73,276 @@
     }
   }
 
+  // ---------- streaming chat helper (SSE) ----------
+  function chatStream(path, body, signal, onDelta) {
+    const ctl = new AbortController();
+    if (signal) {
+      if (signal.aborted) ctl.abort();
+      else signal.addEventListener('abort', () => ctl.abort(), { once: true });
+    }
+    const promise = new Promise((resolve, reject) => {
+      const run = async () => {
+        let res;
+        try {
+          res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: ctl.signal,
+          });
+        } catch (e) {
+          reject(e);
+          return;
+        }
+        if (!res.ok) {
+          let b = null; try { b = await res.json(); } catch (e) { b = null; }
+          const err = new Error((b && b.error && b.error.message) || ('HTTP ' + res.status));
+          err.code = b && b.error && b.error.code; err.status = res.status;
+          reject(err);
+          return;
+        }
+        if (!res.body) { reject(new Error('no response body')); return; }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        let meta = null;
+        let cancelled = false;
+        ctl.signal.addEventListener('abort', () => { cancelled = true; try { reader.cancel(); } catch (e) {} }, { once: true });
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (cancelled) { reject(new Error('aborted')); return; }
+            buf += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf('\\n\\n')) !== -1) {
+              const event = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              for (const line of event.split('\\n')) {
+                if (!line.startsWith('data:')) continue;
+                const data = line.slice(5).trim();
+                if (data === '[DONE]') continue;
+                if (!data) continue;
+                let obj;
+                try { obj = JSON.parse(data); } catch (e) { continue; }
+                if (obj.error) {
+                  const err = new Error((obj.error && obj.error.message) || 'stream failed');
+                  err.code = obj.error && obj.error.code;
+                  reject(err);
+                  try { reader.cancel(); } catch (e2) {}
+                  return;
+                }
+                const choice = obj.choices && obj.choices[0];
+                const delta = choice && choice.delta && choice.delta.content;
+                if (typeof delta === 'string' && delta) onDelta(delta);
+                if (choice && choice.finish_reason === 'stop') {
+                  meta = {
+                    model: obj.model, backend: obj.backend, reason: obj.reason,
+                    trace_id: obj.trace_id, tier: obj.tier, candidates: obj.candidates,
+                    answered_by: obj.answered_by, usage: obj.usage,
+                  };
+                }
+              }
+            }
+          }
+        } catch (e) {
+          if (cancelled) { reject(new Error('aborted')); return; }
+          if (e.name === 'AbortError') { reject(e); return; }
+          reject(e);
+          return;
+        }
+        if (meta) resolve(meta);
+        else resolve(null);
+      };
+      run();
+    });
+    return { promise, abort: () => ctl.abort() };
+  }
+
+  // ---------- lightweight syntax highlighter ----------
+  // Returns an array of DOM nodes (text or spans) with keyword coloring.
+  // Handles JS/TS, Go, Python, Bash, SQL, JSON. Falls back to plain text.
+  const HL_KEYWORDS = {
+    js: new Set(['const','let','var','function','return','if','else','for','while','do','switch','case','break','continue','new','this','class','extends','import','export','from','default','async','await','try','catch','finally','throw','typeof','instanceof','null','undefined','true','false']),
+    go: new Set(['func','return','if','else','for','range','switch','case','break','continue','var','const','type','struct','interface','package','import','defer','go','chan','select','map','nil','true','false','err']),
+    py: new Set(['def','return','if','elif','else','for','while','break','continue','class','import','from','as','try','except','finally','raise','with','lambda','yield','pass','None','True','False','and','or','not','in','is']),
+    sh: new Set(['if','then','else','fi','for','do','done','while','case','esac','function','return','export','local','echo','cd','ls','cat','grep','sed','awk','find','mkdir','rm','cp','mv']),
+    sql: new Set(['SELECT','FROM','WHERE','JOIN','LEFT','RIGHT','INNER','OUTER','ON','AND','OR','NOT','NULL','IS','IN','LIKE','ORDER','BY','GROUP','HAVING','LIMIT','OFFSET','INSERT','INTO','VALUES','UPDATE','SET','DELETE','CREATE','TABLE','INDEX','ALTER','DROP','AS','DISTINCT','COUNT','SUM','AVG','MAX','MIN','CASE','WHEN','THEN','ELSE','END','UNION','ALL']),
+    json: new Set(),
+  };
+  function highlightCode(code, lang) {
+    lang = (lang || '').toLowerCase();
+    const kw = HL_KEYWORDS[lang] || null;
+    const nodes = [];
+    // Simple tokenizer: strings, numbers, comments, keywords, rest
+    const lines = code.split('\n');
+    lines.forEach((line, li) => {
+      if (li > 0) nodes.push(document.createTextNode('\n'));
+      // comment handling per language
+      let rest = line;
+      // line comment
+      const commentIdx = lang === 'py' || lang === 'sh' ? rest.indexOf('#') : (lang === 'sql' ? rest.toUpperCase().indexOf('--') : rest.indexOf('//'));
+      let codePart = rest, commentPart = '';
+      if (commentIdx >= 0 && (lang === 'py' || lang === 'sh' || lang === 'sql' || lang === 'js' || lang === 'go' || lang === 'ts')) {
+        // only treat as comment if preceded by whitespace or start
+        if (commentIdx === 0 || /\s/.test(rest[commentIdx - 1])) {
+          codePart = rest.slice(0, commentIdx);
+          commentPart = rest.slice(commentIdx);
+        }
+      }
+      // tokenize codePart
+      const tokRe = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\b\d+\.?\d*\b|[A-Za-z_][A-Za-z0-9_]*)/g;
+      let last = 0; let m;
+      while ((m = tokRe.exec(codePart)) !== null) {
+        if (m.index > last) nodes.push(document.createTextNode(codePart.slice(last, m.index)));
+        const tok = m[0];
+        if (/^["'`]/.test(tok)) {
+          const sp = h('span', { class: 'hl-str' }, tok); nodes.push(sp);
+        } else if (/^\d/.test(tok)) {
+          nodes.push(h('span', { class: 'hl-num' }, tok));
+        } else if (kw && kw.has(tok)) {
+          nodes.push(h('span', { class: 'hl-kw' }, tok));
+        } else {
+          nodes.push(document.createTextNode(tok));
+        }
+        last = m.index + tok.length;
+      }
+      if (last < codePart.length) nodes.push(document.createTextNode(codePart.slice(last)));
+      if (commentPart) nodes.push(h('span', { class: 'hl-cmt' }, commentPart));
+    });
+    return nodes.length ? nodes : [document.createTextNode(code)];
+  }
+
+  // ---------- rich markdown -> DOM nodes ----------
+  // Handles fenced code blocks (with language hint), headings, blockquotes,
+  // ordered/unordered lists, tables, and inline formatting (bold, italic,
+  // strikethrough, inline code). Streaming shows plain text; this runs on the
+  // final render of an assistant message.
+  function mdNodes(text) {
+    const out = [];
+    const lines = String(text || '').split('\n');
+    let i = 0;
+    let para = [];
+    const flushPara = () => {
+      if (!para.length) return;
+      const p = h('div', { class: 'tower-md-p' });
+      for (const seg of inlineMd(para.join(' '))) p.append(seg);
+      out.push(p);
+      para = [];
+    };
+    while (i < lines.length) {
+      const raw = lines[i];
+      const t = raw.trim();
+      // fenced code block
+      if (t.startsWith('```')) {
+        flushPara();
+        const lang = t.slice(3).trim();
+        const code = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith('```')) { code.push(lines[i]); i++; }
+        i++; // skip closing fence
+        const pre = h('pre', { class: 'tower-md-code' + (lang ? ' lang-' + lang : '') });
+        const codeEl = h('code', null, code.join('\n'));
+        pre.append(codeEl);
+        if (lang) {
+          const lbl = h('span', { class: 'tower-md-code-lang' }, lang);
+          pre.prepend(lbl);
+        }
+        out.push(pre);
+        continue;
+      }
+      if (t === '') { flushPara(); i++; continue; }
+      // heading
+      const hm = t.match(/^(#{1,3})\s+(.+)$/);
+      if (hm) { flushPara(); const lvl = hm[1].length; out.push(h('h' + (lvl + 2), { class: 'tower-md-h' }, ...inlineMd(hm[2]))); i++; continue; }
+      // blockquote
+      if (t.startsWith('> ')) {
+        flushPara();
+        const q = h('blockquote', { class: 'tower-md-quote' });
+        for (const seg of inlineMd(t.slice(2))) q.append(seg);
+        out.push(q);
+        i++; continue;
+      }
+      // unordered list
+      if (/^[-*+]\s+/.test(t)) {
+        flushPara();
+        const ul = h('ul', { class: 'tower-md-list' });
+        while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
+          const li = h('li', null);
+          for (const seg of inlineMd(lines[i].trim().replace(/^[-*+]\s+/, ''))) li.append(seg);
+          ul.append(li);
+          i++;
+        }
+        out.push(ul);
+        continue;
+      }
+      // ordered list
+      if (/^\d+\.\s+/.test(t)) {
+        flushPara();
+        const ol = h('ol', { class: 'tower-md-list' });
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+          const li = h('li', null);
+          for (const seg of inlineMd(lines[i].trim().replace(/^\d+\.\s+/, ''))) li.append(seg);
+          ol.append(li);
+          i++;
+        }
+        out.push(ol);
+        continue;
+      }
+      // table: header + separator + rows
+      if (t.includes('|') && i + 1 < lines.length && /^\s*\|?\s*[-:]+/.test(lines[i + 1])) {
+        flushPara();
+        const parseRow = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+        const header = parseRow(raw);
+        i++; // skip header
+        const sep = parseRow(lines[i]);
+        i++; // skip separator
+        const aligns = sep.map(c => {
+          const left = c.startsWith(':'), right = c.endsWith(':');
+          if (left && right) return 'center';
+          if (right) return 'right';
+          return 'left';
+        });
+        const table = h('table', { class: 'tower-md-table' });
+        const thead = h('thead', null, h('tr', null, ...header.map((cell, ci) => h('th', { style: 'text-align:' + (aligns[ci] || 'left') }, ...inlineMd(cell)))));
+        table.append(thead);
+        const tbody = h('tbody', null);
+        while (i < lines.length && lines[i].trim().includes('|')) {
+          const cells = parseRow(lines[i]);
+          const tr = h('tr', null, ...cells.map((cell, ci) => h('td', { style: 'text-align:' + (aligns[ci] || 'left') }, ...inlineMd(cell))));
+          tbody.append(tr);
+          i++;
+        }
+        table.append(tbody);
+        const wrap = h('div', { class: 'tower-md-table-wrap' }, table);
+        out.push(wrap);
+        continue;
+      }
+      para.push(raw);
+      i++;
+    }
+    flushPara();
+    if (!out.length) out.push(h('div', { class: 'tower-chat-body' }, text));
+    return out;
+  }
+  function inlineMd(s) {
+    const nodes = [];
+    // Order: inline code, strikethrough, bold, italic. Bold uses ** with optional
+    // inner whitespace (e.g. ** A **), handled by allowing spaces inside.
+    const re = /(`[^`]+`)|(~~[^~]+~~)|(\*\*\s*[^*]+?\s*\*\*)|(\*[^*\s][^*]*\*)/g;
+    let last = 0; let m;
+    while ((m = re.exec(s)) !== null) {
+      if (m.index > last) nodes.push(document.createTextNode(s.slice(last, m.index)));
+      if (m[1]) nodes.push(h('code', { class: 'tower-md-inline' }, m[1].slice(1, -1)));
+      else if (m[2]) nodes.push(h('s', null, m[2].slice(2, -2)));
+      else if (m[3]) nodes.push(h('b', null, m[3].replace(/^\*\*\s*/, '').replace(/\s*\*\*$/, '')));
+      else if (m[4]) nodes.push(h('i', null, m[4].slice(1, -1)));
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) nodes.push(document.createTextNode(s.slice(last)));
+    if (!nodes.length) nodes.push(document.createTextNode(s));
+    return nodes;
+  }
   // ---------- formatting ----------
   // One duration formatter for every page: 1.35 s / 828 ms / <1 ms. "point" and
   // a bare "0 ms" are gone (redesign guide, shared shell).
@@ -95,11 +374,33 @@
   function skeleton(rows) {
     return h('div', { style: 'display:flex;flex-direction:column;gap:10px' }, Array.from({ length: rows || 4 }, () => h('div', { class: 'tower-skeleton' })));
   }
-  function metric(label, value, delta, deltaClass) {
+  function metric(label, value, delta, deltaClass, spark, tip) {
     return h('div', { class: 'tower-metric' },
-      h('div', { class: 'tower-metric-label' }, label),
+      h('div', { class: 'tower-metric-label', title: tip || '', 'data-gloss': tip || undefined }, label),
       h('div', { class: 'tower-metric-value' }, value),
-      delta ? h('div', { class: 'tower-metric-delta ' + (deltaClass || '') }, delta) : null);
+      delta ? h('div', { class: 'tower-metric-delta ' + (deltaClass || '') }, delta) : null,
+      spark || null);
+  }
+  function sparkline(points, key, color) {
+    if (!points || points.length < 2) return null;
+    const w = 120, h = 26;
+    const vals = points.map(p => Number(p[key]) || 0);
+    const max = Math.max(0.001, ...vals), min = Math.min(...vals);
+    const range = max - min || 1;
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('class', 'tower-spark');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    const pts = vals.map((v, i) => (i * w / (vals.length - 1)).toFixed(1) + ',' + (h - ((v - min) / range) * (h - 2) - 1).toFixed(1));
+    const pl = document.createElementNS(NS, 'polyline');
+    pl.setAttribute('points', pts.join(' '));
+    pl.setAttribute('fill', 'none');
+    pl.setAttribute('stroke', color || 'var(--tower-amber)');
+    pl.setAttribute('stroke-width', '1.5');
+    pl.setAttribute('vector-effect', 'non-scaling-stroke');
+    svg.append(pl);
+    return svg;
   }
   function panel(title, sub, body, actions) {
     return h('section', { class: 'tower-panel' },
@@ -200,10 +501,10 @@
     const drift = ov.drift || {};
     const deltaTxt = drift.runs > 1 ? (drift.delta >= 0 ? '↑ ' : '↓ ') + Math.abs(drift.delta).toFixed(3) + ' vs previous run' : (drift.runs === 1 ? 'first run' : 'no runs yet');
     const metrics = h('div', { class: 'tower-metric-row' },
-      metric('Requests / last hour', t.requests_last_hour || 0, (t.requests_last_minute || 0) + ' in the last minute'),
-      metric('p50 latency', fmt.ms(t.p50_latency_s), 'p99 ' + fmt.ms(t.p99_latency_s)),
-      metric('Faithfulness (' + (ov.golden_version || '–') + ')', drift.runs ? fmt.score(drift.score_now) : '–', deltaTxt, drift.runs > 1 ? (drift.delta >= 0 ? 'up' : 'down') : ''),
-      metric('Judge cost today', '$' + Number(ov.judge_cost_usd || 0).toFixed(2), 'local judge + Groq free tier'));
+      metric('Requests / last hour', t.requests_last_hour || 0, (t.requests_last_minute || 0) + ' in the last minute', '', null, 'Total chat/workflow requests routed in the last hour'),
+      metric('p50 latency', fmt.ms(t.p50_latency_s), 'p99 ' + fmt.ms(t.p99_latency_s), '', null, 'Median end-to-end latency (Tail at Scale: report percentiles, not means)'),
+      metric('Faithfulness (' + (ov.golden_version || '–') + ')', drift.runs ? fmt.score(drift.score_now) : '–', deltaTxt, drift.runs > 1 ? (drift.delta >= 0 ? 'up' : 'down') : '', null, 'Mean faithfulness of the latest golden run'),
+      metric('Judge cost today', '$' + Number(ov.judge_cost_usd || 0).toFixed(2), 'local judge + Groq free tier', '', null, 'Cumulative judge spend for today'));
     const legend = h('div', { class: 'tower-chart-legend' },
       h('span', { class: 'tower-legend-item' }, h('span', { class: 'tower-legend-swatch', style: 'background:var(--tower-amber)' }), 'quality / cloud'),
       h('span', { class: 'tower-legend-item' }, h('span', { class: 'tower-legend-swatch', style: 'background:var(--tower-ink-faint)' }), 'fast'),
@@ -479,6 +780,9 @@
     rows.forEach(r => { let p = r.span.parent_id, d = 0, guard = 0; while (p && byId[p] && guard++ < 32) { d++; p = byId[p].span.parent_id; } r.depth = d; });
     // tree order: parents before children, siblings by completion time
     rows.sort((a, b) => a.depth - b.depth || a.end - b.end);
+    // The critical path is the longest span plus every ancestor of it.
+    let cur = rows.reduce((a, r) => (r.dur > (a ? a.dur : -1) ? r : a), null), guard = 0;
+    while (cur && guard++ < 32) { cur.critical = true; cur = cur.span.parent_id ? byId[cur.span.parent_id] : null; }
     const total = Math.max(1, ...rows.map(r => r.start + r.dur));
     return { rows, total };
   }
@@ -499,7 +803,7 @@
     const failed = rows.some(r => r.attrs.error);
     const head = h('div', { class: 'tower-trace-head' },
       h('div', null,
-        h('div', { class: 'tower-trace-title' }, h('span', { class: 'tower-mono' }, data.trace_id), ' ', chip(kind), data.gpu_ok ? chip('GPU ' + Math.round(data.gpu.util_pct) + '% · ' + gpuGB(data.gpu.mem_used_bytes)) : null, failed ? pill('critical', 'failed') : pill('healthy', 'ok')),
+        h('div', { class: 'tower-trace-title' }, h('span', { class: 'tower-mono' }, data.trace_id), ' ', chip(kind), data.gpu_ok ? chip('GPU ' + Math.round(data.gpu.util_pct) + '% · ' + gpuGB(data.gpu.mem_used_bytes)) : null, failed ? pill('critical', 'failed') : pill('healthy', 'ok'), data.verified === true ? pill('healthy', 'verified') : data.verified === false ? pill('critical', 'unverified') : null),
         h('div', { class: 'tower-panel-sub' },
           spans.length + ' spans · ' + fmt.ms(total / 1000) + ' end to end',
           rows.length ? ' · started ' + fmt.date(rows[0].span.started_at) : '',
@@ -515,14 +819,35 @@
     const wf = h('div', { class: 'tower-waterfall' }, ...rows.map(r => {
       const left = (r.start / total) * 100, width = Math.max(2, (r.dur / total) * 100);
       const color = r.attrs.error ? 'var(--tower-red)' : r.span.name === 'model.generate' ? 'var(--tower-amber)' : r.span.name.startsWith('route') || r.span.name.startsWith('router') ? 'var(--tower-ink-faint)' : 'var(--tower-green)';
-      return h('div', { class: 'tower-wf-row' },
+      return h('div', { class: 'tower-wf-row', role: 'button', tabindex: '0', 'data-span': r.span.span_id,
+        onclick: () => focusSpan(r.span.span_id, r.span.name),
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); focusSpan(r.span.span_id, r.span.name); } },
+        onmouseenter: () => { const st = document.getElementById('span-' + r.span.span_id); if (st) st.classList.add('wf-hover'); },
+        onmouseleave: () => { const st = document.getElementById('span-' + r.span.span_id); if (st) st.classList.remove('wf-hover'); },
+      },
         h('div', { class: 'tower-wf-name', style: 'padding-left:' + (r.depth * 14) + 'px' }, r.span.name),
         h('div', { class: 'tower-wf-track' },
-          h('div', { class: 'tower-wf-bar', style: `left:${left}%;width:${width}%;background:${color}`, title: fmt.ms(r.dur / 1000) })),
+          h('div', { class: 'tower-wf-bar' + (r.critical ? ' critical' : ''), style: `left:${left}%;width:${width}%;background:${color}`, title: r.span.name + ' · ' + fmt.ms(r.dur / 1000) + (r.critical ? ' · critical path' : '') })),
         h('div', { class: 'tower-wf-dur tower-mono' }, r.dur ? fmt.ms(r.dur / 1000) : '–'));
     }));
 
-    // span tree with expandable attributes
+    // Jumping from the waterfall: open the span, scroll it into view, flash it.
+    function focusSpan(spanId, name) {
+      const step = document.getElementById('span-' + spanId);
+      if (!step) return;
+      wf.querySelectorAll('.tower-wf-row.selected').forEach(n => n.classList.remove('selected'));
+      const idx = rows.findIndex(r => r.span.span_id === spanId);
+      if (idx >= 0 && wf.children[idx]) wf.children[idx].classList.add('selected');
+      const detail = step.querySelector('.tower-trace-detail');
+      if (detail) detail.classList.add('open');
+      const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      step.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+      step.classList.remove('flash');
+      void step.offsetWidth;
+      step.classList.add('flash');
+      if (typeof announce === 'function') announce('Span ' + name);
+    }
+    // span tree with hover sync on steps
     const steps = rows.map(r => {
       const s = r.span, attrs = r.attrs;
       const detail = h('div', { class: 'tower-trace-detail' },
@@ -530,7 +855,6 @@
           h('span', { class: 'k' }, 'started_at'), h('span', { class: 'v' }, fmt.date(s.started_at)),
           h('span', { class: 'k' }, 'span_id'), h('span', { class: 'v' }, s.span_id),
           h('span', { class: 'k' }, 'parent_id'), h('span', { class: 'v' }, s.parent_id || '(root)')));
-      // A failed span is the first thing an operator needs: open it, do not hide it.
       if (attrs.error) detail.classList.add('open');
       const body = h('div', { class: 'tower-trace-body', onclick: () => detail.classList.toggle('open') },
         h('div', { class: 'tower-trace-top' },
@@ -546,9 +870,16 @@
             attrs.error ? pill('critical', 'failed') : null,
             h('span', null, '▾'))),
         detail);
-      return h('div', { class: 'tower-trace-step ' + (attrs.error ? 'active' : 'done'), style: 'margin-left:' + (11 + r.depth * 14) + 'px' }, h('span', { class: 'tower-trace-dot' }), body);
+      return h('div', { id: 'span-' + s.span_id, 'data-span': s.span_id, class: 'tower-trace-step ' + (attrs.error ? 'active' : 'done'), style: 'margin-left:' + (11 + r.depth * 14) + 'px',
+        onmouseenter: () => { const wr = wf.querySelector('[data-span="' + s.span_id + '"]'); if (wr) wr.classList.add('wf-hover'); },
+        onmouseleave: () => { const wr = wf.querySelector('[data-span="' + s.span_id + '"]'); if (wr) wr.classList.remove('wf-hover'); },
+      }, h('span', { class: 'tower-trace-dot' }), body);
     });
-    return h('div', null, head, h('h4', { class: 'tower-sub-h' }, 'Timeline'), ruler, wf, h('h4', { class: 'tower-sub-h' }, 'Spans'), h('div', { class: 'tower-trace' }, ...steps),
+    return h('div', null, head,
+      h('h4', { class: 'tower-sub-h' }, 'Timeline'),
+      h('div', { class: 'tower-panel-sub', style: 'margin:-4px 0 8px' }, 'Outlined bars are the critical path. Click a row to open its span.'),
+      ruler, wf,
+      h('h4', { class: 'tower-sub-h' }, 'Spans'), h('div', { class: 'tower-trace' }, ...steps),
       gen && gen.attrs.fallback_from ? h('div', { class: 'tower-note' }, 'Fallback: ' + gen.attrs.fallback_from.join(', ') + ' failed → served by ' + gen.attrs.model) : null);
   }
 
@@ -558,6 +889,33 @@
     const go = () => { const v = input.value.trim(); if (v) location.hash = '#/traces/' + v; };
     input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
     const filters = h('div', { class: 'tower-filters', role: 'group', 'aria-label': 'Filter traces' });
+    const savedViews = h('select', { class: 'tower-input', 'aria-label': 'Saved views', style: 'min-width:120px' });
+    const saveViewBtn = h('button', { class: 'tower-btn ghost', onclick: () => {
+      const name = prompt('Name this view:');
+      if (!name) return;
+      const views = JSON.parse(localStorage.getItem('towerSavedViews') || '[]');
+      views.push({ name, filter, sort: 'newest' });
+      localStorage.setItem('towerSavedViews', JSON.stringify(views));
+      toast('View saved');
+      loadSavedViews();
+    } }, 'Save view');
+    function loadSavedViews() {
+      const views = JSON.parse(localStorage.getItem('towerSavedViews') || '[]');
+      savedViews.replaceChildren(h('option', { value: '' }, 'Saved views…'),
+        ...views.map((v, i) => h('option', { value: String(i) }, v.name)));
+    }
+    savedViews.addEventListener('change', () => {
+      const idx = Number(savedViews.value);
+      if (isNaN(idx)) return;
+      const views = JSON.parse(localStorage.getItem('towerSavedViews') || '[]');
+      const v = views[idx];
+      if (!v) return;
+      filter = v.filter || 'all';
+      renderFilters();
+      renderList();
+      toast('Loaded view: ' + v.name);
+    });
+    loadSavedViews();
     const listBody = h('div', { class: 'tower-trace-list' }, skeleton(6));
     const detail = h('div', null, h('div', { class: 'tower-empty' }, 'Pick a trace on the left, or paste an id above.'));
     // One master-detail surface: the old separate "Trace inspector" card is gone;
@@ -566,7 +924,8 @@
       h('div', { class: 'tower-panel-head' },
         h('div', null, h('h3', null, 'Traces'), h('div', { class: 'tower-panel-sub' }, 'Newest first - click to inspect'))),
       h('div', { class: 'tower-form-row', style: 'margin-bottom:10px' }, input,
-        h('button', { class: 'tower-btn primary', onclick: go }, 'Inspect')),
+        h('button', { class: 'tower-btn primary', onclick: go }, 'Inspect'),
+        savedViews, saveViewBtn),
       filters, listBody);
     const detailPanel = h('section', { class: 'tower-panel tower-detail' }, detail);
     content.replaceChildren(h('div', { class: 'tower-grid-traces' }, listPanel, detailPanel));
@@ -589,7 +948,15 @@
     function renderList() {
       const shown = items.filter(it => filter === 'all' || (filter === 'chat' && it.kind === 'chat') || (filter === 'workflow' && it.kind === 'workflow') || (filter === 'error' && it.error) || (filter === 'sensitive' && it.sensitive) || (filter === 'fallback' && it.fallback));
       if (!shown.length) { listBody.replaceChildren(h('div', { class: 'tower-empty' }, items.length ? 'Nothing matches this filter.' : 'No traces yet — send a request: curl localhost:8080/v1/chat/completions -d \'{"prompt":"hi"}\'')); return 0; }
-      listBody.replaceChildren(...shown.map(it => h('div', { class: 'tower-trace-item' + (it.id === id ? ' selected' : ''), onclick: () => { location.hash = '#/traces/' + it.id; } },
+      listBody.replaceChildren(...shown.map(it => h('div', { class: 'tower-trace-item' + (it.id === id ? ' selected' : ''), onclick: (e) => {
+        if (id === it.id) return;
+        listBody.querySelectorAll('.tower-trace-item.selected').forEach(n => n.classList.remove('selected'));
+        if (e && e.currentTarget) e.currentTarget.classList.add('selected');
+        id = it.id;
+        input.value = it.id;
+        history.replaceState(null, '', '#/traces/' + it.id);
+        loadDetail(false);
+      } },
         h('div', { class: 'tower-trace-item-top' },
           h('span', null, chip(it.kind), ' ', h('span', { class: 'tower-mono' }, fmt.short(it.id))),
           h('span', { class: 'tower-mono tower-muted' }, fmt.ago(it.at))),
@@ -715,7 +1082,7 @@
           h('td', { class: 'tower-mono' }, fmt.score(wc.recall))))))
         : h('div', { class: 'tower-empty' }, 'Nothing scored yet'));
     const table = panel('Runs', null, h('table', { class: 'tower-table' },
-      h('thead', null, h('tr', null, ...['run', 'when', 'judge', 'score', 'gpu'].map(t => h('th', null, t)))),
+      h('thead', null, h('tr', null, ...['run', 'when', 'judge', 'score', 'progress', 'gpu'].map(t => h('th', null, t)))),
       h('tbody', null, runs.map((r, i) => h('tr', null,
         h('td', { class: 'tower-mono' }, r.id),
         h('td', { class: 'tower-mono' }, fmt.date(r.created_at)),
@@ -725,6 +1092,7 @@
           runs[i + 1] && runs[i + 1].judge_model !== r.judge_model ? chip('judge changed') : null),
         h('td', null, r.status && r.status !== 'complete' ? chip('incomplete')
           : (r.judged === 0 ? chip('unmeasured') : (r.score >= (drift.threshold ?? 0.7) ? pill('healthy', fmt.score(r.score)) : pill('critical', fmt.score(r.score))))),
+        h('td', { class: 'tower-mono' }, (r.total ? (r.judged + '/' + r.total) : (r.judged + ' judged'))),
         h('td', null, r.gpu
           ? [chip('GPU ' + Math.round(r.gpu.util_mean_pct) + '%'),
              r.gpu.swaps > 0 ? chip(r.gpu.swaps + ' swap' + (r.gpu.swaps === 1 ? '' : 's')) : null,
@@ -827,6 +1195,7 @@
 
   async function pageWorkflows(signal) {
     const input = h('input', { class: 'tower-input', placeholder: 'question for the Researcher → Drafter → Reviewer agent', 'aria-label': 'Workflow question', value: 'what does tower do?' });
+    const verifierInput = h('input', { class: 'tower-input', placeholder: 'verifier command (optional, e.g. pgrep docker)', 'aria-label': 'Verifier command', value: '' });
     const startBtn = h('button', { class: 'tower-btn primary' }, 'Start workflow');
     const listBody = h('div', null, skeleton(5));
     let filter = 'all';
@@ -851,7 +1220,7 @@
 
     content.replaceChildren(
       panel('Durable workflows', 'Each step is a Postgres row; kill the process mid-step and resume the same id — done steps are never re-run.',
-        h('div', { class: 'tower-form-row' }, input, startBtn)),
+        h('div', { class: 'tower-form-row' }, input, verifierInput, startBtn)),
       panel('Workflows', 'Newest first; repeated inputs are grouped. A stepper is one dot per step: green done, amber running, red failed, faint pending. Quality is a 1-5 rubric on the final answer (--workflow-grade), not groundedness.',
         h('div', null, filterBar, listBody)));
 
@@ -866,12 +1235,16 @@
       return h('tr', null,
         h('td', { class: 'tower-mono', title: fmt.date(w.created_at) }, fmt.ago(w.created_at)),
         h('td', null, h('a', { class: 'tower-link tower-mono', href: '#/traces/' + w.id }, fmt.short(w.id))),
+        h('td', null, chip(w.type || 'workflow')),
         h('td', null, w.input.length > 60 ? w.input.slice(0, 60) + '…' : w.input),
         h('td', null, stepper(w)),
         h('td', null, w.grade ? chip(w.grade.score + '/5') : h('span', { class: 'tower-muted' }, '—')),
         h('td', null, w.status === 'done' ? pill('healthy', 'done')
           : w.status === 'failed' ? pill('critical', failed ? 'failed at ' + failed.name : 'failed')
           : pill('degraded', w.status)),
+        h('td', null, w.verified === true ? pill('healthy', 'verified')
+          : w.verified === false ? pill('critical', 'unverified')
+          : (w.verifier ? pill('degraded', 'pending') : h('span', { class: 'tower-muted' }, '—'))),
         h('td', null, w.status === 'failed' ? resume : null));
     }
 
@@ -932,7 +1305,7 @@
     }
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true;
-      try { const r = await api('/v1/workflows', { method: 'POST', body: JSON.stringify({ input: input.value }) }); toast('Workflow ' + r.id + ' started'); }
+      try { const r = await api('/v1/workflows', { method: 'POST', body: JSON.stringify({ input: input.value, verifier: verifierInput.value }) }); toast('Workflow ' + r.id + ' started'); }
       catch (e) { toast(e.message, true); }
       startBtn.disabled = false;
       setTimeout(refresh, 800);   // EnsureWorkflow runs in the background; give it a beat
@@ -1123,7 +1496,7 @@
   // getPin() returns the trace_id to highlight as yours (cockpit) or null.
   // onFatal renders the error UI. Returns a cleanup that closes the feed.
   // Rail nodes only — the input subtree is never touched (focus-safe rule).
-  function mountRail(listBody, setCounts, getPin, onFatal) {
+  function mountRail(listBody, setCounts, getPin, onFatal, onStage) {
     const seen = new Map(); // trace_id -> {order:[], info:{stage:{lat,err}}, model, at, pop}
     let lastTrace = null;
     function ticketEl(id, t) {
@@ -1188,6 +1561,7 @@
         if (a.error) st.err = true;
         if (typeof a.model === 'string' && a.model) t.model = a.model;
         t.at = new Date().toISOString();
+        if (typeof onStage === 'function') { try { onStage(d.trace_id, d.name, t); } catch (e) {} }
         const stages = liveStagesFor(t.order);
         if (stages.length && stages.every(s => t.info[s])) t.pop = true;
         lastTrace = d.trace_id;
@@ -1221,6 +1595,7 @@
   let coHist = [];        // [{role, content, model, backend, reason, trace_id, tokens, at}]
   let coDropped = 0;      // messages trimmed for the token budget
   let coPromise = false;  // a send is in flight
+  let coStreamCtl = null; // abort controller for the in-flight stream
   let coPin = null;       // trace_id of the latest own send
   let coConvId = null;    // active stored thread, or null for a fresh one
   let coConvTitle = '';   // its title, so the panel head can say which thread
@@ -1237,6 +1612,7 @@
       placeholder: 'Ask a question, or paste the clause you are working on…',
     });
     const sendBtn = h('button', { class: 'tower-send', type: 'button', 'aria-label': 'Send message', disabled: 'disabled' }, '\u2191');
+    const cancelBtn = h('button', { class: 'tower-btn ghost', type: 'button', 'aria-label': 'Cancel generation', hidden: '' }, 'Cancel');
     const wfBtn = h('button', { class: 'tower-btn ghost', type: 'button' }, 'Run as workflow');
     const tokensHint = h('span', { class: 'tower-chat-tokens tower-mono' }, '~0 tokens');
     const errSlot = h('div', null);
@@ -1272,10 +1648,30 @@
 
     const composer = h('div', { class: 'tower-chat-composer' }, picker, ta,
       h('div', { class: 'tower-chat-actions' }, wfBtn,
-        h('span', { class: 'tower-spacer' }), tokensHint, sendBtn));
+        h('span', { class: 'tower-spacer' }), tokensHint, cancelBtn, sendBtn));
+    const extUrl = (typeof localStorage !== 'undefined' && localStorage.getItem('tower.externalAppUrl')) || '';
+    const extBtn = h('button', { class: 'tower-btn ghost', type: 'button', title: 'Open this thread in an external app' }, 'Open in app');
+    const extCfg = h('button', { class: 'tower-btn ghost', type: 'button', title: 'Configure external app link' }, '\u2699');
+    extBtn.hidden = !extUrl;
+    extBtn.addEventListener('click', () => {
+      const u = (typeof localStorage !== 'undefined' && localStorage.getItem('tower.externalAppUrl')) || '';
+      if (u) window.open(u, '_blank', 'noopener');
+    });
+    extCfg.addEventListener('click', () => {
+      const cur = (typeof localStorage !== 'undefined' && localStorage.getItem('tower.externalAppUrl')) || '';
+      const v = window.prompt('External app URL (leave empty to clear):', cur);
+      if (v === null) return;
+      if (typeof localStorage !== 'undefined') {
+        if (v.trim()) localStorage.setItem('tower.externalAppUrl', v.trim());
+        else localStorage.removeItem('tower.externalAppUrl');
+      }
+      const now = (typeof localStorage !== 'undefined' && localStorage.getItem('tower.externalAppUrl')) || '';
+      extBtn.hidden = !now;
+      toast(now ? 'External app link set' : 'External app link cleared');
+    });
     const head = h('div', { class: 'tower-chat-head' },
       h('div', { class: 'tower-chat-heading' }, titleEl, savedEl),
-      h('div', { class: 'tower-form-row' }, threadWrap, newBtn));
+      h('div', { class: 'tower-form-row' }, threadWrap, newBtn, extBtn, extCfg));
     const scroller = h('div', { class: 'tower-chat-scroll' },
       h('div', { class: 'tower-chat-col' }, log, errSlot));
     const mainc = h('section', { class: 'tower-cockpit-main' }, head, scroller,
@@ -1285,8 +1681,10 @@
     const inspStats = h('div', { class: 'tower-stat-grid' }, skeleton(2));
     const inspSpans = h('div', null, skeleton(2));
     const inspRuns = h('div', null, skeleton(2));
+    const inspWorkflows = h('div', null, skeleton(2));
     const inspSub = h('div', { class: 'tower-panel-sub' }, 'Every calculation in this thread');
     const runsLabel = h('div', { class: 'tower-insp-label' }, 'Runs');
+    const wfLabel = h('div', { class: 'tower-insp-label' }, 'Workflows');
     const insp = h('aside', { class: 'tower-insp' },
       h('div', { class: 'tower-insp-head' }, h('h3', null, 'Inspector'), inspSub),
       inspStats,
@@ -1294,6 +1692,8 @@
       inspSpans,
       runsLabel,
       inspRuns,
+      wfLabel,
+      inspWorkflows,
       h('details', { class: 'tower-insp-more' }, h('summary', null, 'Live spans'),
         h('div', null,
           h('div', { class: 'tower-mono tower-muted', style: 'margin-bottom:8px;display:flex;gap:8px;align-items:center' }, dot, label),
@@ -1437,6 +1837,8 @@
       const v = ta.value;
       tokensHint.textContent = '~' + (v.trim() ? Math.max(1, Math.ceil(v.length / 4)) : 0) + ' tokens';
       sendBtn.disabled = coPromise || !v.trim();
+      sendBtn.hidden = coPromise;
+      cancelBtn.hidden = !coPromise;
       wfBtn.disabled = coPromise || !coLastInput;
     }
     function emptyState() {
@@ -1569,8 +1971,13 @@
             })));
         }));
       }
-      return h('div', { id: 'co-m' + i, class: 'tower-chat-msg assistant' },
-        h('div', { class: 'tower-chat-body' }, m.content),
+      const bodyText = (m.thinking && !m.content) ? '\u2026 thinking' : m.content;
+      const bodyNode = (m.thinking || !m.content)
+        ? h('div', { class: 'tower-chat-body' }, bodyText)
+        : h('div', { class: 'tower-chat-body tower-md' }, ...mdNodes(m.content));
+      return h('div', { id: 'co-m' + i, class: 'tower-chat-msg assistant' + (m.thinking && !m.content ? ' thinking' : '') },
+        bodyNode,
+        h('div', { class: 'tower-chat-status tower-mono tower-muted' }, ''),
         bits.length ? h('div', { class: 'tower-chat-meta' }, ...bits) : null);
     }
     function pendingEl() {
@@ -1608,7 +2015,7 @@
       coDropped = 0;
       while (wire.length > 1 && coHistTokens(wire) > coHistBudget) { wire.shift(); coDropped++; }
       coLastInput = body; coPromise = true;
-      syncComposer(); renderChat();
+      syncComposer();
       const ctl = new AbortController();
       let convId = coConvId;
       if (!convId && o.persist !== false) {
@@ -1618,45 +2025,123 @@
       // The picker sends a tier name; the server resolves it to the model that serves
       // that tier (reason "explicit-tier"), so the console needs no model registry.
       const tier = model || coModel;
+      // Push a placeholder assistant message so the bubble appears immediately and
+      // deltas can be appended to it without re-rendering the whole transcript.
+      const assistantMsg = {
+        role: 'assistant', content: '', model: '', backend: '', reason: '',
+        tier: '', candidates: [], answered_by: '', trace_id: '',
+        tokens: 0, prompt_tokens: 0, completion_tokens: 0,
+        at: new Date().toISOString(), ephemeral: !!o.ephemeral,
+        thinking: true,
+      };
+      coHist.push(assistantMsg);
+      const assistantIdx = coHist.length - 1;
+      renderChat();
+      // Heartbeat-driven progress: surface the live rail's current stage in the
+      // assistant bubble instead of generic typing dots.
+      const statusEl = document.querySelector('#co-m' + assistantIdx + ' .tower-chat-status');
+      coStageHandler = (id, name) => {
+        if (id !== (assistantMsg.trace_id || coPin)) return;
+        if (!statusEl) return;
+        const stages = ['route.decide', 'model.generate', 'router.respond', 'router.answer'];
+        if (stages.includes(name)) {
+          statusEl.textContent = name.replace('.', ' ') + ' \u2026';
+        }
+      };
+      let streamCtl = null;
+      let aborted = false;
+      // Adaptive chunk coalescing: buffer rapid deltas and flush once per frame to
+      // avoid layout thrash on fast local models (requestAnimationFrame batching).
+      let deltaBuf = '';
+      let rafPending = false;
+      const flushDeltas = () => {
+        rafPending = false;
+        if (!deltaBuf) return;
+        assistantMsg.content += deltaBuf;
+        deltaBuf = '';
+        assistantMsg.thinking = false;
+        const bodyEl = document.querySelector('#co-m' + assistantIdx + ' .tower-chat-body');
+        if (bodyEl) bodyEl.textContent = assistantMsg.content;
+        scroller.scrollTop = scroller.scrollHeight;
+      };
+      const onDelta = (d) => {
+        if (assistantMsg.thinking && assistantMsg.content === '' && deltaBuf === '') {
+          // First token: drop the speculative "thinking" state.
+          assistantMsg.thinking = false;
+        }
+        deltaBuf += d;
+        if (!rafPending) {
+          rafPending = true;
+          requestAnimationFrame(flushDeltas);
+        }
+        // Client-side partial-response cache: survive a tab crash / reload mid-stream.
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem('tower.partialMsg', JSON.stringify({ user: body, partial: assistantMsg.content + deltaBuf, at: assistantMsg.at }));
+          }
+        } catch (e) {}
+      };
+      // Flush any buffered deltas (call before applying metadata / persisting).
+      const flushNow = () => {
+        if (rafPending) { cancelAnimationFrame && cancelAnimationFrame(0); }
+        if (deltaBuf) { assistantMsg.content += deltaBuf; deltaBuf = ''; }
+        rafPending = false;
+        assistantMsg.thinking = false;
+      };
       try {
-        const r = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: wire, model: tier }) }, ctl.signal);
-        const pt = r.usage ? r.usage.prompt_tokens : 0;
-        const ct = r.usage ? r.usage.completion_tokens : 0;
-        coHist.push({
-          role: 'assistant', content: r.text, model: r.model, backend: r.backend, reason: r.reason,
-          tier: r.tier, candidates: r.candidates, answered_by: r.answered_by,
-          trace_id: r.trace_id, tokens: (r.usage ? r.usage.total_tokens : 0),
-          prompt_tokens: pt, completion_tokens: ct, at: new Date().toISOString(),
-          ephemeral: !!o.ephemeral,
-        });
-        coPin = r.trace_id;
-        // Spans are written asynchronously by one goroutine, so the trace can still be
-        // in its queue when the reply lands — a router answer returns in under a
-        // millisecond, which is exactly when the footer used to say "1 span". Re-read
-        // once, after the writer has had time to persist all three.
-        if (r.trace_id) {
+        const handle = chatStream(
+          '/v1/chat/completions',
+          { messages: wire, model: tier, stream: true, options: { num_ctx: 4096 }, keep_alive: '5m' },
+          ctl.signal,
+          onDelta);
+        coStreamCtl = handle;
+        const meta = await handle.promise;
+        // Flush any deltas still buffered in the rAF queue before reading content.
+        flushNow();
+        // Apply final metadata
+        assistantMsg.model = (meta && meta.model) || '';
+        assistantMsg.backend = (meta && meta.backend) || '';
+        assistantMsg.reason = (meta && meta.reason) || '';
+        assistantMsg.tier = (meta && meta.tier) || '';
+        assistantMsg.candidates = (meta && meta.candidates) || [];
+        assistantMsg.answered_by = (meta && meta.answered_by) || '';
+        assistantMsg.trace_id = (meta && meta.trace_id) || '';
+        const u = (meta && meta.usage) || {};
+        assistantMsg.prompt_tokens = u.prompt_tokens || 0;
+        assistantMsg.completion_tokens = u.completion_tokens || 0;
+        assistantMsg.tokens = u.total_tokens || ((u.prompt_tokens || 0) + (u.completion_tokens || 0));
+        coPin = assistantMsg.trace_id || coPin;
+        if (assistantMsg.trace_id) {
           setTimeout(() => {
-            coTraceCache.delete(r.trace_id);
+            coTraceCache.delete(assistantMsg.trace_id);
             if (log.isConnected) renderInspector();
           }, 1200);
         }
         if (convId && o.persist !== false) {
           coConvId = convId;
           if (!coConvTitle) coConvTitle = body.slice(0, 48);
-          recordTurn(convId, { role: 'user', content: body, trace_id: r.trace_id }).then(() =>
+          recordTurn(convId, { role: 'user', content: body, trace_id: assistantMsg.trace_id }).then(() =>
             recordTurn(convId, {
-              role: 'assistant', content: r.text, model: r.model, trace_id: r.trace_id,
-              prompt_tokens: pt, completion_tokens: ct,
+              role: 'assistant', content: assistantMsg.content, model: assistantMsg.model,
+              trace_id: assistantMsg.trace_id,
+              prompt_tokens: assistantMsg.prompt_tokens, completion_tokens: assistantMsg.completion_tokens,
             }).then(() => { if (convList.isConnected) loadConvs(); }));
         }
       } catch (e) {
-        if (e.name !== 'AbortError') {
+        if (e && e.name !== 'AbortError' && String(e.message) !== 'aborted') {
           if (!o.keepUser && coHist[coHist.length - 1] === mine) coHist.pop();
           if (!o.keepUser) { ta.value = body; autosize(); }
+          if (!assistantMsg.content) {
+            const i = coHist.indexOf(assistantMsg);
+            if (i >= 0) coHist.splice(i, 1);
+          }
           errSlot.replaceChildren(errorBox('Send failed: ' + e.message, () => send(body, tier, o)));
         }
       } finally {
+        coStageHandler = null;
+        coStreamCtl = null;
         coPromise = false;
+        try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('tower.partialMsg'); } catch (e) {}
         if (log.isConnected) { renderChat(); }
       }
     }
@@ -1688,6 +2173,18 @@
         el.addEventListener('click', () => openConv(c.id, c.title));
         return el;
       }) : [h('div', { class: 'tower-empty' }, 'No threads yet - send one.')]));
+    }
+    async function loadWorkflows() {
+      let data;
+      try { data = await api('/v1/workflows?limit=10'); }
+      catch (e) { inspWorkflows.replaceChildren(errorBox('Workflows unavailable: ' + e.message, loadWorkflows)); return; }
+      const wfs = data.workflows || [];
+      inspWorkflows.replaceChildren(...(wfs.length ? wfs.map(w => h('div', { class: 'tower-conv-item', style: 'cursor:pointer', onclick: () => { location.hash = '#/workflows'; } },
+        h('div', { class: 'tower-conv-title' }, (w.type || 'workflow') + ' ' + fmt.short(w.id)),
+        h('div', { class: 'tower-conv-meta' },
+          chip(w.type || 'workflow'),
+          w.verified === true ? pill('healthy', 'verified') : w.verified === false ? pill('critical', 'unverified') : null,
+          w.status === 'done' ? pill('healthy', 'done') : w.status === 'failed' ? pill('critical', 'failed') : pill('degraded', w.status || 'running')))) : [h('div', { class: 'tower-empty' }, 'No workflows yet.')]));
     }
     async function openConv(id, title) {
       if (coPromise) return;
@@ -1735,6 +2232,13 @@
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     });
     sendBtn.addEventListener('click', () => send());
+    cancelBtn.addEventListener('click', () => {
+      if (coStreamCtl) { coStreamCtl.abort(); coStreamCtl = null; }
+      coPromise = false;
+      renderChat();
+      syncComposer();
+      toast('Generation cancelled');
+    });
     wfBtn.addEventListener('click', runWorkflow);
     newBtn.addEventListener('click', newThread);
     popNew.addEventListener('click', newThread);
@@ -1763,13 +2267,118 @@
     document.addEventListener('keydown', escMenus);
     pop.addEventListener('keydown', e => { if (e.key === 'Escape') pop.classList.remove('open'); });
 
+    let coStageHandler = null;
     const feed = () => { railCleanup = mountRail(listBody,
       (nt, ns) => { label.textContent = nt + ' traces \u00b7 ' + ns + ' spans'; },
       () => coPin,
-      msg => listBody.replaceChildren(errorBox(msg, feed))); };
+      msg => listBody.replaceChildren(errorBox(msg, feed)),
+      (id, name) => { if (coStageHandler) coStageHandler(id, name); }); };
     feed();
     loadConvs();
+    // Restore a partial response cached before a crash/reload mid-stream.
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const raw = sessionStorage.getItem('tower.partialMsg');
+        if (raw) {
+          const saved = JSON.parse(raw);
+          if (saved && saved.user && (saved.partial || saved.partial === '')) {
+            coHist.push({ role: 'user', content: saved.user, at: saved.at || new Date().toISOString() });
+            coHist.push({ role: 'assistant', content: saved.partial || '', at: saved.at || new Date().toISOString(), ephemeral: true });
+            coLastInput = saved.user;
+            toast('Restored partial response');
+          }
+          sessionStorage.removeItem('tower.partialMsg');
+        }
+      }
+    } catch (e) {}
     renderChat();
+  }
+
+  // ---------- command palette ----------
+  const cmdk = { open: false, q: '', idx: 0, flat: [], recent: [], restore: null, busy: false };
+  function currentTraceId() { const m = location.hash.match(/^#\/traces\/([^/?]+)/); return m ? decodeURIComponent(m[1]) : ''; }
+  function copyText(text) { if (!navigator.clipboard) { toast('Clipboard unavailable', true); return; } navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy failed', true)); }
+  function paletteCommands() {
+    const cmds = Object.entries(pageTitles).map(([name, title]) => ({ group: 'Go to', title, sub: '#' + name, kind: chip(name), run: () => { location.hash = '#/' + name; } }));
+    const tid = currentTraceId();
+    if (tid) {
+      cmds.push({ group: 'Actions', title: 'Copy trace id', sub: fmt.short(tid), kind: chip('copy'), run: () => copyText(tid) });
+      cmds.push({ group: 'Actions', title: 'Open trace JSON', sub: fmt.short(tid), kind: chip('json'), run: () => window.open('/v1/traces/' + encodeURIComponent(tid), '_blank', 'noopener') });
+    }
+    cmds.push({ group: 'Actions', title: 'Copy a curl for a test request', sub: 'POST /v1/chat/completions', kind: chip('copy'), run: () => copyText("curl localhost:8080/v1/chat/completions -d '{\"prompt\":\"hi\"}'") });
+    cmds.push({ group: 'Actions', title: 'Reload this page', sub: 're-fetch without leaving', kind: chip('reload'), run: () => route() });
+    for (const t of cmdk.recent) cmds.push({ group: 'Recent traces', title: fmt.short(t.id) + ' \u00b7 ' + (t.label || t.kind), sub: fmt.ago(t.at) + ' \u00b7 ' + t.kind, kind: chip('trace'), run: () => { location.hash = '#/traces/' + t.id; } });
+    return cmds;
+  }
+  function mountPalette() {
+    const inputEl = h('input', { class: 'tower-cmdk-input', id: 'cmdk-input', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'Jump to a page, a trace, or an action\u2026', role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'cmdk-list', 'aria-autocomplete': 'list', 'aria-label': 'Command' });
+    const listEl = h('div', { class: 'tower-cmdk-list', id: 'cmdk-list', role: 'listbox', 'aria-label': 'Commands' });
+    const countEl = h('span', { class: 'tower-cmdk-count' }, '');
+    const panel = h('div', { class: 'tower-cmdk-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Command palette' },
+      h('div', { class: 'tower-cmdk-search' }, h('span', { class: 'tower-cmdk-icon', 'aria-hidden': 'true' }, '\u2318'), inputEl),
+      listEl,
+      h('div', { class: 'tower-cmdk-foot' },
+        h('span', null, h('span', { class: 'tower-kbd' }, '\u2191'), h('span', { class: 'tower-kbd' }, '\u2193'), ' move'),
+        h('span', null, h('span', { class: 'tower-kbd' }, '\u21b5'), ' open'),
+        h('span', null, h('span', { class: 'tower-kbd' }, 'esc'), ' close'),
+        countEl));
+    const overlay = h('div', { class: 'tower-cmdk', id: 'cmdk', hidden: '' }, h('div', { class: 'tower-cmdk-backdrop', onclick: () => close() }), panel);
+    document.body.append(overlay);
+    function paint() { const items = listEl.querySelectorAll('.tower-cmdk-item'); items.forEach((n, i) => n.setAttribute('aria-selected', String(i === cmdk.idx))); const sel = items[cmdk.idx]; if (sel) { inputEl.setAttribute('aria-activedescendant', sel.id); sel.scrollIntoView({ block: 'nearest' }); } else inputEl.removeAttribute('aria-activedescendant'); }
+    function render() {
+      const words = cmdk.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const all = paletteCommands();
+      cmdk.flat = words.length ? all.filter(c => words.every(w => (c.group + ' ' + c.title + ' ' + (c.sub || '')).toLowerCase().includes(w))) : all;
+      if (cmdk.idx >= cmdk.flat.length) cmdk.idx = Math.max(0, cmdk.flat.length - 1);
+      countEl.textContent = cmdk.flat.length + (cmdk.flat.length === 1 ? ' command' : ' commands');
+      if (!cmdk.flat.length) { listEl.replaceChildren(h('div', { class: 'tower-cmdk-empty' }, 'Nothing matches "' + cmdk.q + '".')); inputEl.removeAttribute('aria-activedescendant'); return; }
+      let lastGroup = null; const nodes = [];
+      cmdk.flat.forEach((c, i) => {
+        if (c.group !== lastGroup) { nodes.push(h('div', { class: 'tower-cmdk-group' }, c.group)); lastGroup = c.group; }
+        nodes.push(h('div', { id: 'cmdk-item-' + i, class: 'tower-cmdk-item', role: 'option', 'aria-selected': String(i === cmdk.idx), onmousemove: () => { if (cmdk.idx !== i) { cmdk.idx = i; paint(); } }, onclick: () => { close(); c.run(); } },
+          h('div', { class: 'tower-cmdk-item-main' }, h('div', { class: 'tower-cmdk-item-title' }, c.title), c.sub ? h('div', { class: 'tower-cmdk-item-sub' }, c.sub) : null),
+          h('span', { class: 'tower-cmdk-item-kind' }, c.kind)));
+      });
+      listEl.replaceChildren(...nodes); paint();
+    }
+    async function loadRecent() {
+      if (cmdk.busy) return; cmdk.busy = true;
+      try { const r = await api('/v1/requests?limit=8'); cmdk.recent = (r.requests || []).map(x => ({ id: x.trace_id, at: x.at, kind: 'chat', label: (x.model || '-') + ' \u00b7 ' + (x.reason || '') })); } catch (e) {}
+      cmdk.busy = false; if (cmdk.open) render();
+    }
+    function open() { if (cmdk.open) return; cmdk.open = true; cmdk.restore = document.activeElement; cmdk.q = ''; cmdk.idx = 0; inputEl.value = ''; overlay.hidden = false; render(); inputEl.focus(); announce('Command palette'); loadRecent(); }
+    function close() { if (!cmdk.open) return; cmdk.open = false; overlay.hidden = true; const back = cmdk.restore && cmdk.restore !== document.body ? cmdk.restore : document.getElementById('cmdk-trigger'); if (back && back.focus) back.focus(); cmdk.restore = null; }
+    function toggle() { if (cmdk.open) close(); else open(); }
+    inputEl.addEventListener('input', () => { cmdk.q = inputEl.value; cmdk.idx = 0; render(); });
+    overlay.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key === 'Tab') { e.preventDefault(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); if (cmdk.flat.length) { cmdk.idx = (cmdk.idx + 1) % cmdk.flat.length; paint(); } return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); if (cmdk.flat.length) { cmdk.idx = (cmdk.idx - 1 + cmdk.flat.length) % cmdk.flat.length; paint(); } return; }
+      if (e.key === 'Enter') { e.preventDefault(); const c = cmdk.flat[cmdk.idx]; if (c) { close(); c.run(); } }
+    });
+    document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); toggle(); } });
+    const trigger = document.getElementById('cmdk-trigger'); if (trigger) trigger.addEventListener('click', open);
+  }
+  // shortcut sheet
+  function mountShortcuts() {
+    const overlay = h('div', { class: 'tower-cmdk', id: 'shortcuts', hidden: '' },
+      h('div', { class: 'tower-cmdk-backdrop', onclick: () => { overlay.hidden = true; } }),
+      h('div', { class: 'tower-cmdk-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Keyboard shortcuts' },
+        h('div', { class: 'tower-cmdk-search' }, h('span', { class: 'tower-cmdk-icon', 'aria-hidden': 'true' }, '?'), h('span', { class: 'tower-cmdk-input', style: 'font-weight:600' }, 'Keyboard shortcuts')),
+        h('div', { class: 'tower-cmdk-list' },
+          h('div', { class: 'tower-cmdk-group' }, 'Global'),
+          ...[['Ctrl / Cmd + K', 'Open the command palette'], ['?', 'Open this shortcut sheet'], ['Esc', 'Close any overlay']].map(([k, v]) => h('div', { class: 'tower-cmdk-item' }, h('span', { class: 'tower-kbd' }, k), h('div', { class: 'tower-cmdk-item-main' }, h('div', { class: 'tower-cmdk-item-title' }, v)))),
+          h('div', { class: 'tower-cmdk-group' }, 'Traces'),
+          ...[['Enter / Space', 'Open a waterfall row / span']].map(([k, v]) => h('div', { class: 'tower-cmdk-item' }, h('span', { class: 'tower-kbd' }, k), h('div', { class: 'tower-cmdk-item-main' }, h('div', { class: 'tower-cmdk-item-title' }, v))))),
+        h('div', { class: 'tower-cmdk-foot' }, h('span', null, h('span', { class: 'tower-kbd' }, 'Esc'), ' close'))));
+    document.body.append(overlay);
+    document.addEventListener('keydown', e => {
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if (e.key === '?' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); overlay.hidden = !overlay.hidden; if (!overlay.hidden) announce('Keyboard shortcuts'); }
+      if (e.key === 'Escape' && !overlay.hidden) overlay.hidden = true;
+    });
   }
 
   // ---------- router ----------
@@ -1810,7 +2419,17 @@
   }
   document.querySelectorAll('.tower-nav-btn[data-page]').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.page; }));
   window.addEventListener('hashchange', route);
+  // Rich glossary tooltips
+  const glossTip = h('div', { class: 'tower-tip', id: 'gloss-tip', hidden: '' });
+  document.body.append(glossTip);
+  document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('[data-gloss]'); if (!el) { glossTip.hidden = true; return; } glossTip.textContent = el.getAttribute('data-gloss'); glossTip.hidden = false; });
+  document.addEventListener('mousemove', e => { if (glossTip.hidden) return; glossTip.style.left = (e.clientX + 12) + 'px'; glossTip.style.top = (e.clientY - 28) + 'px'; });
+  document.addEventListener('mouseout', e => { if (e.target.closest && e.target.closest('[data-gloss]')) glossTip.hidden = true; });
+
+  mountPalette();
+  mountShortcuts();
   route();
   // keep the strip fresh even off the overview page
   setInterval(async () => { try { updateStrip(await api('/v1/overview')); } catch (e) { /* strip is best-effort */ } }, 15000);
+  setInterval(() => { document.querySelectorAll('[data-ts]').forEach(el => { const iso = el.getAttribute('data-ts'); if (iso) el.textContent = fmt.ago(iso); }); }, 60000);
 })();

@@ -26,7 +26,18 @@
     --tower-radius-sm:4px;
     --tower-radius-md:6px;
   }
-  *{box-sizing:border-box;}
+  /* Light theme: same tokens, warm paper palette. Activated by the OS setting. */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --tower-ground:#F4F0E8; --tower-surface:#FBF8F2; --tower-surface-raised:#F0EBE0;
+      --tower-border:#D8D0C2; --tower-border-soft:#E5DFD2;
+      --tower-ink:#2A2620; --tower-ink-muted:#6B6258; --tower-ink-faint:#8A8176;
+      --tower-amber:#B8751A; --tower-amber-dim:#F3E4C8;
+      --tower-green:#2F8F6B; --tower-green-dim:#DCEBE3;
+      --tower-red:#B8455A; --tower-red-dim:#F2DCE0;
+      --tower-user:#EDE6D8;
+    }
+  }
   body{
     margin:0;
     background:var(--tower-ground);
@@ -59,6 +70,21 @@
     padding:8px 14px; font-size:13px; text-decoration:none;
   }
   .tower-skip:focus{ transform:none; }
+  /* One visible keyboard ring for every interactive thing. Mouse clicks do not
+     draw it (:focus-visible), so the console keeps its quiet surface. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible{
+    outline:2px solid var(--tower-amber);
+    outline-offset:2px;
+  }
+  /* Respect the OS setting: shimmer, flashes and smooth scroll all stop. */
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{
+      animation-duration:.001ms !important;
+      animation-iteration-count:1 !important;
+      transition-duration:.001ms !important;
+      scroll-behavior:auto !important;
+    }
+  }
 
   /* ===== Layout shell ===== */
   html{ scrollbar-color:var(--tower-border) var(--tower-ground); scrollbar-width:thin; }
@@ -104,6 +130,76 @@
 
   .tower-main{ display:flex; flex-direction:column; min-width:0; }
 
+  /* ===== Command palette (shell overlay) =====
+     One keyboard-first surface for every destination, the current trace's
+     actions and the recent traces. Ctrl/Cmd+K opens it from any page. */
+  .tower-cmdk{
+    position:fixed; inset:0; z-index:40; display:flex; align-items:flex-start;
+    justify-content:center; padding:12vh 16px 16px;
+  }
+  .tower-cmdk[hidden]{ display:none; }
+  .tower-cmdk-backdrop{
+    position:absolute; inset:0;
+    background:color-mix(in srgb, var(--tower-ground) 72%, transparent);
+    backdrop-filter:blur(3px);
+  }
+  .tower-cmdk-panel{
+    position:relative; width:min(640px, 100%);
+    background:var(--tower-surface); border:1px solid var(--tower-border);
+    border-radius:var(--tower-radius-md); box-shadow:0 24px 64px rgba(0,0,0,.55);
+    overflow:hidden;
+  }
+  .tower-cmdk-search{
+    display:flex; align-items:center; gap:10px; padding:12px 14px;
+    border-bottom:1px solid var(--tower-border-soft);
+  }
+  .tower-cmdk-icon{ color:var(--tower-ink-faint); font-family:var(--tower-font-mono); font-size:12px; }
+  .tower-cmdk-input{
+    flex:1; min-width:0; background:transparent; border:0; outline:none;
+    color:var(--tower-ink); font:14px var(--tower-font-body);
+  }
+  .tower-cmdk-input::placeholder{ color:var(--tower-ink-faint); }
+  .tower-cmdk-list{ max-height:min(52vh, 420px); overflow:auto; padding:6px; }
+  .tower-cmdk-group{
+    padding:8px 8px 4px; font:600 10px/1.4 var(--tower-font-body);
+    text-transform:uppercase; letter-spacing:.08em; color:var(--tower-ink-faint);
+  }
+  .tower-cmdk-item{
+    display:flex; align-items:center; gap:10px; padding:8px 10px;
+    border-radius:var(--tower-radius-sm); cursor:pointer; color:var(--tower-ink-muted);
+  }
+  .tower-cmdk-item[aria-selected="true"]{ background:var(--tower-amber-dim); color:var(--tower-ink); }
+  .tower-cmdk-item-main{ flex:1; min-width:0; }
+  .tower-cmdk-item-title{
+    font-size:13px; color:var(--tower-ink);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .tower-cmdk-item-sub{
+    font-size:11.5px; color:var(--tower-ink-faint);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .tower-cmdk-item-kind{ flex:none; }
+  .tower-cmdk-empty{ padding:28px 12px; text-align:center; color:var(--tower-ink-faint); font-size:13px; }
+  .tower-cmdk-foot{
+    display:flex; align-items:center; gap:14px; padding:8px 14px;
+    border-top:1px solid var(--tower-border-soft); font-size:11px; color:var(--tower-ink-faint);
+  }
+  .tower-cmdk-count{ margin-left:auto; }
+  .tower-kbd{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:18px; height:18px; padding:0 4px;
+    border:1px solid var(--tower-border); border-radius:3px;
+    background:var(--tower-ground); font:10px var(--tower-font-mono); color:var(--tower-ink-muted);
+  }
+  .tower-cmdk-trigger{
+    display:inline-flex; align-items:center; gap:8px; padding:5px 9px;
+    border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-sm);
+    background:var(--tower-surface); color:var(--tower-ink-muted);
+    font-size:12px; cursor:pointer;
+  }
+  .tower-cmdk-trigger:hover{ color:var(--tower-ink); border-color:var(--tower-border); }
+  @media (max-width: 700px){ .tower-cmdk-trigger .tower-kbd{ display:none; } }
+
   /* ===== Status strip ===== */
   .tower-statusstrip{
     position:sticky; top:0; z-index:5;
@@ -146,6 +242,10 @@
   .tower-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
   .tower-panel-head h3{ font-size:14px; }
   .tower-panel-sub{ font-size:12px; color:var(--tower-ink-muted); margin-top:2px; }
+
+  /* ===== Sparkline (hand-rolled SVG) ===== */
+  /* A trend beside a number, not a chart: no axes, no labels, one accent line. */
+  .tower-spark{ display:block; width:100%; height:26px; margin-top:2px; }
 
   /* ===== Traffic bar chart (hand-rolled SVG) ===== */
   .tower-chart-legend{ display:flex; gap:16px; font-size:12px; color:var(--tower-ink-muted); }
@@ -196,6 +296,10 @@
     font-size:11px; padding:2px 7px; border-radius:var(--tower-radius-sm);
     background:var(--tower-surface-raised); color:var(--tower-ink-muted); border:1px solid var(--tower-border-soft);
   }
+  /* A count inside a filter chip: a fact, so it inherits the chip's colour and
+     only steps down in weight. The active chip lifts it to amber. */
+  .tower-chip-count{ margin-left:5px; font-size:10px; color:var(--tower-ink-faint); }
+  .tower-chip-btn.on .tower-chip-count{ color:var(--tower-amber); }
 
   /* ===== Trace inspector (hero component) ===== */
   .tower-trace{ display:flex; flex-direction:column; }
@@ -210,6 +314,11 @@
   }
   .tower-trace-step.done .tower-trace-dot{ border-color:var(--tower-green); background:var(--tower-green-dim); }
   .tower-trace-step.active .tower-trace-dot{ border-color:var(--tower-amber); background:var(--tower-amber-dim); }
+  /* Jumped-to from the waterfall: a short amber wash, then back to rest. */
+  .tower-row-new{ animation:tower-row-flash 1.4s ease-out; }
+  @keyframes tower-row-flash{ 0%{ background:var(--tower-amber-dim); } 100%{ background:transparent; } }
+  @media (prefers-reduced-motion: reduce){ .tower-row-new{ animation:none; } }
+  .tower-trace-step.wf-hover .tower-trace-body{ background:var(--tower-surface-raised); border-radius:var(--tower-radius-sm); }
   .tower-trace-body{ flex:1; cursor:pointer; }
   .tower-trace-top{ display:flex; align-items:center; justify-content:space-between; }
   .tower-trace-name{ font-weight:600; font-size:13.5px; }
@@ -227,21 +336,33 @@
   /* ===== Console additions ===== */
   .tower-rail-btn{ position:relative; }
   .tower-metric-row.cols-3{ grid-template-columns:repeat(3,1fr); }
-  .tower-empty{ padding:28px 12px; text-align:center; color:var(--tower-ink-faint); font-size:13px; }
+  .tower-tip{ position:absolute; pointer-events:none; z-index:20; background:var(--tower-surface-raised); border:1px solid var(--tower-border); border-radius:var(--tower-radius-sm); padding:6px 10px; font-size:12px; color:var(--tower-ink); box-shadow:0 4px 12px rgba(0,0,0,.35); white-space:nowrap; }
   .tower-error{ padding:12px 14px; border:1px solid var(--tower-red-dim); background:var(--tower-red-dim); color:var(--tower-red); border-radius:var(--tower-radius-sm); font-size:12.5px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
   .tower-skeleton{ height:14px; border-radius:3px; background:linear-gradient(90deg,var(--tower-surface-raised),var(--tower-border),var(--tower-surface-raised)); background-size:200% 100%; animation:tower-shimmer 1.4s linear infinite; }
+  .tower-skeleton-metric{ height:64px; border-radius:6px; }
+  .tower-skeleton-trace{ height:46px; border-radius:3px; }
+  .tower-skeleton-card{ height:96px; border-radius:6px; }
   @keyframes tower-shimmer{ 0%{background-position:200% 0} 100%{background-position:-200% 0} }
   .tower-link{ color:var(--tower-amber); text-decoration:none; cursor:pointer; }
   .tower-link:hover{ text-decoration:underline; }
   .tower-row-link{ cursor:pointer; }
   .tower-input{ font-family:var(--tower-font-mono); font-size:13px; padding:7px 10px; border-radius:var(--tower-radius-sm); border:1px solid var(--tower-border); background:var(--tower-ground); color:var(--tower-ink); min-width:280px; }
-  .tower-input:focus{ outline:none; border-color:var(--tower-amber); }
+  .tower-input:focus{ border-color:var(--tower-amber); }
   .tower-form-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .tower-toast{ position:fixed; right:20px; bottom:20px; background:var(--tower-surface-raised); border:1px solid var(--tower-border); color:var(--tower-ink); padding:10px 14px; border-radius:var(--tower-radius-md); font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.4); max-width:420px; z-index:10; }
   .tower-toast.err{ border-color:var(--tower-red); }
   .tower-toast[hidden]{ display:none; }
   .tower-kv{ display:grid; grid-template-columns:max-content 1fr; gap:4px 14px; font-family:var(--tower-font-mono); font-size:12px; }
   .tower-kv .k{ color:var(--tower-ink-faint); }
+  .tower-kv .v-str{ color:var(--tower-green); }
+  .tower-kv .v-num{ color:var(--tower-amber); }
+  .tower-kv .v-bool{ color:var(--tower-red); }
+  .tower-kv .v-null{ color:var(--tower-ink-faint); font-style:italic; }
+  .tower-kv-row{ display:contents; }
+  .tower-kv-row:hover .tower-kv-copy{ opacity:1; }
+  .tower-kv-copy{ opacity:0; transition:opacity .12s; background:none; border:0; padding:0 0 0 6px; color:var(--tower-ink-faint); cursor:pointer; font-size:11px; }
+  .tower-kv-copy:hover{ color:var(--tower-amber); }
+  .tower-kv-more{ background:none; border:0; padding:0; color:var(--tower-amber); cursor:pointer; font-size:11px; margin-left:4px; }
   .tower-kv .v{ color:var(--tower-ink-muted); word-break:break-all; }
   .tower-steps{ display:flex; gap:6px; flex-wrap:wrap; }
   .tower-panel h3 .tower-mono{ color:var(--tower-ink-muted); font-weight:400; font-size:12px; margin-left:8px; }
@@ -286,17 +407,31 @@
   .tower-trace-title{ font-family:var(--tower-font-display); font-weight:600; font-size:15px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .tower-sub-h{ font:600 11px/1.4 var(--tower-font-body); text-transform:uppercase; letter-spacing:.08em; color:var(--tower-ink-faint); margin:18px 0 8px; }
   .tower-waterfall{ display:flex; flex-direction:column; gap:4px; }
-  .tower-wf-row{ display:grid; grid-template-columns:180px 1fr 72px; gap:10px; align-items:center; font-size:12px; }
+  /* A waterfall row is a control: it opens the matching span below. */
+  .tower-wf-row{
+    display:grid; grid-template-columns:180px 1fr 72px; gap:10px; align-items:center;
+    font-size:12px; padding:1px 4px; margin:0 -4px; border-radius:var(--tower-radius-sm);
+    cursor:pointer;
+  }
+  .tower-wf-row:hover{ background:var(--tower-surface-raised); }
+  .tower-wf-row.selected{ background:var(--tower-amber-dim); }
+  .tower-wf-row.wf-hover{ background:var(--tower-surface-raised); outline:1px solid var(--tower-border); }
   .tower-wf-name{ color:var(--tower-ink-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tower-wf-track{ position:relative; height:14px; background:var(--tower-ground); border:1px solid var(--tower-border-soft); border-radius:3px; }
   .tower-wf-bar{ position:absolute; top:2px; bottom:2px; border-radius:2px; min-width:3px; }
+  /* The chain that decides the trace's wall-clock time: outlined, not recoloured,
+     so the amber "this is the model call" reading survives. */
+  .tower-wf-bar.critical{ box-shadow:inset 0 0 0 1px var(--tower-ink); }
   .tower-wf-dur{ text-align:right; color:var(--tower-ink-muted); }
   .tower-note{ margin-top:12px; padding:10px 12px; border-radius:var(--tower-radius-sm); background:var(--tower-amber-dim); color:var(--tower-amber); font-size:12.5px; }
   .tower-ticket{ padding:10px 12px; border:1px solid var(--tower-border-soft); border-radius:var(--tower-radius-sm); background:var(--tower-ground); margin-bottom:8px; }
   .tower-ticket.flash{ animation:tower-flash 1.2s ease-out; }
   @keyframes tower-flash{ 0%{ background:var(--tower-amber-dim); border-color:var(--tower-amber); } 100%{ background:var(--tower-ground); } }
   .tower-ticket-top{ display:flex; justify-content:space-between; align-items:center; font-size:12.5px; margin-bottom:8px; }
-  @media (prefers-reduced-motion: reduce){ .tower-ticket.flash{ animation:none; } }
+  .tower-btn.loading{ pointer-events:none; opacity:.7; }
+  .tower-btn.loading::after{ content:''; width:10px; height:10px; margin-left:6px; border:1.5px solid currentColor; border-top-color:transparent; border-radius:50%; display:inline-block; animation:tower-spin .6s linear infinite; vertical-align:middle; }
+  @keyframes tower-spin{ to{ transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){ .tower-btn.loading::after{ animation:none; } }
   .tower-live-running{ background:linear-gradient(90deg,var(--tower-amber-dim),var(--tower-amber),var(--tower-amber-dim)); background-size:200% 100%; animation:tower-live-shimmer 1.1s linear infinite; color:var(--tower-ground); }
   @keyframes tower-live-shimmer{ 0%{background-position:200% 0} 100%{background-position:-200% 0} }
   .tower-live-pop{ animation:tower-live-pop .35s ease-out; display:inline-flex; }
@@ -451,6 +586,25 @@
   .tower-chat-actions{ display:flex; align-items:center; gap:10px; }
   .tower-spacer{ flex:1; }
   .tower-chat-tokens{ font-size:12px; color:var(--tower-ink-faint); }
+  .tower-chat-status{ font-size:11px; color:var(--tower-ink-faint); min-height:14px; }
+  .tower-md{ white-space:pre-wrap; }
+  .tower-md-p{ margin:0 0 6px; }
+  .tower-md-h{ font-family:var(--tower-font-display); font-weight:600; margin:10px 0 4px; color:var(--tower-ink); }
+  .tower-md-code .hl-kw{ color:var(--tower-amber); font-weight:600; }
+  .tower-md-code .hl-str{ color:var(--tower-green); }
+  .tower-md-code .hl-num{ color:var(--tower-amber); }
+  .tower-md-code .hl-cmt{ color:var(--tower-ink-faint); font-style:italic; }
+  .tower-md-code-lang{ position:absolute; top:4px; right:8px; font-size:10px; color:var(--tower-ink-faint); text-transform:uppercase; letter-spacing:.06em; }
+  .tower-md-inline{ background:var(--tower-surface-raised); padding:1px 4px; border-radius:3px; font-family:var(--tower-font-mono); font-size:0.9em; }
+  .tower-md-quote{ border-left:3px solid var(--tower-amber-dim); padding:4px 10px; margin:6px 0; color:var(--tower-ink-muted); font-style:italic; }
+  .tower-md-list{ margin:4px 0 8px 18px; padding:0; }
+  .tower-md-list li{ margin:2px 0; }
+  .tower-md-table-wrap{ overflow-x:auto; margin:6px 0; }
+  .tower-md-table{ border-collapse:collapse; font-size:12px; width:100%; }
+  .tower-md-table th, .tower-md-table td{ border:1px solid var(--tower-border-soft); padding:4px 8px; }
+  .tower-md-table th{ background:var(--tower-surface-raised); font-weight:600; color:var(--tower-ink); }
+  .tower-md-table td{ color:var(--tower-ink-muted); }
+  .tower-md s{ text-decoration:line-through; color:var(--tower-ink-faint); }
   .tower-send{
     width:34px; height:34px; border-radius:50%; border:0; background:var(--tower-amber);
     color:var(--tower-ground); font-size:17px; font-weight:700; display:grid; place-items:center; cursor:pointer;

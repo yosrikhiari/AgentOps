@@ -365,7 +365,10 @@ func TestWorkflowActions(t *testing.T) {
 	}
 	var startedWith string
 	h = New(Deps{Store: &memStore{},
-		StartWorkflow: func(ctx context.Context, input, verifier string) (string, error) { startedWith = input; return "wf1", nil },
+		StartWorkflow: func(ctx context.Context, input, verifier string) (string, error) {
+			startedWith = input
+			return "wf1", nil
+		},
 		ResumeWork: func(ctx context.Context, id string) error {
 			if id == "missing" {
 				return ErrNotFound

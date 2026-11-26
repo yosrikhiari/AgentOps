@@ -594,7 +594,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
 		"usage":   out.Usage, "reason": out.Reason, "backend": out.Backend, "trace_id": out.TraceID,
 		"tier": out.Tier, "candidates": out.Candidates, "answered_by": out.AnsweredBy,
-			"cost_usd": costFor(out.Model, out.Usage),
+		"cost_usd": costFor(out.Model, out.Usage),
 	})
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	if canFlush {
@@ -950,8 +950,16 @@ func generateOn(ctx context.Context, b Backend, model string, msgs []Message, p 
 	if rb, ok := b.(ReasoningBackend); ok {
 		if emit != nil {
 			u, err := rb.StreamWithReasoning(ctx, model, msgs, p,
-				func(d string) { if emit != nil { emit(model, d) } },
-				func(d string) { if emitReasoning != nil { emitReasoning(model, d) } })
+				func(d string) {
+					if emit != nil {
+						emit(model, d)
+					}
+				},
+				func(d string) {
+					if emitReasoning != nil {
+						emitReasoning(model, d)
+					}
+				})
 			return "", u, err
 		}
 		return rb.GenerateWith(ctx, model, msgs, p)

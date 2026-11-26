@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1211,7 +1211,7 @@ func toyWorkflow(db pgDB, ollamaURL, fastModel string) (tracker.Store, tracker.S
 		defer rows.Close()
 		type candidate struct {
 			doc, hash, text, source string
-			score                  float64
+			score                   float64
 		}
 		var cands []candidate
 		qTerms := strings.Fields(strings.ToLower(q))
@@ -2002,7 +2002,7 @@ func main() {
 	trajectoryID := flag.String("trajectory", "", "print trajectory metrics (steps, attempts, retries, clean) for WORKFLOW_ID and exit")
 	workflowRepeats := flag.Int("workflow-repeats", 0, "run the toy workflow N times on --tracker-input and print pass^k reliability, then exit")
 	workflowGrade := flag.String("workflow-grade", "", "grade WORKFLOW_ID's final answer on a 1-5 rubric, store it, and exit")
-workflowVerify := flag.String("workflow-verify", "", "run the verifier (if any) for WORKFLOW_ID, store the result, and exit")
+	workflowVerify := flag.String("workflow-verify", "", "run the verifier (if any) for WORKFLOW_ID, store the result, and exit")
 	exportRouting := flag.String("export-routing-data", "", "write route_decisions as JSONL to PATH and exit")
 	judgePrompt := flag.String("judge-prompt", "v2", "prompt variant for --judge-audit: v2 (justification then verdict) or v3 (verdict first, then evidence)")
 	advise := flag.Bool("advise", false, "print the static model advisor report (Track K) and exit")

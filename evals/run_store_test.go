@@ -187,7 +187,7 @@ func (r *sliceRows) Scan(dest ...any) error {
 func TestStartFinishRun(t *testing.T) {
 	ctx := context.Background()
 	db := &runFake{pairs: map[int][]StoredPair{}}
-	run, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(1000, 0).UTC())
+	run, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(1000, 0).UTC(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestStartFinishRun(t *testing.T) {
 func TestResumeInterruptedRun(t *testing.T) {
 	ctx := context.Background()
 	db := &runFake{pairs: map[int][]StoredPair{}}
-	first, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(1000, 0).UTC())
+	first, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(1000, 0).UTC(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestResumeInterruptedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Crash: no FinishRun. The next attempt resumes the same row and sees q1.
-	second, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(2000, 0).UTC())
+	second, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(2000, 0).UTC(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestResumeInterruptedRun(t *testing.T) {
 		t.Fatalf("resume created a second row: %+v", db.runs)
 	}
 	// A different prompt version is a different run: never mixed.
-	third, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v3", time.Unix(3000, 0).UTC())
+	third, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v3", time.Unix(3000, 0).UTC(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestResumeInterruptedRun(t *testing.T) {
 	if err := FinishRun(ctx, db, first.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	fourth, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(4000, 0).UTC())
+	fourth, err := StartOrResumeRun(ctx, db, "v3", "phi4-mini", "", "faithfulness-v2", time.Unix(4000, 0).UTC(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestResumeInterruptedRun(t *testing.T) {
 func TestFailRunKeepsItResumable(t *testing.T) {
 	ctx := context.Background()
 	db := &runFake{pairs: map[int][]StoredPair{}}
-	run, err := StartOrResumeRun(ctx, db, "v3", "j", "", "p", time.Unix(1000, 0).UTC())
+	run, err := StartOrResumeRun(ctx, db, "v3", "j", "", "p", time.Unix(1000, 0).UTC(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestFailRunKeepsItResumable(t *testing.T) {
 	if db.runs[0].status != "failed" {
 		t.Fatalf("status = %q", db.runs[0].status)
 	}
-	again, err := StartOrResumeRun(ctx, db, "v3", "j", "", "p", time.Unix(2000, 0).UTC())
+	again, err := StartOrResumeRun(ctx, db, "v3", "j", "", "p", time.Unix(2000, 0).UTC(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

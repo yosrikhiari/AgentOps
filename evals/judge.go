@@ -104,10 +104,6 @@ type Judge interface {
 	JudgeClaim(ctx context.Context, claim, contextText string) (Label, string, error)
 }
 
-func faithfulnessPrompt(claim, contextText string) string {
-	return faithfulnessPromptFor("v2", claim, contextText)
-}
-
 // faithfulnessPromptV3 asks for the verdict first, then evidence. The v2 prompt does
 // the opposite (justification, then verdict) - chain-of-thought that helps weak judges
 // but costs tokens and can let the justification steer the verdict. v3 tests whether

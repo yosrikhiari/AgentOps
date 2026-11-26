@@ -72,7 +72,7 @@ func (p StoredPair) Unsolvable() bool {
 	return p.RetrievalMiss || (p.Claims > 0 && p.Faithfulness == 0)
 }
 
-func StartOrResumeRun(ctx context.Context, db RunDB, goldenVersion, judgeModel, model, judgePrompt string, startedAt time.Time) (StartedRun, error) {
+func StartOrResumeRun(ctx context.Context, db RunDB, goldenVersion, judgeModel, model, judgePrompt string, startedAt time.Time, totalPairs int) (StartedRun, error) {
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
@@ -93,6 +93,8 @@ func StartOrResumeRun(ctx context.Context, db RunDB, goldenVersion, judgeModel, 
 	}
 	rows.Close()
 	if id != 0 {
+		// Keep total_pairs in sync with the current golden set on resume.
+		_, _ = db.Exec(ctx, `UPDATE eval_runs SET total_pairs = $2 WHERE id = $1`, id, totalPairs)
 		pairs, err := LoadRunPairs(ctx, db, id)
 		if err != nil {
 			return StartedRun{}, err
@@ -100,9 +102,9 @@ func StartOrResumeRun(ctx context.Context, db RunDB, goldenVersion, judgeModel, 
 		return StartedRun{ID: id, Resumed: true, Pairs: pairs}, nil
 	}
 	row := db.QueryRow(ctx,
-		`INSERT INTO eval_runs (golden_version, judge_model, model, judge_prompt, score, started_at, status)
-		 VALUES ($1, $2, $3, $4, 0, $5, 'running') RETURNING id`,
-		goldenVersion, judgeModel, model, judgePrompt, startedAt)
+		`INSERT INTO eval_runs (golden_version, judge_model, model, judge_prompt, score, started_at, status, total_pairs)
+		 VALUES ($1, $2, $3, $4, 0, $5, 'running', $6) RETURNING id`,
+		goldenVersion, judgeModel, model, judgePrompt, startedAt, totalPairs)
 	if err := row.Scan(&id); err != nil {
 		return StartedRun{}, err
 	}
@@ -167,7 +169,7 @@ func FailRun(ctx context.Context, exec Execer, runID int) error {
 // RecordRun writes a whole run in one go. Kept for tests and for any caller that already
 // has every pair in hand.
 func RecordRun(ctx context.Context, db RunDB, goldenVersion, judgeModel, model, judgePrompt string, score float64, startedAt time.Time, pairs []PairResult) (int, error) {
-	run, err := StartOrResumeRun(ctx, db, goldenVersion, judgeModel, model, judgePrompt, startedAt)
+	run, err := StartOrResumeRun(ctx, db, goldenVersion, judgeModel, model, judgePrompt, startedAt, len(pairs))
 	if err != nil {
 		return 0, err
 	}

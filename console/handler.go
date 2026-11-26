@@ -28,7 +28,7 @@ type Deps struct {
 	Router        *router.Server
 	Drift         func(ctx context.Context, golden string) (any, error)
 	RunEval       func(ctx context.Context, golden string) error
-	StartWorkflow func(ctx context.Context, input string) (string, error)
+	StartWorkflow func(ctx context.Context, input, verifier string) (string, error)
 	ResumeWork    func(ctx context.Context, id string) error
 	GoldenVersion string
 	Version       string
@@ -385,14 +385,15 @@ func (h *Handler) startWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Input string `json:"input"`
+		Input    string `json:"input"`
+		Verifier string `json:"verifier"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if strings.TrimSpace(body.Input) == "" {
 		writeErr(w, http.StatusBadRequest, "bad_request", "input is required")
 		return
 	}
-	id, err := h.deps.StartWorkflow(r.Context(), body.Input)
+	id, err := h.deps.StartWorkflow(r.Context(), body.Input, body.Verifier)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "workflow_failed", err.Error())
 		return

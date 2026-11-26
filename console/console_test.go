@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"math"
@@ -364,7 +365,7 @@ func TestWorkflowActions(t *testing.T) {
 	}
 	var startedWith string
 	h = New(Deps{Store: &memStore{},
-		StartWorkflow: func(ctx context.Context, input string) (string, error) { startedWith = input; return "wf1", nil },
+		StartWorkflow: func(ctx context.Context, input, verifier string) (string, error) { startedWith = input; return "wf1", nil },
 		ResumeWork: func(ctx context.Context, id string) error {
 			if id == "missing" {
 				return ErrNotFound
@@ -431,6 +432,20 @@ func (r *fakeRows) Scan(dest ...any) error {
 			*p = row[i].(int64)
 		case *float64:
 			*p = row[i].(float64)
+		case *sql.NullBool:
+			if row[i] == nil {
+				p.Valid = false
+			} else {
+				p.Bool = row[i].(bool)
+				p.Valid = true
+			}
+		case *sql.NullTime:
+			if row[i] == nil {
+				p.Valid = false
+			} else {
+				p.Time = row[i].(time.Time)
+				p.Valid = true
+			}
 		case **float64:
 			if row[i] == nil {
 				*p = nil
@@ -601,8 +616,8 @@ func TestSQLStoreEvalRunsCarriesGPUWindow(t *testing.T) {
 	start := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	end := start.Add(8 * time.Minute)
 	q := fakeQueryer{rows: [][]any{
-		{1, "v3", "qwen3:8b", "faithfulness-v2", "", 0.94, start, end, "complete", 72, 41, 63.0, 88.0, int64(2 << 30), int64(4 << 30), int64(3), 84.0, 4},
-		{2, "v3", "qwen3:8b", "", "", 0.95, start, end, "failed", 0, 0, 0.0, 0.0, int64(0), int64(0), int64(0), 0.0, 0},
+		{1, "v3", "qwen3:8b", "faithfulness-v2", "", 0.94, start, end, "complete", 72, 72, 41, 63.0, 88.0, int64(2 << 30), int64(4 << 30), int64(3), 84.0, 4},
+		{2, "v3", "qwen3:8b", "", "", 0.95, start, end, "failed", 0, 0, 0, 0.0, 0.0, int64(0), int64(0), int64(0), 0.0, 0},
 	}}
 	got, err := SQLStore{Query: q}.EvalRuns(context.Background(), "v3", 10)
 	if err != nil {
@@ -667,7 +682,7 @@ func TestSQLStoreGPUSamplesMapsEveryColumn(t *testing.T) {
 func TestSQLStoreWorkflowsAttachesGrade(t *testing.T) {
 	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
 	q := &wfQueryer{rows: map[string][][]any{
-		"FROM workflows":  {{"w1", "toy", "done", "question", now}, {"w2", "toy", "done", "other", now}},
+		"FROM workflows":  {{"w1", "toy", "done", "question", now, "", nil, "", nil}, {"w2", "toy", "done", "other", now, "", nil, "", nil}},
 		"FROM steps":      {{"w1", 0, "researcher", "done", 1, "a"}, {"w1", 1, "drafter", "done", 1, "b"}, {"w1", 2, "reviewer", "done", 1, "c"}},
 		"workflow_grades": {{"w1", "phi4-mini:3.8b", "answer-quality-v1", 4, "good", now}},
 	}}

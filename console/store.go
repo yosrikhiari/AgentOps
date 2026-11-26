@@ -5,6 +5,7 @@ package console
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -75,6 +76,7 @@ type EvalRun struct {
 	// (every pair a retrieval miss) has no faithfulness measurement; the page must say
 	// "unmeasured", not paint a 0.000 red.
 	Judged    int       `json:"judged"`
+	Total     int       `json:"total"`
 	StartedAt time.Time `json:"started_at"`
 	CreatedAt time.Time `json:"created_at"`
 	// Status is running / complete / failed. Only complete runs carry a trustworthy score:
@@ -108,6 +110,12 @@ type Workflow struct {
 	// Grade is the stored rubric score for the final answer, when one was taken. It is
 	// quality, not faithfulness - see evals/rubric.go.
 	Grade *WorkflowGrade `json:"grade,omitempty"`
+	// Outcome-based verification (docs/WORKFLOW-EVAL-RESEARCH.md): a workflow is
+	// 'done' only when its verifier passes, not when the agent claims success.
+	Verifier       string     `json:"verifier,omitempty"`
+	Verified       *bool      `json:"verified,omitempty"`
+	VerifierOutput string     `json:"verifier_output,omitempty"`
+	VerifiedAt     *time.Time `json:"verified_at,omitempty"`
 }
 
 type WorkflowGrade struct {
@@ -375,7 +383,7 @@ func (s SQLStore) Overview(ctx context.Context) (Overview, error) {
 // page does not issue one query per run to answer "was the card busy?".
 func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]EvalRun, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT r.id, r.golden_version, r.judge_model, r.judge_prompt, r.model, r.score, r.started_at, r.created_at, r.status,
+		`SELECT r.id, r.golden_version, r.judge_model, r.judge_prompt, r.model, r.score, r.started_at, r.created_at, r.status, r.total_pairs,
 		        (SELECT count(*) FROM eval_pair_scores p
 		          WHERE p.run_id = r.id AND p.faithfulness IS NOT NULL)::int AS judged,
 		        g.samples, coalesce(g.util_mean,0), coalesce(g.util_peak,0),
@@ -403,7 +411,7 @@ func (s SQLStore) EvalRuns(ctx context.Context, golden string, limit int) ([]Eva
 		var memPeak, memTotal, swaps int64
 		var maxTemp float64
 		var throttled int
-		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.JudgePrompt, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt, &r.Status,
+		if err := rows.Scan(&r.ID, &r.Golden, &r.Judge, &r.JudgePrompt, &r.Model, &r.Score, &r.StartedAt, &r.CreatedAt, &r.Status, &r.Total,
 			&r.Judged, &samples, &utilMean, &utilPeak, &memPeak, &memTotal, &swaps, &maxTemp, &throttled); err != nil {
 			return nil, err
 		}
@@ -500,7 +508,7 @@ func (s SQLStore) BenchmarkData(ctx context.Context, golden string) (BenchmarkIn
 
 func (s SQLStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) {
 	rows, err := s.Query.Query(ctx,
-		`SELECT id, type, status, input, created_at FROM workflows ORDER BY created_at DESC LIMIT $1`, limit)
+		`SELECT id, type, status, input, created_at, verifier, verified, verifier_output, verified_at FROM workflows ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -508,9 +516,19 @@ func (s SQLStore) Workflows(ctx context.Context, limit int) ([]Workflow, error) 
 	idx := map[string]int{}
 	for rows.Next() {
 		var w Workflow
-		if err := rows.Scan(&w.ID, &w.Type, &w.Status, &w.Input, &w.CreatedAt); err != nil {
+		var verified sql.NullBool
+		var verifiedAt sql.NullTime
+		if err := rows.Scan(&w.ID, &w.Type, &w.Status, &w.Input, &w.CreatedAt, &w.Verifier, &verified, &w.VerifierOutput, &verifiedAt); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if verified.Valid {
+			v := verified.Bool
+			w.Verified = &v
+		}
+		if verifiedAt.Valid {
+			t := verifiedAt.Time
+			w.VerifiedAt = &t
 		}
 		w.Steps = []Step{}
 		idx[w.ID] = len(out)

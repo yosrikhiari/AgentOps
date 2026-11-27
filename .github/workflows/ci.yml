@@ -129,12 +129,63 @@ jobs:
       - name: smoke-test the image
         run: docker run --rm tower:ci --version
 
+  k6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [go, policy]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tower
+          POSTGRES_PASSWORD: tower
+          POSTGRES_DB: tower
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tower"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: tower
+      POSTGRES_PASSWORD: tower
+      POSTGRES_DB: tower
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        run: go build -o tower .
+      - name: start server
+        run: |
+          set -euo pipefail
+          ./tower --migrate
+          POSTGRES_PORT=${POSTGRES_PORT:-5432} ./tower &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/v1/overview >/dev/null; then break; fi
+            sleep 1
+          done
+        env:
+          POSTGRES_PORT: 5432
+      - name: install k6
+        run: |
+          sudo gpg -k 2>/dev/null || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq k6 2>/dev/null || (curl -sL https://github.com/grafana/k6/releases/download/v0.49.0/k6-v0.49.0-linux-amd64.tar.gz | tar xz -C /tmp && sudo mv /tmp/k6-v0.49.0-linux-amd64/k6 /usr/local/bin/k6)
+      - name: run mixed workload
+        run: k6 run load-tests/mixed.js
+        env:
+          BASE_URL: http://127.0.0.1:8080
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [go, policy, docker, schema]
-    # Signing and provenance need an OIDC token; the release needs to write.
     # Idempotent re-runs are fine: cosign keyless and attestations are additive.
     permissions:
       contents: write

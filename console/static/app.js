@@ -876,10 +876,13 @@
       }, h('span', { class: 'tower-trace-dot' }), body);
     });
     return h('div', null, head,
-      h('h4', { class: 'tower-sub-h' }, 'Timeline'),
-      h('div', { class: 'tower-panel-sub', style: 'margin:-4px 0 8px' }, 'Outlined bars are the critical path. Click a row to open its span.'),
-      ruler, wf,
-      h('h4', { class: 'tower-sub-h' }, 'Spans'), h('div', { class: 'tower-trace' }, ...steps),
+      h('div', { class: 'tower-trace-panes' },
+        h('div', { class: 'tower-trace-pane' },
+          h('h4', { class: 'tower-sub-h' }, 'Timeline'),
+          h('div', { class: 'tower-panel-sub', style: 'margin:-4px 0 8px' }, 'Outlined bars are the critical path. Click a row to open its span.'),
+          ruler, wf),
+        h('div', { class: 'tower-trace-pane' },
+          h('h4', { class: 'tower-sub-h' }, 'Spans'), h('div', { class: 'tower-trace' }, ...steps))),
       gen && gen.attrs.fallback_from ? h('div', { class: 'tower-note' }, 'Fallback: ' + gen.attrs.fallback_from.join(', ') + ' failed → served by ' + gen.attrs.model) : null);
   }
 
@@ -1051,12 +1054,19 @@
     const runs = data.runs || [], drift = data.drift || {};
     const runBtn = h('button', { class: 'tower-btn primary' }, status.running ? 'Running…' : 'Run eval suite');
     runBtn.disabled = !!status.running;
+    const cancelBtn = h('button', { class: 'tower-btn secondary', disabled: !status.running }, 'Cancel');
+    cancelBtn.addEventListener('click', async () => {
+      cancelBtn.disabled = true;
+      try { await api('/v1/evals/cancel', { method: 'POST' }); toast('Eval run cancelled'); } catch (e) { toast(e.message, true); }
+      pageEvals(signal);
+    });
     runBtn.addEventListener('click', async () => {
       runBtn.disabled = true; runBtn.textContent = 'Starting…';
       try { await api('/v1/evals/run', { method: 'POST', body: JSON.stringify({ golden_version: data.golden_version }) }); toast('Eval suite started on ' + data.golden_version); }
       catch (e) { toast(e.message, true); }
       pageEvals(signal);
     });
+    const progressMetric = status.running && status.progress ? h('div', { class: 'tower-panel-sub', style: 'margin-left:8px' }, 'Progress: ' + status.progress + (status.eta ? ' · ETA ' + status.eta : '')) : null;
     const metrics = h('div', { class: 'tower-metric-row' },
       metric('Latest faithfulness', drift.runs ? fmt.score(drift.score_now) : '–', drift.alert ? 'ALERT: below ' + drift.threshold : 'threshold ' + (drift.threshold ?? 0.7), drift.alert ? 'down' : 'up'),
       metric('Delta vs previous', drift.runs > 1 ? (drift.delta >= 0 ? '+' : '') + drift.delta.toFixed(3) : '–',
@@ -1069,7 +1079,7 @@
     const chartable = runs.length - unmeasured;
     const history = panel('Score history',
       'Scored runs of golden ' + data.golden_version + '; dashed line = threshold 0.70' + (unmeasured ? ' - ' + unmeasured + ' unmeasured' : ''),
-      chartable > 0 ? scoreChart(runs) : h('div', { class: 'tower-empty' }, runs.length ? 'No scored runs yet - all ' + unmeasured + ' are unmeasured.' : 'No runs yet - start one.'), runBtn);
+      chartable > 0 ? scoreChart(runs) : h('div', { class: 'tower-empty' }, runs.length ? 'No scored runs yet - all ' + unmeasured + ' are unmeasured.' : 'No runs yet - start one.'), h('div', { class: 'tower-form-row' }, runBtn, cancelBtn, progressMetric));
     const worst = drift.worst_cases || [];
     const misses = drift.misses_now || 0;
     const worstPanel = panel('Worst cases', 'Lowest faithfulness in the latest run' + (misses ? ' · ' + misses + ' retrieval miss(es) excluded from the average' : ''),

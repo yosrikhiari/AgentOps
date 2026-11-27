@@ -407,6 +407,9 @@
   .tower-trace-title{ font-family:var(--tower-font-display); font-weight:600; font-size:15px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .tower-sub-h{ font:600 11px/1.4 var(--tower-font-body); text-transform:uppercase; letter-spacing:.08em; color:var(--tower-ink-faint); margin:18px 0 8px; }
   .tower-waterfall{ display:flex; flex-direction:column; gap:4px; }
+  .tower-trace-panes{ display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+  .tower-trace-pane{ min-width:0; }
+  @media (max-width: 900px){ .tower-trace-panes{ grid-template-columns:1fr; } }
   /* A waterfall row is a control: it opens the matching span below. */
   .tower-wf-row{
     display:grid; grid-template-columns:180px 1fr 72px; gap:10px; align-items:center;

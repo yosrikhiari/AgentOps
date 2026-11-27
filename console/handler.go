@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -43,9 +44,10 @@ type Handler struct {
 	deps Deps
 	mux  *http.ServeMux
 
-	mu       sync.Mutex
-	evalBusy bool
-	evalLast evalStatus
+	mu         sync.Mutex
+	evalBusy   bool
+	evalLast   evalStatus
+	evalCancel context.CancelFunc
 }
 
 type evalStatus struct {
@@ -54,6 +56,8 @@ type evalStatus struct {
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 	Error      string    `json:"error,omitempty"`
 	Golden     string    `json:"golden_version,omitempty"`
+	Progress   string    `json:"progress,omitempty"`
+	ETA        string    `json:"eta,omitempty"`
 }
 
 func New(deps Deps) *Handler {
@@ -80,6 +84,7 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("GET /v1/activity", h.activity)
 	h.mux.HandleFunc("GET /v1/evals/status", h.evalStatus)
 	h.mux.HandleFunc("POST /v1/evals/run", h.evalRun)
+	h.mux.HandleFunc("POST /v1/evals/cancel", h.evalCancelRun)
 	h.mux.HandleFunc("GET /v1/workflows", h.workflows)
 	h.mux.HandleFunc("POST /v1/workflows", h.startWorkflow)
 	h.mux.HandleFunc("POST /v1/workflows/{id}/resume", h.resumeWorkflow)
@@ -98,7 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.Serv
 // next to the router's own /v1 endpoints.
 func (h *Handler) Routes() []string {
 	return []string{"GET /{$}", "GET /favicon.ico", "GET /static/", "GET /v1/overview", "GET /v1/metrics/series", "GET /v1/requests", "GET /v1/evals/runs", "GET /v1/benchmarks", "GET /v1/activity",
-		"GET /v1/evals/status", "POST /v1/evals/run", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume",
+		"GET /v1/evals/status", "POST /v1/evals/run", "POST /v1/evals/cancel", "GET /v1/workflows", "POST /v1/workflows", "POST /v1/workflows/{id}/resume",
 		"GET /v1/gpu",
 		"GET /v1/conversations", "POST /v1/conversations", "GET /v1/conversations/{id}/messages",
 		"POST /v1/conversations/{id}/messages", "DELETE /v1/conversations/{id}"}
@@ -321,7 +326,28 @@ func (h *Handler) evalStatus(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	st := h.evalLast
 	st.Running = h.evalBusy
+	cancel := h.evalCancel
 	h.mu.Unlock()
+	// Compute progress and ETA from the store if a run is active.
+	if st.Running && st.Golden != "" {
+		ctx, c := context.WithTimeout(r.Context(), 5*time.Second)
+		defer c()
+		runs, err := h.deps.Store.EvalRuns(ctx, st.Golden, 1)
+		if err == nil && len(runs) > 0 {
+			run := runs[0]
+			if run.Total > 0 {
+				st.Progress = fmt.Sprintf("%d/%d", run.Judged, run.Total)
+				// ETA: simple linear estimate
+				elapsed := time.Since(st.StartedAt)
+				if run.Judged > 0 {
+					perPair := elapsed / time.Duration(run.Judged)
+					remaining := time.Duration(run.Total-run.Judged) * perPair
+					st.ETA = remaining.Round(time.Second).String()
+				}
+			}
+		}
+	}
+	_ = cancel
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -350,10 +376,14 @@ func (h *Handler) evalRun(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	go func(golden string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour) // scoreOnce applies its own EVAL_TIMEOUT
+		h.mu.Lock()
+		h.evalCancel = cancel
+		h.mu.Unlock()
 		defer cancel()
 		err := h.deps.RunEval(ctx, golden)
 		h.mu.Lock()
 		h.evalBusy = false
+		h.evalCancel = nil
 		h.evalLast.Running = false
 		h.evalLast.FinishedAt = time.Now()
 		if err != nil {
@@ -363,6 +393,19 @@ func (h *Handler) evalRun(w http.ResponseWriter, r *http.Request) {
 		h.mu.Unlock()
 	}(body.Golden)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "started", "golden_version": body.Golden})
+}
+
+func (h *Handler) evalCancelRun(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	cancel := h.evalCancel
+	busy := h.evalBusy
+	h.mu.Unlock()
+	if !busy || cancel == nil {
+		writeErr(w, http.StatusConflict, "no_eval_running", "no eval run in progress")
+		return
+	}
+	cancel()
+	writeJSON(w, http.StatusOK, map[string]any{"status": "cancelled"})
 }
 
 func (h *Handler) workflows(w http.ResponseWriter, r *http.Request) {

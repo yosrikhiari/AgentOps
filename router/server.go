@@ -318,6 +318,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	// Authenticate /metrics: require METRICS_TOKEN (bearer) or loopback peer.
+	if tok := os.Getenv("METRICS_TOKEN"); tok != "" {
+		auth := r.Header.Get("Authorization")
+		if auth == "Bearer "+tok {
+			// authorized
+		} else {
+			// allow loopback peer without token
+			host := r.RemoteAddr
+			if !strings.HasPrefix(host, "127.0.0.1") && !strings.HasPrefix(host, "::1") && !strings.HasPrefix(host, "[::1]") && host != "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "unauthorized", "message": "metrics require bearer token or loopback access"}})
+				return
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(s.Metrics.Expose()))
 }

@@ -163,8 +163,11 @@ for its models directory).
 | `ROUTER_CLASSIFIER_MODEL` | `FAST_MODEL` | Ollama model used when `ROUTER_POLICY=learned` (a small model such as `qwen2.5:3b-instruct` or `phi4-mini`) |
 | `ROUTER_CLASSIFIER_TIMEOUT` | `10s` | per-request budget for the LLM classifier (clamped ≥1s); cold model loads on a 4 GB card can take several seconds |
 | `ROUTER_WEIGHTS` | *(empty)* | path to a JSON weights file produced by `ml/train_router.py` (see `--export-routing-data`). When set, the gateway uses a sub-millisecond learned classifier instead of the heuristic or the LLM classifier. Falls back to the heuristic if the file is missing or unreadable |
-| `ADDR` | `127.0.0.1:8080` | listen address. Loopback by default: the gateway is a local appliance, and a fresh install must not be reachable from the LAN. Set `ADDR=0.0.0.0:8080` to publish it |
+| `METRICS_TOKEN` | *(empty)* | bearer token for `/metrics`; when empty, metrics are loopback-only |
+| `REQUEST_TIMEOUT` | `300s` | per-request deadline, also the shutdown drain budget |
+| `ADDR` | `127.0.0.1:8080` | listen address. Loopback by default |
 | `CONSOLE_REMOTE` | `false` | the console (pages, conversations, workflows, eval runs) answers loopback clients only. `true` allows any client — required when the console is reached through a container port mapping or a reverse proxy. The console is where prompts are readable and GPU work is started, so this is an explicit act |
+| `CONSOLE_TOKEN` | *(empty)* | bearer token for console routes when `CONSOLE_REMOTE=true`; when empty, no token required |
 | `POSTGRES_DSN` | built from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` (defaults `tower` / `tower` / `localhost` / `5432` / `tower`, the same ones `docker-compose.yml` uses) | spans, traces, evals, workflows, api keys |
 | `GPU_SMI` | `nvidia-smi` | path to the driver CLI the GPU prober shells out to. On a box without a working driver every `gpu_*` series reports `gpu_up 0` and no utilisation is published, rather than a fabricated zero |
 | `GPU_POLL_INTERVAL` | `10s` | how often the driver and Ollama's `/api/ps` are read; clamped to ≥1s, parse errors fall back to the default |

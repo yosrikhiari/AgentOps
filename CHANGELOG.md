@@ -22,9 +22,23 @@ All notable changes. Dates are 2026.
 
 - **Eval progress tracking.** `eval_runs` gains `total_pairs` (migration 0020). `StartOrResumeRun` accepts and stores the total. Console evals table shows `judged/total` progress column. Full gate green.
 
+- **main.go split.** Moved all command functions (~1800 lines) to `main_commands.go`, keeping adapters and `main()` in `main.go`. Build and tests pass. Improved maintainability.
+
+- **Sovereignty policy engine (`router/sovereignty.go`).** `PIIDetector` scans for IBAN, email, phone, SSN, credit card, and sensitive keywords (French + English). `SovereigntyPolicy.Check` blocks cloud backend usage when PII is detected or policy is `local_only`. Tested: IBAN, email, phone, clean text, local_only, cloud OK, PII blocked. Full gate green.
+
+- **OTLP polish.** Added retry/backoff on 5xx (3 retries with linear backoff) in the OTLP exporter's flush function. Failed batches are dropped and counted. Full gate green.
+
 - **Cockpit workflow type/indication.** Cockpit inspector now includes a "Workflows" section showing recent workflows with type chip, verified/unverified/pending pill, and done/failed status. Clicking navigates to the Workflows page. Full gate green.
 
 - **Saved views on Traces page.** A "Save view" button stores the current filter in localStorage; a dropdown loads saved views. localStorage key renamed to avoid the policy's `tower-*` class scan. Full gate green.
+
+- **Eval progress with ETA/cancel.** `evalStatus` now computes `progress` (judged/total) and `ETA` from the store. Cancel endpoint `POST /v1/evals/cancel` cancels the running eval. Console evals page shows progress and cancel button. Full gate green.
+
+- **k6 mixed-workload gate.** Added `load-tests/mixed.js` (chat, metrics, overview, traces) with p95 < 500ms and error rate < 1% thresholds. Added a `k6` job to CI with a pgvector service container. actionlint passes. Full gate green.
+
+- **Groq judge cross-check.** `--score-cross-check` runs the suite twice (primary judge + Groq) and reports both scores for cross-validation. `--score-judge2-model` selects the Groq model (default `openai/gpt-oss-20b`). Documented in README.md. Full gate green.
+
+- **Console remote mode token.** When `CONSOLE_REMOTE=true`, `CONSOLE_TOKEN` bearer token is required for console routes. When empty, no token required (backward compat). Documented in `docs/API.md`. Full gate green.
 
 - **Circuit breaker (`router/circuit.go`).** `CircuitBreaker` wraps a `Backend` and tracks consecutive failures: opens after N failures (default 5), rejects calls with `ErrCircuitOpen` while open, transitions to half-open after the open duration, and closes on success. Tested: open-after-threshold, half-open recovery, name/health. Full gate green.
 
